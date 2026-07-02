@@ -340,7 +340,7 @@ class FVProcessor:
         dataset_path_for_learning = {
             "nl2sva_human": os.path.join(ROOT, "FVEval", "data_nl2sva", "data", "nl2sva_human.csv"),
             # "nl2sva_machine": os.path.join(ROOT, "FVEval", "data_nl2sva", "data", "nl2sva_machine.csv"),
-            "nl2sva_machine": os.path.join(ROOT, "FVEval", "data_nl2sva", "data", "nl2sva_machine_updated.csv"),
+            "nl2sva_machine": os.path.join(ROOT, "FVEval", "data_nl2sva", "data", "nl2sva_machine.csv"),
             "nl2sva_opencore": os.path.join(ROOT, "FVEval", "data_1k", "module_sva_nl_manual_editing.csv"),
         }
         if task == "nl2sva_human":

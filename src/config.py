@@ -68,18 +68,18 @@ DEFAULT_EVAL_LOGDIR = os.environ.get(
     "FVRULELEARNER_EVAL_LOGDIR",
     str(LOG_ROOT / "inference_your_run_here"),
 )
-debug = False
-# debug = True
+# debug = False
+debug = True
 
 # Debug-only: restrict the training pool used by retrieval/Q-Tree building.
 # Leave empty for normal release runs.
 # Example: training_cases = [0, 1, 2, 3]
-training_cases = []
+training_cases = [0,1,2,3]
 
 # Supported release tasks:
 # task = "nl2sva_human"
-# task = "nl2sva_machine"
-task = "nl2sva_opencore"
+task = "nl2sva_machine"
+# task = "nl2sva_opencore"
 
 LLM_gateaway = "openai"
 # LLM_gateaway = "claude"
@@ -145,7 +145,7 @@ if global_task in ['inference', 'train']:
         use_JG = False
         RAG_content = ['Suggestions']
         # Number of self-improvement iterations per training sample.
-        num_iter = 25
+        num_iter = 2
 
         is_constrain_number = False
 
@@ -156,7 +156,7 @@ if global_task in ['inference', 'train']:
             low_temp = 0
             high_temp = 1.0
         if debug == True:
-            num_iter = 25
+            num_iter = 2
 
         use_QTree = True
         if use_QTree:
@@ -227,7 +227,7 @@ if global_task in ['inference', 'train']:
     if task == "nl2sva_human":
         dataset_path = os.path.join(ROOT, "FVEval", "data_nl2sva", "data", "nl2sva_human.csv")
     elif task == "nl2sva_machine":
-        dataset_path = os.path.join(ROOT, "FVEval", "data_nl2sva", "data", "nl2sva_machine_updated.csv")
+        dataset_path = os.path.join(ROOT, "FVEval", "data_nl2sva", "data", "nl2sva_machine.csv")
     elif task == "nl2sva_opencore":
         dataset_path = os.path.join(ROOT, "FVEval", "data_1k", "module_sva_nl_manual_editing.csv")
     else:
