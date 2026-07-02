@@ -144,7 +144,7 @@ protobuf==3.20.3
 psutil
 ptyprocess
 pure-eval
-pyarrow
+pyarrow>=14.0.1
 pyarrow-hotfix==0.6
 pyasn1==0.4.8
 pyasn1-modules==0.2.8
@@ -183,7 +183,7 @@ safetensors==0.4.3
 scikit-learn==1.0.2
 scipy>=1.11.0
 seaborn==0.13.0
-sentence-transformers
+sentence-transformers==2.7.0
 sh==1.14.3
 shellingham==1.5.4
 six==1.15.0
