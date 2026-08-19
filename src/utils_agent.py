@@ -367,6 +367,7 @@ def call_OpenAI_llm(system_prompt: str, user_prompt: str, temperature: float = N
     create_kwargs = {
         "model": effective_model,
         "messages": messages,
+        "max_tokens": min(getattr(FLAGS, "max_token", 16384), 16384),
     }
     if not is_o_series_model(effective_model):
         create_kwargs["temperature"] = effective_temperature

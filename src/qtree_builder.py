@@ -333,10 +333,13 @@ Reference Assertion: {ref_assertion}
         
         # If LLM didn't generate enough questions, add fallback questions
         if len(questions) < 2:
+            fallback_keyword = (
+                selected_keywords[0] if selected_keywords else "operators"
+            )
             fallback_questions = [
-                f"Considering {selected_keyword}, which specific operators are different between the generated and reference assertions?",
-                f"Considering {selected_keyword}, are the operators used correctly for the intended behavior?",
-                f"Considering {selected_keyword}, what operator changes would fix the assertion?"
+                f"Considering {fallback_keyword}, which specific operators are different between the generated and reference assertions?",
+                f"Considering {fallback_keyword}, are the operators used correctly for the intended behavior?",
+                f"Considering {fallback_keyword}, what operator changes would fix the assertion?"
             ]
             
             for fallback in fallback_questions:

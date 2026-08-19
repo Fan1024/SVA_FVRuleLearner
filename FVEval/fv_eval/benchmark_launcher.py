@@ -385,12 +385,10 @@ class BenchmarkLauncher(object):
                 if "gpt-4-turbo" in model_name:
                     # full_model_name = "gpt-4-0125-preview"
                     full_model_name = "gpt-4-turbo-2024-04-09"
-                elif model_name == "gpt-4o-20241120":
-                    full_model_name = 'gpt-4o-20241120'
-                    model_name = "gpt-4o"
+                elif model_name == "gpt-4o-2024-11-20":
+                    full_model_name = "gpt-4o-2024-11-20"
                 elif model_name == "gpt-4o":
-                    full_model_name = 'gpt-4o-20241120'
-                    model_name = "gpt-4o"
+                    full_model_name = "gpt-4o"
                 elif model_name == "gpt-4":
                     full_model_name = "gpt-4-0613"
                 elif "gpt-3.5-turbo" in model_name:

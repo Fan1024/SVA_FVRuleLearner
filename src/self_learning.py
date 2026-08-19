@@ -299,7 +299,12 @@ def self_learn(agents, response, message, row):
         # if FLAGS.debug:
         #     print(f"@@@DEBUG: enriched_prompt = {enriched_prompt}")
 
-        response_str = initiate_chat_with_retry(agents["user"], agents["Coding"], message=enriched_prompt)
+        response_str = initiate_chat_with_retry(
+            agents["user"],
+            agents["Coding"],
+            message=enriched_prompt,
+            temperature=temperature,
+        )
         last_metrics=metrics
         # Store current metrics as previous before getting new ones
         previous_metrics = {
@@ -360,6 +365,21 @@ def self_learn(agents, response, message, row):
 
     record_statistics(iter_cnt, initial_pec, unfixable_indicator, fixable_indicator, final_bleu - initial_bleu, bleu_scores, functionality_scores, syntax_scores)
 
+    saver.save_training_trace({
+        "task_id": str(getattr(row, "task_id", "")),
+        "design_name": str(getattr(row, "design_name", "")),
+        "bleu": [float(value) for value in bleu_scores],
+        "functionality": [float(value) for value in functionality_scores],
+        "relaxed_functionality": [
+            float(value) for value in relaxed_functionality_scores
+        ],
+        "syntax": [float(value) for value in syntax_scores],
+        "iterations": max(len(functionality_scores) - 1, 0),
+        "initial_functionality": float(initial_pec),
+        "final_functionality": float(pec),
+        "fixed": bool(fixable_indicator),
+    })
+
     # Print the total times for GPT and JasperGold
     print(f'Total GPT time: {total_gpt_time:.2f} seconds')
     print(f'Total JasperGold time: {total_jaspergold_time:.2f} seconds')
@@ -418,7 +438,7 @@ def evaluate_pec_etc(response, row, only_bleu, last_bleu, last_metrics = None):
     # relaxed_functionality_score = 0
     # syntax_score = 0
     
-    if last_metrics and (only_bleu or last_bleu == similarity_metrics.get("bleu", 0)):
+    if last_metrics and only_bleu:
         return last_metrics
     else:
         # Create a dummy LMResult for evaluation

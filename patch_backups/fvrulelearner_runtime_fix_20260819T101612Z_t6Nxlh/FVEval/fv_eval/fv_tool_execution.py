@@ -378,15 +378,11 @@ def launch_jg_custom_equiv_check(
             text=True,
             timeout=timeout_seconds,
         )
-    except subprocess.TimeoutExpired:
-        # FVR_FIX: keep a single Jasper timeout local to its case.  The UID is
-        # required by evaluation.py when it converts tool output into metrics.
-        timeout_output = (
-            f"TASK_ID {task_id}\n"
-            f"JASPER_TIMEOUT: exceeded {timeout_seconds} seconds"
-        )
-        print(f"WARNING: {timeout_output.replace(chr(10), ' | ')}")
-        return timeout_output
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(
+            f"JasperGold timed out after {timeout_seconds} seconds "
+            f"for task {task_id}"
+        ) from exc
 
     jasper_output = "\n".join(
         part
@@ -394,41 +390,9 @@ def launch_jg_custom_equiv_check(
         if part
     )
     if result.returncode != 0:
-        # FVR_FIX: separate candidate errors from infrastructure errors.
-        # Syntax/elaboration errors are expected feedback for FVRuleLearner;
-        # license failures and unexpected tool failures are still fatal.
-        output_lower = jasper_output.lower()
-        infrastructure_markers = (
-            "failed to checkout license",
-            "license checkout failed",
-            "failed to contact license server",
-            "license server machine is down",
-            "no license available",
-            "flexnet licensing error",
-            "license manager daemon",
-            "lmc-",
-        )
-        candidate_error_markers = (
-            "syntax error",
-            "[error (veri-",
-            "error (enl",
-            "ignored due to previous errors",
-        )
-
-        if any(marker in output_lower for marker in infrastructure_markers):
-            raise RuntimeError(
-                f"JasperGold infrastructure failure for task {task_id}; "
-                f"return code={result.returncode}\n{jasper_output}"
-            )
-        if not any(marker in output_lower for marker in candidate_error_markers):
-            raise RuntimeError(
-                f"Unexpected JasperGold failure for task {task_id}; "
-                f"return code={result.returncode}\n{jasper_output}"
-            )
-
-        print(
-            f"WARNING: JasperGold candidate evaluation failed for task "
-            f"{task_id}; recording syntax/functionality failure and continuing."
+        raise RuntimeError(
+            f"JasperGold failed for task {task_id}; "
+            f"return code={result.returncode}\n{jasper_output}"
         )
 
     # DEBUG: Print JasperGold execution details, 1019, to debug the JasperGold output

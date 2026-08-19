@@ -608,6 +608,13 @@ class Saver(object):
             'metrics_improvements': metrics_improvements
         }
 
+    def save_training_trace(self, trace):
+        """Append one case's full self-learning trajectory as JSONL."""
+        trace_path = join(self.logdir, "training_traces.jsonl")
+        with open(trace_path, "a", encoding="utf-8") as trace_file:
+            json.dump(trace, trace_file, ensure_ascii=False)
+            trace_file.write("\n")
+
     def save_stats(self, stat_name, value):
         self.stats[stat_name].append(value)
 

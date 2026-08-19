@@ -54,9 +54,10 @@ from FVEval.fv_eval import (
 )
 
 # Select one execution stage: train / inference / eval.
-# global_task = 'inference'
-global_task = 'train'
-# global_task = 'eval'
+# Override without editing this file: FVRULELEARNER_STAGE=train|inference|eval
+global_task = os.environ.get("FVRULELEARNER_STAGE", "train").strip().lower()
+if global_task not in {"train", "inference", "eval"}:
+    raise ValueError(f"Unsupported FVRULELEARNER_STAGE: {global_task}")
 
 ROOT = Path(__file__).resolve().parents[1]
 LOG_ROOT = ROOT / "src" / "logs"
@@ -68,23 +69,26 @@ DEFAULT_EVAL_LOGDIR = os.environ.get(
     "FVRULELEARNER_EVAL_LOGDIR",
     str(LOG_ROOT / "inference_your_run_here"),
 )
-# debug = False
-debug = True
+# Full reproduction defaults to non-debug mode.
+# Set FVRULELEARNER_DEBUG=1 for a one-case smoke test.
+debug = os.environ.get("FVRULELEARNER_DEBUG", "0").strip().lower() in {
+    "1", "true", "yes", "on"
+}
 
 # Debug-only: restrict the training pool used by retrieval/Q-Tree building.
 # Leave empty for normal release runs.
 # Example: training_cases = [0, 1, 2, 3]
-training_cases = [0,1,2,3]
+training_cases = []
 
-# Supported release tasks:
-# task = "nl2sva_human"
-task = "nl2sva_machine"
-# task = "nl2sva_opencore"
+# Supported release tasks. Override with FVRULELEARNER_TASK.
+task = os.environ.get("FVRULELEARNER_TASK", "nl2sva_machine").strip()
 
 LLM_gateaway = "openai"
 # LLM_gateaway = "claude"
 
-llm_model = 'gpt-4o'
+llm_model = os.environ.get(
+    "FVRULELEARNER_MODEL", "gpt-4o-2024-11-20"
+).strip()
 # llm_model = "claude-sonnet-4-5-20250929"
 
 llm_mode = 'agent'
@@ -111,11 +115,14 @@ if global_task in ['inference', 'train']:
     # Number of in-context examples prepended to the prompt.
     num_icl = 3
     # Upper bound for model output tokens per response.
-    max_token = 20000
+    max_token = min(
+        int(os.environ.get("FVRULELEARNER_MAX_TOKENS", "16384")),
+        16384,
+    )
     # Optional dataset partitioning for batched local runs.
-    group_id = 0
-    num_group = 1
-    start_num = 0
+    group_id = int(os.environ.get("FVRULELEARNER_GROUP_ID", "0"))
+    num_group = int(os.environ.get("FVRULELEARNER_NUM_GROUPS", "1"))
+    start_num = int(os.environ.get("FVRULELEARNER_START_NUM", "0"))
 
     # Train/test split used when sampling internal train/inference subsets.
     if "nl2sva" in task:
@@ -124,7 +131,7 @@ if global_task in ['inference', 'train']:
             'train': 0.8,
         }
 
-    random_seed = 100
+    random_seed = int(os.environ.get("FVRULELEARNER_SEED", "100"))
 
     # Use the full saved Q-Tree pool by default.
     qtree_subsample_ratio = split_ratios['train']
@@ -144,8 +151,8 @@ if global_task in ['inference', 'train']:
         use_RAG = False
         use_JG = False
         RAG_content = ['Suggestions']
-        # Number of self-improvement iterations per training sample.
-        num_iter = 2
+        # Maximum number of fixing iterations after the initial SVA.
+        num_iter = int(os.environ.get("FVRULELEARNER_NUM_ITER", "25"))
 
         is_constrain_number = False
 
@@ -156,7 +163,7 @@ if global_task in ['inference', 'train']:
             low_temp = 0
             high_temp = 1.0
         if debug == True:
-            num_iter = 2
+            num_iter = min(num_iter, 2)
 
         use_QTree = True
         if use_QTree:
@@ -259,7 +266,10 @@ else:
     raise NotImplementedError()
 
 if global_task == 'inference' or global_task == 'eval' or global_task == 'train':
-    nparallel = 1
+    nparallel = int(os.environ.get("FVRULELEARNER_NPARALLEL", "1"))
+    jg_timeout_seconds = int(
+        os.environ.get("FVRULELEARNER_JG_TIMEOUT_SECONDS", "300")
+    )
     if debug == True:
         nparallel = 1
     if global_task == 'eval':

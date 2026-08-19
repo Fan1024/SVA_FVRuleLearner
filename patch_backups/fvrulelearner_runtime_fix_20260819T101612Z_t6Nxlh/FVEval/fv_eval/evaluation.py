@@ -720,19 +720,9 @@ class NL2SVAMachineEvaluator(Evaluator):
                         ref_assertion_text.split("clk)")[-1].strip().split(");")[0].strip()
                     )
 
-                    signal_list = set(re.findall(r"\bsig_\w+", lm_result.ref_solution))
-
-                    # FVR_FIX: include valid reset used only by generated assertion.
-                    # NL2SVA-Machine testbenches declare tb_reset, while GPT may
-                    # introduce `disable iff (tb_reset)` even when the reference
-                    # property does not mention reset.
-                    combined_assertion_text = (
-                        f"{lm_assertion_text} {ref_assertion_text}"
-                    )
-                    if re.search(r"\btb_reset\b", combined_assertion_text):
-                        signal_list.add("tb_reset")
-
-                    signal_list_text = ",".join(sorted(signal_list))
+                    signal_list = re.findall(r"\bsig_\w+", lm_result.ref_solution)
+                    signal_list = list(set(signal_list))
+                    signal_list_text = ",".join(signal_list)
                 elif self.task == "nl2sva_opencore":
                     lm_assertion_text = (
                         utils.parse_code_response(lm_result.response)
@@ -844,15 +834,8 @@ class NL2SVAMachineEvaluator(Evaluator):
         self,
         jasper_out_str: str,
     ):
-        # FVR_FIX: recognize Jasper syntax and elaboration failures.
-        syntax_error_match = re.search(
-            r"syntax error"
-            r"|\[ERROR \(VERI-"
-            r"|ERROR \(ENL\d+\)"
-            r"|ignored due to previous errors",
-            jasper_out_str,
-            flags=re.IGNORECASE,
-        )
+        # check for syntax error
+        syntax_error_match = re.findall(r"syntax error", jasper_out_str)
         if syntax_error_match:
             return {
                 "syntax": 0.0,
