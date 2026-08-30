@@ -402,15 +402,8 @@ class BenchmarkLauncher(object):
                 base_url = "https://api.openai.com/v1"
                 if model_name == "o1-20241217":
                     full_model_name = "o1-20241217"
-                elif model_name == "o3-mini":
-                    full_model_name = "o3-mini"
-                elif model_name == "o3-mini-2025-01-31":
-                    full_model_name = "o3-mini-2025-01-31"
                 elif model_name == "o3-mini-20250131":
-                    # Historical FVRuleLearner/PerfLab spelling.
-                    full_model_name = "o3-mini-2025-01-31"
-                else:
-                    raise ValueError(f"Unknown o-series model: {model_name}")
+                    full_model_name = "o3-mini-20250131"
             elif "llama" in model_name:
                 api_provider = "openai"
                 api_key = FLAGS.api_key

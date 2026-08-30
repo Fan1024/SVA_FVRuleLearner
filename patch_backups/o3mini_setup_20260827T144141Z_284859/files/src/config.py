@@ -55,7 +55,7 @@ from FVEval.fv_eval import (
 
 # Select one execution stage: train / inference / eval.
 # Override without editing this file: FVRULELEARNER_STAGE=train|inference|eval
-global_task = 'inference'
+global_task = os.environ.get("FVRULELEARNER_STAGE", "train").strip().lower()
 if global_task not in {"train", "inference", "eval"}:
     raise ValueError(f"Unsupported FVRULELEARNER_STAGE: {global_task}")
 
@@ -71,8 +71,9 @@ DEFAULT_EVAL_LOGDIR = os.environ.get(
 )
 # Full reproduction defaults to non-debug mode.
 # Set FVRULELEARNER_DEBUG=1 for a one-case smoke test.
-debug = False
-
+debug = os.environ.get("FVRULELEARNER_DEBUG", "0").strip().lower() in {
+    "1", "true", "yes", "on"
+}
 
 # Debug-only: restrict the training pool used by retrieval/Q-Tree building.
 # Leave empty for normal release runs.
@@ -80,13 +81,14 @@ debug = False
 training_cases = []
 
 # Supported release tasks. Override with FVRULELEARNER_TASK.
-task = 'nl2sva_machine'
+task = os.environ.get("FVRULELEARNER_TASK", "nl2sva_machine").strip()
 
-LLM_gateaway = 'openai'
+LLM_gateaway = "openai"
 # LLM_gateaway = "claude"
 
-llm_model = 'o3-mini'
-
+llm_model = os.environ.get(
+    "FVRULELEARNER_MODEL", "gpt-4o-2024-11-20"
+).strip()
 # llm_model = "claude-sonnet-4-5-20250929"
 
 llm_mode = 'agent'

@@ -126,19 +126,16 @@ def is_o_series_model(model_name):
     return bool(re.match(r'^o[134]-', model_name.lower()))
 
 def get_tokenizer(llm_model):
-    # tiktoken 0.7 does not know every o-series alias, but it includes the
-    # o200k_base encoding used by o3-mini.
-    if is_o_series_model(llm_model):
-        return tiktoken.get_encoding("o200k_base")
-
+    # Attempt to use the specific model for tokenization
     try:
         return tiktoken.encoding_for_model(llm_model)
-    except KeyError as exc:
-        print(
-            f"Tokenizer mapping unavailable for {llm_model}: {exc}. "
-            "Falling back to cl100k_base."
-        )
-        return tiktoken.get_encoding("cl100k_base")
+    except Exception as e:
+        print(f"Error loading tokenizer for {llm_model}: {e}. Falling back to 'gpt-3.5-turbo'.")
+        try:
+            return tiktoken.encoding_for_model("gpt-3.5-turbo")
+        except Exception as fallback_e:
+            print(f"Error loading fallback tokenizer: {fallback_e}")
+            raise fallback_e
 
 def count_tokens(tokenizer, message):
     # Tokenize the message using tiktoken

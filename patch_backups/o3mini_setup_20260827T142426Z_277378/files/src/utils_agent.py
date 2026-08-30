@@ -126,19 +126,16 @@ def is_o_series_model(model_name):
     return bool(re.match(r'^o[134]-', model_name.lower()))
 
 def get_tokenizer(llm_model):
-    # tiktoken 0.7 does not know every o-series alias, but it includes the
-    # o200k_base encoding used by o3-mini.
-    if is_o_series_model(llm_model):
-        return tiktoken.get_encoding("o200k_base")
-
+    # Attempt to use the specific model for tokenization
     try:
         return tiktoken.encoding_for_model(llm_model)
-    except KeyError as exc:
-        print(
-            f"Tokenizer mapping unavailable for {llm_model}: {exc}. "
-            "Falling back to cl100k_base."
-        )
-        return tiktoken.get_encoding("cl100k_base")
+    except Exception as e:
+        print(f"Error loading tokenizer for {llm_model}: {e}. Falling back to 'gpt-3.5-turbo'.")
+        try:
+            return tiktoken.encoding_for_model("gpt-3.5-turbo")
+        except Exception as fallback_e:
+            print(f"Error loading fallback tokenizer: {fallback_e}")
+            raise fallback_e
 
 def count_tokens(tokenizer, message):
     # Tokenize the message using tiktoken
@@ -367,35 +364,16 @@ def call_OpenAI_llm(system_prompt: str, user_prompt: str, temperature: float = N
         messages.append({"role": "system", "content": system_prompt})
     messages.append({"role": "user", "content": user_prompt})
 
-    output_limit = int(getattr(FLAGS, "max_token", 16384))
     create_kwargs = {
         "model": effective_model,
         "messages": messages,
+        "max_tokens": min(getattr(FLAGS, "max_token", 16384), 16384),
     }
-    if is_o_series_model(effective_model):
-        create_kwargs["max_completion_tokens"] = output_limit
-        reasoning_effort = os.environ.get(
-            "FVRULELEARNER_REASONING_EFFORT", ""
-        ).strip().lower()
-        if reasoning_effort:
-            if reasoning_effort not in {"low", "medium", "high"}:
-                raise ValueError(
-                    "FVRULELEARNER_REASONING_EFFORT must be empty, "
-                    "low, medium, or high for o3-mini"
-                )
-            create_kwargs["reasoning_effort"] = reasoning_effort
-    else:
-        create_kwargs["max_tokens"] = min(output_limit, 16384)
+    if not is_o_series_model(effective_model):
         create_kwargs["temperature"] = effective_temperature
 
     response = client.chat.completions.create(**create_kwargs)
-    content = response.choices[0].message.content
-    if not content:
-        raise RuntimeError(
-            "OpenAI returned no visible completion content; increase "
-            "FVRULELEARNER_MAX_TOKENS or inspect the response usage."
-        )
-    return content
+    return response.choices[0].message.content
 
 
 def call_Claude_llm(system_prompt: str, user_prompt: str, temperature: float = None, timeout=300, model: str = None):

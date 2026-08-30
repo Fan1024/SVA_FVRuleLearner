@@ -1,0 +1,90 @@
+[1mdiff --git a/FVEval/fv_eval/benchmark_launcher.py b/FVEval/fv_eval/benchmark_launcher.py[m
+[1mindex 7929a08..d67c521 100644[m
+[1m--- a/FVEval/fv_eval/benchmark_launcher.py[m
+[1m+++ b/FVEval/fv_eval/benchmark_launcher.py[m
+[36m@@ -402,8 +402,15 @@[m [mclass BenchmarkLauncher(object):[m
+                 base_url = "https://api.openai.com/v1"[m
+                 if model_name == "o1-20241217":[m
+                     full_model_name = "o1-20241217"[m
+[32m+[m[32m                elif model_name == "o3-mini":[m
+[32m+[m[32m                    full_model_name = "o3-mini"[m
+[32m+[m[32m                elif model_name == "o3-mini-2025-01-31":[m
+[32m+[m[32m                    full_model_name = "o3-mini-2025-01-31"[m
+                 elif model_name == "o3-mini-20250131":[m
+[31m-                    full_model_name = "o3-mini-20250131"[m
+[32m+[m[32m                    # Historical FVRuleLearner/PerfLab spelling.[m
+[32m+[m[32m                    full_model_name = "o3-mini-2025-01-31"[m
+[32m+[m[32m                else:[m
+[32m+[m[32m                    raise ValueError(f"Unknown o-series model: {model_name}")[m
+             elif "llama" in model_name:[m
+                 api_provider = "openai"[m
+                 api_key = FLAGS.api_key[m
+[1mdiff --git a/src/config.py b/src/config.py[m
+[1mindex 887e680..38ddf30 100644[m
+[1m--- a/src/config.py[m
+[1m+++ b/src/config.py[m
+[36m@@ -115,10 +115,18 @@[m [mif global_task in ['inference', 'train']:[m
+     # Number of in-context examples prepended to the prompt.[m
+     num_icl = 3[m
+     # Upper bound for model output tokens per response.[m
+[31m-    max_token = min([m
+[31m-        int(os.environ.get("FVRULELEARNER_MAX_TOKENS", "16384")),[m
+[31m-        16384,[m
+[32m+[m[32m    requested_max_tokens = int([m
+[32m+[m[32m        os.environ.get("FVRULELEARNER_MAX_TOKENS", "16384")[m
+     )[m
+[32m+[m[32m    if requested_max_tokens <= 0:[m
+[32m+[m[32m        raise ValueError("FVRULELEARNER_MAX_TOKENS must be positive")[m
+[32m+[m[32m    model_lower = llm_model.lower()[m
+[32m+[m[32m    model_output_cap = ([m
+[32m+[m[32m        100000[m
+[32m+[m[32m        if model_lower.startswith(("o1-", "o3-", "o4-"))[m
+[32m+[m[32m        else 16384[m
+[32m+[m[32m    )[m
+[32m+[m[32m    max_token = min(requested_max_tokens, model_output_cap)[m
+     # Optional dataset partitioning for batched local runs.[m
+     group_id = int(os.environ.get("FVRULELEARNER_GROUP_ID", "0"))[m
+     num_group = int(os.environ.get("FVRULELEARNER_NUM_GROUPS", "1"))[m
+[1mdiff --git a/src/utils_agent.py b/src/utils_agent.py[m
+[1mindex 0391c1e..54199ae 100644[m
+[1m--- a/src/utils_agent.py[m
+[1m+++ b/src/utils_agent.py[m
+[36m@@ -364,16 +364,35 @@[m [mdef call_OpenAI_llm(system_prompt: str, user_prompt: str, temperature: float = N[m
+         messages.append({"role": "system", "content": system_prompt})[m
+     messages.append({"role": "user", "content": user_prompt})[m
+ [m
+[32m+[m[32m    output_limit = int(getattr(FLAGS, "max_token", 16384))[m
+     create_kwargs = {[m
+         "model": effective_model,[m
+         "messages": messages,[m
+[31m-        "max_tokens": min(getattr(FLAGS, "max_token", 16384), 16384),[m
+     }[m
+[31m-    if not is_o_series_model(effective_model):[m
+[32m+[m[32m    if is_o_series_model(effective_model):[m
+[32m+[m[32m        create_kwargs["max_completion_tokens"] = output_limit[m
+[32m+[m[32m        reasoning_effort = os.environ.get([m
+[32m+[m[32m            "FVRULELEARNER_REASONING_EFFORT", ""[m
+[32m+[m[32m        ).strip().lower()[m
+[32m+[m[32m        if reasoning_effort:[m
+[32m+[m[32m            if reasoning_effort not in {"low", "medium", "high"}:[m
+[32m+[m[32m                raise ValueError([m
+[32m+[m[32m                    "FVRULELEARNER_REASONING_EFFORT must be empty, "[m
+[32m+[m[32m                    "low, medium, or high for o3-mini"[m
+[32m+[m[32m                )[m
+[32m+[m[32m            create_kwargs["reasoning_effort"] = reasoning_effort[m
+[32m+[m[32m    else:[m
+[32m+[m[32m        create_kwargs["max_tokens"] = min(output_limit, 16384)[m
+         create_kwargs["temperature"] = effective_temperature[m
+ [m
+     response = client.chat.completions.create(**create_kwargs)[m
+[31m-    return response.choices[0].message.content[m
+[32m+[m[32m    content = response.choices[0].message.content[m
+[32m+[m[32m    if not content:[m
+[32m+[m[32m        raise RuntimeError([m
+[32m+[m[32m            "OpenAI returned no visible completion content; increase "[m
+[32m+[m[32m            "FVRULELEARNER_MAX_TOKENS or inspect the response usage."[m
+[32m+[m[32m        )[m
+[32m+[m[32m    return content[m
+ [m
+ [m
+ def call_Claude_llm(system_prompt: str, user_prompt: str, temperature: float = None, timeout=300, model: str = None):[m

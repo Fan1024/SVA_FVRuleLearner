@@ -58,29 +58,6 @@ print = saver.log_info
 
 from FVEval.fv_eval import utils, fv_tool_execution
 from FVEval.fv_eval.data import LMResult, TextSimilarityEvaluationResult, JGEvaluationResult
-
-
-# FVR_JASPER_ECHO_FIX: ignore echoed TCL comments.  JasperGold 25.x echoes
-# lines such as "% # 1. Syntax error in the testbench" from the TCL file.
-# That documentation text is not a compiler diagnostic.
-def _has_real_jasper_syntax_error(jasper_out_str: str) -> bool:
-    for line in jasper_out_str.splitlines():
-        stripped = line.lstrip()
-        if stripped.startswith("#") or re.match(r"^%\s*#", stripped):
-            continue
-        if re.search(
-            r"\bERROR\s+\((?:VERI-[^)]+|ENL\d+)\)",
-            line,
-            flags=re.IGNORECASE,
-        ):
-            return True
-        if re.search(
-            r"\bsyntax error\b|ignored due to previous errors",
-            line,
-            flags=re.IGNORECASE,
-        ):
-            return True
-    return False
 # Not sure whether I need to add 'FVEval.'
 
 """
@@ -620,8 +597,9 @@ class NL2SVAHumanEvaluator(Evaluator):
         self,
         jasper_out_str: str,
     ):
-        # Ignore documentation comments echoed from the TCL script.
-        if _has_real_jasper_syntax_error(jasper_out_str):
+        # check for syntax error
+        syntax_error_match = re.findall(r"syntax error", jasper_out_str)
+        if syntax_error_match:
             return {
                 "syntax": 0.0,
                 "functionality": 0.0,
@@ -866,9 +844,16 @@ class NL2SVAMachineEvaluator(Evaluator):
         self,
         jasper_out_str: str,
     ):
-        # Ignore documentation comments echoed from the TCL script while
-        # retaining real VERI/ENL/syntax diagnostics.
-        if _has_real_jasper_syntax_error(jasper_out_str):
+        # FVR_FIX: recognize Jasper syntax and elaboration failures.
+        syntax_error_match = re.search(
+            r"syntax error"
+            r"|\[ERROR \(VERI-"
+            r"|ERROR \(ENL\d+\)"
+            r"|ignored due to previous errors",
+            jasper_out_str,
+            flags=re.IGNORECASE,
+        )
+        if syntax_error_match:
             return {
                 "syntax": 0.0,
                 "functionality": 0.0,
@@ -903,8 +888,14 @@ class NL2SVAMachineEvaluator(Evaluator):
         self,
         jasper_out_str: str,
     ):
-        # Ignore documentation comments echoed from the TCL script.
-        if _has_real_jasper_syntax_error(jasper_out_str):
+        # check for syntax error
+        syntax_error_match = re.findall(r"syntax error", jasper_out_str)
+        
+        # 1126
+        # check for assumption conflict errors (EAS001, ERS055)
+        # assumption_conflict = re.search(r"ERROR \((EAS001|ERS055)\)", jasper_out_str)
+        
+        if syntax_error_match: # or assumption_conflict:
             return {
                 "syntax": 0.0,
                 "functionality": 0.0,

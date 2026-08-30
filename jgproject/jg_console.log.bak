@@ -1,0 +1,70 @@
+2026-08-30 17:37:03.302007 (2350887) main____ INFO    ----------------------------------------
+2026-08-30 17:37:03.302056 (2350887) main____ INFO    Jasper version info
+2026-08-30 17:37:03.302062 (2350887) main____ INFO      tool      : Jasper 2025.09
+2026-08-30 17:37:03.302066 (2350887) main____ INFO      version   : 2025.09p002 64 bits
+2026-08-30 17:37:03.302069 (2350887) main____ INFO      build date: 2025.11.19 14:35:23 UTC
+2026-08-30 17:37:03.302071 (2350887) main____ INFO    ----------------------------------------
+2026-08-30 17:37:03.302072 (2350887) main____ INFO    Runtime info:
+2026-08-30 17:37:03.302074 (2350887) main____ INFO      platform  : Linux 4.18.0-553.148.1.el8_10.x86_64 x86_64
+2026-08-30 17:37:03.302080 (2350887) main____ INFO      hostname  : umber.ece.jhu.edu
+2026-08-30 17:37:03.302084 (2350887) main____ INFO      pid       : 2350887
+2026-08-30 17:37:03.302086 (2350887) main____ INFO      arguments : '-style' 'windows' '-no_gui' '-tcl' '/tmp/fvrulelearner_jg_check.f5jKPU/check.tcl'
+2026-08-30 17:37:03.302090 (2350887) main____ INFO      locale    : UTF-8
+2026-08-30 17:37:03.302092 (2350887) main____ INFO    ----------------------------------------
+2026-08-30 17:37:03.302093 (2350887) main____ INFO    System resource limits info:
+2026-08-30 17:37:03.302096 (2350887) main____ INFO      virtual memory: unlimited
+2026-08-30 17:37:03.302099 (2350887) main____ INFO      cpu time      : unlimited
+2026-08-30 17:37:03.302104 (2350887) main____ INFO      processes     : 256418
+2026-08-30 17:37:03.302110 (2350887) main____ INFO      stack size    : 8388608 B
+2026-08-30 17:37:03.302114 (2350887) main____ INFO      core file size: 0 B
+2026-08-30 17:37:03.302117 (2350887) main____ INFO      open files    : 1024
+2026-08-30 17:37:03.302119 (2350887) main____ INFO      file size     : unlimited
+2026-08-30 17:37:03.302121 (2350887) main____ INFO    ----------------------------------------
+2026-08-30 17:37:03.302123 (2350887) main____ INFO    Memory statistics:
+2026-08-30 17:37:03.302125 (2350887) main____ INFO      total physical memory  : 65868612 kB
+2026-08-30 17:37:03.302128 (2350887) main____ INFO      free physical memory   : 29939748 kB
+2026-08-30 17:37:03.302130 (2350887) main____ INFO      committed address space: 14715976 kB
+2026-08-30 17:37:03.302132 (2350887) main____ INFO    ----------------------------------------
+2026-08-30 17:37:03.302710 (2350887) main____ INFO    Important environment variables:
+2026-08-30 17:37:03.302723 (2350887) main____ INFO      DISPLAY            : ':10'
+2026-08-30 17:37:03.302726 (2350887) main____ INFO      JASPER_CPU_CHECK   : '1'
+2026-08-30 17:37:03.302729 (2350887) main____ INFO      JASPER_INSTALL_DIR : '/raid/cadence/installs/JASPER_25.09.002'
+2026-08-30 17:37:03.302731 (2350887) main____ INFO      JASPER_KERNEL_CHECK: '1'
+2026-08-30 17:37:03.302733 (2350887) main____ INFO      JASPER_OS_CHECK    : '1'
+2026-08-30 17:37:03.302735 (2350887) main____ INFO      JASPER_PLATFORM    : 'Linux64'
+2026-08-30 17:37:03.302738 (2350887) main____ INFO      LANG               : 'en_US.UTF-8'
+2026-08-30 17:37:03.302740 (2350887) main____ INFO      LM_LICENSE_FILE    : '27000@mimic.ece.jhu.edu'
+2026-08-30 17:37:03.302742 (2350887) main____ INFO    ----------------------------------------
+2026-08-30 17:37:03.302784 (2350887) lic_core INFO    Initializing license system ...
+2026-08-30 17:37:03.303713 (2350901) lic_core INFO    [17:37:03.079273] Configured Lic search path (24.01-s003): 27000@mimic.ece.jhu.edu
+2026-08-30 17:37:03.338433 (2350887) lic_core INFO    ... license system initialized.
+2026-08-30 17:37:03.338584 (2350887) lic__man INFO    Claim 'main' for <ui>.
+2026-08-30 17:37:03.338610 (2350887) lic_core INFO    (1) checking out 'jasper_interactive' ...
+2026-08-30 17:37:03.389902 (2350887) lic_core INFO    ... (1) checkout succeeded
+2026-08-30 17:37:03.389929 (2350887) lic__man INFO    Claim 'fpv' for <ui>.
+2026-08-30 17:37:03.389938 (2350887) lic_core INFO    (2) checking out 'jasper_fpv' ...
+2026-08-30 17:37:03.409452 (2350887) lic_core INFO    ... (2) checkout failed (error: -5) ("FLEXnet ERROR(-5, 0, 0): No such feature exists.")
+2026-08-30 17:37:03.409472 (2350887) lic_core INFO    (3) checking out 'jasper_fao' ...
+2026-08-30 17:37:03.464640 (2350887) lic_core INFO    ... (3) checkout succeeded
+2026-08-30 17:37:03.465269 (2350908) stdio___ INFO    Starting STDIN reader (tty: yes, tty name: '/dev/pts/6')
+2026-08-30 17:37:03.465333 (2350887) main____ INFO    Tool inactivity delay is 480000 ms.
+2026-08-30 17:37:03.467376 (2350887) bridge__ INFO    Starting Jasper advanced job dispatch and management feature with id 'bridge_0' ...
+2026-08-30 17:37:03.471728 (2350887) bridge__ INFO    Jasper advanced job dispatch and management feature started with id 'bridge_0'(pid: 2350909)
+2026-08-30 17:37:03.608769 (2350887) session_ INFO    Starting analysis session with session id 'session_0' (launcher: <local>) ...
+2026-08-30 17:37:03.611448 (2350887) session_ INFO    Analysis session with session id 'session_0' started (pid: 2350919)
+2026-08-30 17:37:04.352822 (2350887) session_ INFO    Analysis session 'session_0' connected to the console (host: 127.0.0.1:46636)
+2026-08-30 17:37:04.777726 (2350887) main____ INFO    About to exit: request to exit with status 0 received from analysis session 'session_0'
+2026-08-30 17:37:05.104825 (2350887) session_ INFO    Analysis session 'session_0' disconnected.
+2026-08-30 17:37:05.104918 (2350887) lic__man INFO    Unclaim everything for 'session_0'.
+2026-08-30 17:37:05.105090 (2350887) session_ INFO    Process for analysis session 'session_0' has exited with exit status '0'.
+2026-08-30 17:37:05.308185 (2350887) bridge__ INFO    jg_bridge has exited with exit status '0'.
+2026-08-30 17:37:06.882705 (2350908) stdio___ INFO    STDIN reader requested to stop.
+2026-08-30 17:37:06.882737 (2350908) stdio___ INFO    STDIN reader stopped.
+2026-08-30 17:37:06.882870 (2350887) lic_core INFO    (1) checkin jasper_interactive
+2026-08-30 17:37:06.886866 (2350887) lic_core INFO    (3) checkin jasper_fao
+2026-08-30 17:37:06.892769 (2350887) lic_core INFO    Lic Summary:
+2026-08-30 17:37:06.892780 (2350887) lic_core INFO      [17:37:06.368400] Cdslmd servers:27000@mimic.ece.jhu.edu
+2026-08-30 17:37:06.892783 (2350887) lic_core INFO      [17:37:06.892696] Feature usage summary:
+2026-08-30 17:37:06.892785 (2350887) lic_core INFO      [17:37:06.892696] jasper_interactive
+2026-08-30 17:37:06.892786 (2350887) lic_core INFO      [17:37:06.892697] jasper_fao
+2026-08-30 17:37:06.892891 (2350887) main____ INFO    Exiting with status 0.

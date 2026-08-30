@@ -54,25 +54,6 @@ ROOT = pathlib.Path(__file__).parent.parent
 
 print = saver.log_info
 
-
-# FVR_JASPER_ECHO_FIX: return only real diagnostic lines.  Do not classify
-# echoed comments from run_jg_*.tcl as candidate syntax failures.
-def _real_jasper_diagnostic_lines(jasper_out_str: str) -> list[str]:
-    diagnostics = []
-    for line in jasper_out_str.splitlines():
-        stripped = line.lstrip()
-        if stripped.startswith("#") or re.match(r"^%\s*#", stripped):
-            continue
-        if re.search(
-            r"\bERROR\s+\((?:VERI-[^)]+|ENL\d+)\)"
-            r"|\bsyntax error\b"
-            r"|ignored due to previous errors",
-            line,
-            flags=re.IGNORECASE,
-        ):
-            diagnostics.append(line)
-    return diagnostics
-
 """
 Methods for launching Cadence Jasper
 """
@@ -427,14 +408,19 @@ def launch_jg_custom_equiv_check(
             "license manager daemon",
             "lmc-",
         )
-        candidate_diagnostics = _real_jasper_diagnostic_lines(jasper_output)
+        candidate_error_markers = (
+            "syntax error",
+            "[error (veri-",
+            "error (enl",
+            "ignored due to previous errors",
+        )
 
         if any(marker in output_lower for marker in infrastructure_markers):
             raise RuntimeError(
                 f"JasperGold infrastructure failure for task {task_id}; "
                 f"return code={result.returncode}\n{jasper_output}"
             )
-        if not candidate_diagnostics:
+        if not any(marker in output_lower for marker in candidate_error_markers):
             raise RuntimeError(
                 f"Unexpected JasperGold failure for task {task_id}; "
                 f"return code={result.returncode}\n{jasper_output}"
@@ -442,8 +428,7 @@ def launch_jg_custom_equiv_check(
 
         print(
             f"WARNING: JasperGold candidate evaluation failed for task "
-            f"{task_id}; recording syntax/functionality failure and continuing.\n"
-            + "\n".join(candidate_diagnostics[:20])
+            f"{task_id}; recording syntax/functionality failure and continuing."
         )
 
     # DEBUG: Print JasperGold execution details, 1019, to debug the JasperGold output
