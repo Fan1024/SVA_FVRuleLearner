@@ -80,12 +80,12 @@ debug = False
 training_cases = []
 
 # Supported release tasks. Override with FVRULELEARNER_TASK.
-task = 'nl2sva_machine'
+task = 'nl2sva_human'
 
 LLM_gateaway = 'openai'
 # LLM_gateaway = "claude"
 
-llm_model = 'o3-mini'
+llm_model = 'gpt-4o-2024-11-20'
 
 # llm_model = "claude-sonnet-4-5-20250929"
 

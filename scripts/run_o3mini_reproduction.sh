@@ -11,7 +11,7 @@ SEED="${FVRULELEARNER_SEED:-100}"
 NUM_ITER="${FVRULELEARNER_NUM_ITER:-25}"
 MAX_TOKENS="${FVRULELEARNER_MAX_TOKENS:-20000}"
 REASONING_EFFORT="${FVRULELEARNER_REASONING_EFFORT:-}"
-JG_TIMEOUT="${FVRULELEARNER_JG_TIMEOUT_SECONDS:-300}"
+JG_TIMEOUT="${FVRULELEARNER_JG_TIMEOUT_SECONDS:-60}"
 NPARALLEL="${FVRULELEARNER_NPARALLEL:-1}"
 RUN_ROOT="${FVRULELEARNER_RUN_ROOT:-${REPO_ROOT}/src/logs/o3mini_reproduction}"
 
@@ -121,6 +121,71 @@ manifest = {
     "jg_timeout_seconds": int(os.environ["FVRULELEARNER_JG_TIMEOUT_SECONDS"]),
     "nparallel": int(os.environ["FVRULELEARNER_NPARALLEL"]),
 }
+
+
+# Record the configuration Python will actually use. Requested environment
+# values remain at the top level for comparison.
+sys.path.insert(0, str(repo_root / "src"))
+from config import FLAGS
+
+effective_config = {
+    "global_task": getattr(FLAGS, "global_task", None),
+    "task": getattr(FLAGS, "task", None),
+    "llm_model": getattr(FLAGS, "llm_model", None),
+    "debug": bool(getattr(FLAGS, "debug", False)),
+    "num_iter": getattr(FLAGS, "num_iter", None),
+    "num_group": getattr(FLAGS, "num_group", None),
+    "group_id": getattr(FLAGS, "group_id", None),
+    "random_seed": getattr(FLAGS, "random_seed", None),
+    "max_token": getattr(FLAGS, "max_token", None),
+    "jg_timeout_seconds": getattr(FLAGS, "jg_timeout_seconds", None),
+    "nparallel": getattr(FLAGS, "nparallel", None),
+    "dataset_path": str(getattr(FLAGS, "dataset_path", "")),
+}
+
+manifest["effective_config"] = effective_config
+manifest["reproduction_profile"] = "nvidia_logic_jasper25_openai_compatible"
+manifest["logic_reference"] = {
+    "repository": "NVlabs/FVRuleLearner",
+    "commit": "0da2228dc573ff832f4d9b777d5efaf7e7171d23",
+}
+manifest["compatibility_scope"] = [
+    "TCL documentation-comment sanitization for JasperGold 25.x",
+    "current OpenAI model/API parameter compatibility",
+    "infrastructure failure detection",
+    "structured manifests and training traces",
+]
+
+expected = {
+    "global_task": phase,
+    "task": task,
+    "llm_model": os.environ["FVRULELEARNER_MODEL"],
+    "debug": bool(int(os.environ["FVRULELEARNER_DEBUG"])),
+    "num_group": int(os.environ["FVRULELEARNER_NUM_GROUPS"]),
+    "group_id": int(os.environ["FVRULELEARNER_GROUP_ID"]),
+    "random_seed": int(os.environ["FVRULELEARNER_SEED"]),
+    "max_token": int(os.environ["FVRULELEARNER_MAX_TOKENS"]),
+    "jg_timeout_seconds": int(os.environ["FVRULELEARNER_JG_TIMEOUT_SECONDS"]),
+    "nparallel": int(os.environ["FVRULELEARNER_NPARALLEL"]),
+    "dataset_path": str(dataset_path),
+}
+if phase == "train":
+    expected["num_iter"] = int(os.environ["FVRULELEARNER_NUM_ITER"])
+mismatches = {
+    name: {"requested": wanted, "effective": effective_config.get(name)}
+    for name, wanted in expected.items()
+    if effective_config.get(name) != wanted
+}
+manifest["configuration_mismatches"] = mismatches
+if mismatches:
+    (run_dir / "run_manifest.json").write_text(
+        json.dumps(manifest, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    raise SystemExit(
+        "ERROR: requested runner settings differ from effective src/config.py; "
+        f"see {run_dir / 'run_manifest.json'}"
+    )
 (run_dir / "run_manifest.json").write_text(
     json.dumps(manifest, indent=2, ensure_ascii=False) + "\n",
     encoding="utf-8",

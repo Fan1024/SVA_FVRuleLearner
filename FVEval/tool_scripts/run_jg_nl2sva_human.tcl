@@ -40,7 +40,7 @@
 # (2)check assertion-to-assertion equivalence between LM-generated and reference
 #
 # Possible outcomes:
-# 1. Syntax error in the testbench; this will be caught during elaboration and script will immediately exit
+# 1. Candidate compilation failure in the testbench; this will be caught during elaboration and script will immediately exit
 # 2. Success: script completes assertion-assertion equivalence check, prints to STDOUT
 
 # Analyze property files

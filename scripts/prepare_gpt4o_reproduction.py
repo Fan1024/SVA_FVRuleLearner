@@ -146,7 +146,7 @@ task = os.environ.get("FVRULELEARNER_TASK", "nl2sva_machine").strip()
 """,
         """    nparallel = int(os.environ.get("FVRULELEARNER_NPARALLEL", "1"))
     jg_timeout_seconds = int(
-        os.environ.get("FVRULELEARNER_JG_TIMEOUT_SECONDS", "300")
+        os.environ.get("FVRULELEARNER_JG_TIMEOUT_SECONDS", "60")
     )
     if debug == True:
         nparallel = 1
@@ -208,7 +208,7 @@ def patch_jaspergold_execution() -> None:
 
     # DEBUG: Print JasperGold execution details, 1019, to debug the JasperGold output
 """,
-        """    timeout_seconds = getattr(FLAGS, "jg_timeout_seconds", 300)
+        """    timeout_seconds = getattr(FLAGS, "jg_timeout_seconds", 60)
     try:
         result = subprocess.run(
             jg_command,
@@ -300,32 +300,7 @@ def patch_training_traces() -> None:
     )
 
 
-def patch_fixing_loop_correctness() -> None:
-    learning_path = REPO_ROOT / "src" / "self_learning.py"
-    replace_guarded(
-        learning_path,
-        """        response_str = initiate_chat_with_retry(agents["user"], agents["Coding"], message=enriched_prompt)
-""",
-        """        response_str = initiate_chat_with_retry(
-            agents["user"],
-            agents["Coding"],
-            message=enriched_prompt,
-            temperature=temperature,
-        )
-""",
-        "apply the configured fixing temperature",
-    )
-    replace_guarded(
-        learning_path,
-        """    if last_metrics and (only_bleu or last_bleu == similarity_metrics.get("bleu", 0)):
-        return last_metrics
-""",
-        """    if last_metrics and only_bleu:
-        return last_metrics
-""",
-        "evaluate every generated SVA with JasperGold",
-    )
-
+def patch_qtree_fallback_guard() -> None:
     qtree_path = REPO_ROOT / "src" / "qtree_builder.py"
     replace_guarded(
         qtree_path,
@@ -378,7 +353,7 @@ def main() -> int:
         patch_openai_output_limit()
         patch_jaspergold_execution()
         patch_training_traces()
-        patch_fixing_loop_correctness()
+        patch_qtree_fallback_guard()
 
     validate_python()
     print(
@@ -401,7 +376,7 @@ Useful overrides:
   FVRULELEARNER_MODEL=gpt-4o-2024-11-20
   FVRULELEARNER_SEED=100
   FVRULELEARNER_NUM_ITER=25
-  FVRULELEARNER_JG_TIMEOUT_SECONDS=300
+  FVRULELEARNER_JG_TIMEOUT_SECONDS=60
 """.strip()
     )
     return 0

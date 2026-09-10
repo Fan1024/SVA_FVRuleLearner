@@ -299,12 +299,7 @@ def self_learn(agents, response, message, row):
         # if FLAGS.debug:
         #     print(f"@@@DEBUG: enriched_prompt = {enriched_prompt}")
 
-        response_str = initiate_chat_with_retry(
-            agents["user"],
-            agents["Coding"],
-            message=enriched_prompt,
-            temperature=temperature,
-        )
+        response_str = initiate_chat_with_retry(agents["user"], agents["Coding"], message=enriched_prompt)
         last_metrics=metrics
         # Store current metrics as previous before getting new ones
         previous_metrics = {
@@ -438,7 +433,7 @@ def evaluate_pec_etc(response, row, only_bleu, last_bleu, last_metrics = None):
     # relaxed_functionality_score = 0
     # syntax_score = 0
     
-    if last_metrics and only_bleu:
+    if last_metrics and (only_bleu or last_bleu == similarity_metrics.get("bleu", 0)):
         return last_metrics
     else:
         # Create a dummy LMResult for evaluation

@@ -38,6 +38,14 @@ def analyze_training(run_dir: Path) -> None:
         max(len(trace.get("functionality", [])) - 1, 0) for trace in traces
     )
 
+    pec_fixed_count = sum(bool(trace.get("fixed")) for trace in initial_failures)
+    bleu_only_terminal_cases = [
+        trace
+        for trace in initial_failures
+        if not any(abs(float(value) - 1.0) < 1e-6 for value in trace.get("functionality", []))
+        and any(abs(float(value) - 1.0) < 1e-6 for value in trace.get("bleu", []))
+    ]
+
     curve_rows = []
     for iteration in range(max_iteration + 1):
         fixed_count = 0
@@ -68,7 +76,10 @@ def analyze_training(run_dir: Path) -> None:
         "training_cases": len(traces),
         "initially_correct_cases": len(traces) - len(initial_failures),
         "initially_incorrect_cases": len(initial_failures),
-        "fixed_initial_failures": sum(bool(t.get("fixed")) for t in initial_failures),
+        "fixed_initial_failures": pec_fixed_count,
+        "pec_confirmed_fixed_initial_failures": pec_fixed_count,
+        "bleu_only_terminal_cases": len(bleu_only_terminal_cases),
+        "terminal_cases_by_pec_or_bleu": pec_fixed_count + len(bleu_only_terminal_cases),
         "final_fixing_ratio_over_initial_failures": float(
             curve.iloc[-1]["fixing_ratio_over_initial_failures"]
         ),
