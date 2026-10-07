@@ -26,6 +26,7 @@ logs/
 coding/
 src/logs/
 src/coding/
+new_agent/log
 *.log
 
 # Generated experiment outputs

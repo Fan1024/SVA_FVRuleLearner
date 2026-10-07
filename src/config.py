@@ -55,7 +55,7 @@ from FVEval.fv_eval import (
 
 # Select one execution stage: train / inference / eval.
 # Override without editing this file: FVRULELEARNER_STAGE=train|inference|eval
-global_task = 'inference'
+global_task = 'eval'
 if global_task not in {"train", "inference", "eval"}:
     raise ValueError(f"Unsupported FVRULELEARNER_STAGE: {global_task}")
 
@@ -80,12 +80,12 @@ debug = False
 training_cases = []
 
 # Supported release tasks. Override with FVRULELEARNER_TASK.
-task = 'nl2sva_human'
+task = 'nl2sva_machine'
 
 LLM_gateaway = 'openai'
 # LLM_gateaway = "claude"
 
-llm_model = 'gpt-4o-2024-11-20'
+llm_model = 'gpt-4o'
 
 # llm_model = "claude-sonnet-4-5-20250929"
 
