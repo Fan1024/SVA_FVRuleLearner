@@ -72,7 +72,7 @@ DEFAULT_EVAL_LOGDIR = os.environ.get(
 # Full reproduction defaults to non-debug mode.
 # Set FVRULELEARNER_DEBUG=1 for a one-case smoke test.
 debug = False
-
+oracle = True
 
 # Debug-only: restrict the training pool used by retrieval/Q-Tree building.
 # Leave empty for normal release runs.
