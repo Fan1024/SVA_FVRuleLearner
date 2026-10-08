@@ -72,6 +72,10 @@ DEFAULT_EVAL_LOGDIR = os.environ.get(
 # Full reproduction defaults to non-debug mode.
 # Set FVRULELEARNER_DEBUG=1 for a one-case smoke test.
 debug = False
+
+# Category selection for Q-Tree reflection: "shuffle" or "jev".
+operator_selection_method = "shuffle"
+# Control if Jev see the golden assertion
 oracle = True
 
 # Debug-only: restrict the training pool used by retrieval/Q-Tree building.
