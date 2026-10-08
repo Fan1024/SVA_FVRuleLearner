@@ -55,7 +55,7 @@ from FVEval.fv_eval import (
 
 # Select one execution stage: train / inference / eval.
 # Override without editing this file: FVRULELEARNER_STAGE=train|inference|eval
-global_task = 'eval'
+global_task = 'train'
 if global_task not in {"train", "inference", "eval"}:
     raise ValueError(f"Unsupported FVRULELEARNER_STAGE: {global_task}")
 
@@ -71,17 +71,17 @@ DEFAULT_EVAL_LOGDIR = os.environ.get(
 )
 # Full reproduction defaults to non-debug mode.
 # Set FVRULELEARNER_DEBUG=1 for a one-case smoke test.
-debug = False
+debug = True
 
 # Category selection for Q-Tree reflection: "shuffle" or "jev".
-operator_selection_method = "shuffle"
+operator_selection_method = "jev"
 # Control if Jev see the golden assertion
 oracle = True
 
 # Debug-only: restrict the training pool used by retrieval/Q-Tree building.
 # Leave empty for normal release runs.
 # Example: training_cases = [0, 1, 2, 3]
-training_cases = []
+training_cases = [0, 1, 2, 3]
 
 # Supported release tasks. Override with FVRULELEARNER_TASK.
 task = 'nl2sva_machine'

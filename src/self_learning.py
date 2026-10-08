@@ -236,7 +236,7 @@ def self_learn(agents, response, message, row):
         if use_qtree:
             # Q-Tree approach
             print("\n=== Using Q-Tree for reflection ===")
-            qtree_builder = QTreeBuilder(agents)
+            qtree_builder = QTreeBuilder(agents, config_flags=FLAGS)
             
             start_qtree = time.time()
             # Build Q-Tree for current assertion pair

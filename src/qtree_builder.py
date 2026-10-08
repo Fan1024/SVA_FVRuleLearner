@@ -54,6 +54,7 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 from utils_agent import initiate_chat_with_retry
 from config import FLAGS
+from operator_selector import OPERATOR_CATEGORIES, rank_operator_categories
 
 
 class QuestionLevel(Enum):
@@ -90,7 +91,24 @@ class QTreeBuilder:
         # }
         self.nodes: Dict[str, QuestionNode] = {}
         self.tree_results = []
-        self.max_questions_per_level = getattr(config_flags, 'question_tree_width', 3) if config_flags else 3
+        self.config_flags = config_flags if config_flags is not None else FLAGS
+        self.max_questions_per_level = getattr(
+            self.config_flags, "question_tree_width", 3
+        )
+        self.operator_selection_method = getattr(
+            self.config_flags, "operator_selection_method", "shuffle"
+        )
+        self.oracle = getattr(self.config_flags, "oracle", True)
+        if self.operator_selection_method not in {"shuffle", "jev"}:
+            raise ValueError("operator_selection_method must be 'shuffle' or 'jev'")
+        if type(self.oracle) is not bool:
+            raise TypeError("oracle must be a bool")
+        if (
+            type(self.max_questions_per_level) is not int
+            or not 1 <= self.max_questions_per_level <= len(OPERATOR_CATEGORIES)
+        ):
+            raise ValueError("question_tree_width must be an integer from 1 to 5")
+        self._last_operator_selection = None
         self._last_diversity_metrics = None
         self._row_data = None  # Store row data for later access
         self.qa_time = 0.0
@@ -235,25 +253,49 @@ class QTreeBuilder:
         """
     
     
+    def _select_operator_categories(self, gen_assertion, ref_assertion, row):
+        """Choose analysis categories for the current assertion."""
+        started = time.time()
+        scores = {}
+
+        if self.operator_selection_method == "shuffle":
+            import random
+
+            categories = list(OPERATOR_CATEGORIES)
+            random.shuffle(categories)
+            selected = categories[:self.max_questions_per_level]
+        else:
+            selected, scores = rank_operator_categories(
+                requirement=row.prompt,
+                generated_sva=gen_assertion,
+                reference_sva=ref_assertion if self.oracle else "",
+                top_k=self.max_questions_per_level,
+                oracle=self.oracle,
+            )
+
+        self._last_operator_selection = {
+            "method": self.operator_selection_method,
+            "oracle": self.oracle,
+            "reference_used": self.operator_selection_method == "jev" and self.oracle,
+            "selected_categories": selected,
+            "scores": scores,
+            "selection_seconds": time.time() - started,
+            "generated_sva": gen_assertion,
+        }
+        print(f"Operator selection method: {self.operator_selection_method}")
+        print(f"Jev reference access: {self._last_operator_selection['reference_used']}")
+        print(f"Selected categories: {selected}")
+        if scores:
+            print(f"Jev scores: {scores}")
+        return selected
+
     def _generate_exploratory_questions(self, gen_assertion: str, ref_assertion: str, 
                                       metrics: Dict[str, Any], row: Any) -> List[str]:
         """Generate exploratory questions based on assertion differences"""
-        import random
-        
-        # Define analysis keywords for random sampling - focused on operator level
-        analysis_keywords = [
-            "logical_operators",
-            "temporal_operators", 
-            "comparison_operators",
-            "implication_operators",
-            "bitwise_operators"
-        ]
-        
-        # Shuffle and select different keywords for diversity
-        # Each question will focus on a different aspect
-        random.shuffle(analysis_keywords)
-        selected_keywords = analysis_keywords[:self.max_questions_per_level]
-        
+        selected_keywords = self._select_operator_categories(
+            gen_assertion, ref_assertion, row
+        )
+
         # Build prompt for LLM to generate questions
         full_background = self._get_background_knowledge(row, gen_assertion, ref_assertion)
         
@@ -597,6 +639,7 @@ Reference Assertion: {reference}
             # "task_id": task_id,
             # "design_name": self._row_data.design_name if self._row_data else None,  # Using task_id as design_id since there's no separate design_id field
             "signal_based": True,
+            "operator_selection": self._last_operator_selection,
             "nodes": [],
             "question_analysis": self._get_question_coverage(),
             "semantic_diversity_metrics": self._last_diversity_metrics if self._last_diversity_metrics else {},
