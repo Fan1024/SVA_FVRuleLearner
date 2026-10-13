@@ -1,37 +1,66 @@
+from openai import OpenAI
+
+import assertion_generator
+import counter_example as example
+
 from jev_assertion_diagnosis import diagnose_assertion_mismatches
 from diagnosis_formatter import format_diagnosis
 
-def main():
-    #1. Call Jev with the assertion example
-    diagnosis = diagnose_assertion_mismatches(
-        requirement="Whenever a is high, b must be high on the next clock cycle.",
-        generated_assertion="assert property (@(psedge clk) a -> b);",
-        reference_assertion="assert property (@(posedge clk) a => b);",
-        design_context="a and b are signle-bit signals samples on posedge clk.",
-    )
-    # Check the actual assertions sent to Jev.
-    print("Generated:", diagnosis["state"]["generated_assertion"])
-    print("Reference:", diagnosis["state"]["reference_assertion"])
 
-    # Check the two answers before formatting.
+MODEL = "gpt-5.6-terra"
+
+
+def main():
+    # 1. Generate an assertion for the fixed counter example.
+    user_prompt = assertion_generator.build_generation_prompt(
+        requirement=example.REQUIREMENT,
+        testbench=example.TESTBENCH,
+    )
+
+    client = OpenAI()
+    response_text = assertion_generator.generate_assertion(
+        client=client,
+        model=MODEL,
+        user_prompt=user_prompt,
+    )
+    generated_assertion = assertion_generator.extract_assertion(response_text)
+
+    print("MODEL RESPONSE:")
+    print(response_text)
+
+    # 2. Compare the generated assertion with the fixed reference using Jev.
+    diagnosis = diagnose_assertion_mismatches(
+        requirement=example.REQUIREMENT,
+        generated_assertion=generated_assertion,
+        reference_assertion=example.REFERENCE_ASSERTION,
+        design_context=example.TESTBENCH,
+        formal_feedback="No formal verification has been run for this example.",
+    )
+
+    print("\nGENERATED ASSERTION SENT TO JEV:")
+    print(diagnosis["state"]["generated_assertion"])
+    print("\nREFERENCE ASSERTION SENT TO JEV:")
+    print(diagnosis["state"]["reference_assertion"])
+
     for question_name in (
         "implication_presence",
         "implication_replace_operator",
     ):
-        print("Question:", question_name)
+        print("\nQuestion:", question_name)
         print("Raw answer:", diagnosis["raw_answers"][question_name])
         print("Processed answer:", diagnosis["answers"][question_name])
-    
-    #2. Get the processed answer, including their confidence values,
-    answers = diagnosis["answers"]
-    
-    #3. Covner retained answers into statements.
-    statements = format_diagnosis(answers, confidence_threshold=0.4)
-    
-    #4. Print each question ad its statement.
+
+    # 3. Format the answers using your existing formatter.
+    statements = format_diagnosis(
+        diagnosis["answers"],
+        confidence_threshold=0.4,
+    )
+
+    print("\nFORMATTED DIAGNOSIS:")
     for question_name, statement in statements.items():
-        print(f"{question_name}:{statement}")
-        
+        print(f"{question_name}: {statement}")
+
+
 if __name__ == "__main__":
-    # Running this file makes one live Jev API call.
     main()
+
