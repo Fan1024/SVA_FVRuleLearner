@@ -8,14 +8,39 @@ Use the provided testbench as the context for your translation.
 """
 
 
-def build_generation_prompt(requirement: str, testbench: str) -> str:
-    """Combine the testbench, requirement, and output instructions."""
+def build_generation_prompt(
+    requirement: str,
+    testbench: str,
+    previous_assertion: str | None = None,
+    rules: list[dict] | None = None,
+) -> str:
+    """Build a fresh initial or revision prompt; never accept a reference."""
+    revision = ""
+    if previous_assertion is not None:
+        if not previous_assertion.strip() or not rules:
+            raise ValueError("A revision requires a previous assertion and rules.")
+        guidance = []
+        for number, entry in enumerate(rules, 1):
+            rule = entry.get("rule")
+            if not isinstance(rule, str) or not rule.strip():
+                raise ValueError("Every selected rule must contain nonempty rule text.")
+            guidance.append(f"{number}. {rule.strip()}")
+        revision = (
+            "\nRevise the previous assertion using the correction guidance below.\n"
+            "Apply each rule only when its behavioral condition fits the requirement.\n"
+            "Preserve correct behavior while correcting the identified issues.\n"
+            "\nPREVIOUS ASSERTION\n" + previous_assertion
+            + "\n\nCORRECTION GUIDANCE\n" + "\n".join(guidance) + "\n"
+        )
+    elif rules:
+        raise ValueError("Rules require a previous assertion for this experiment.")
+
     return f"""Here is the testbench to perform your translation:
 
 {testbench}
 
 Question: Create a SVA assertion checks {requirement}
-
+{revision}
 Generate exactly one assertion, labeled asrt.
 Do not add code to output an error message string.
 Enclose your SVA code with ```systemverilog and ```.
@@ -56,4 +81,5 @@ def extract_assertion(response_text: str) -> str:
         raise ValueError("Expected one nonempty assertion code block.")
 
     return assertion
+
 

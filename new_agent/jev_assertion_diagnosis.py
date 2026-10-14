@@ -30,7 +30,10 @@ def diagnose_assertion_mismatches(
 
     state = {
         "background": (
-            "The generated assertion has already failed the formal verification test. "
+            "The generated assertion did not satisfy the pipeline acceptance criterion. "
+            "Read the formal feedback: the property body may have failed PEC, or "
+            "body PEC may have passed while reset names differ. A reset-name "
+            "mismatch alone does not prove different reset semantics. "
             "Identify the changes needed to fix it using the requirement and "
             "the known-correct reference assertion. Do not recheck whether the "
             "whole assertion has an error. A failed assertion can still contain "
@@ -398,3 +401,4 @@ if __name__ == "__main__":
         design_context="a and b are single-bit signals sampled on posedge clk.",
     )
     print(json.dumps(diagnosis, indent=2, ensure_ascii=False))
+

@@ -334,7 +334,24 @@ STATEMENT_MAPPINGS = {
 }
 
 
-def format_diagnosis(answers: dict,confidence_threshold: float = 0.4,) -> dict[str, str]:
+def format_reset_mismatch(formal_result: dict) -> dict[str, str]:
+    """Expose the checker's reset observation; do not claim semantic inequivalence."""
+    if formal_result.get("reset_mismatch") is not True:
+        return {}
+    generated = formal_result.get("generated_reset") or "(none)"
+    reference = formal_result.get("reference_reset") or "(none)"
+    return {
+        "reset_guard_mismatch": (
+            f"The generated disable iff reset is {generated!r}; the reference reset "
+            f"is {reference!r}. The Human PEC compares property bodies without the "
+            "clock/reset wrappers. The pipeline separately requires matching reset "
+            "names; this observation alone does not establish semantic inequivalence. "
+            "Assess the reset guard against the requirement and testbench."
+        )
+    }
+
+
+def format_diagnosis(answers: dict, confidence_threshold: float = 0.4) -> dict[str, str]:
     """Format confident True and Choice answers; skip Boolean False."""
     statements = {}
 
@@ -374,4 +391,5 @@ if __name__ == "__main__":
 
     for question_name, statement in output.items():
         print(f"{question_name}: {statement}")
+
 
