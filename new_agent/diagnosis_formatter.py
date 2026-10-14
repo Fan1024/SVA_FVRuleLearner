@@ -1,60 +1,377 @@
-# Group statement mappings by operator category.
+"""Format all 43 questions currently defined in jev_assertion_diagnosis.py.
+
+Each input result contains an answer and an upstream confidence value.
+The returned dictionary preserves the same unique question IDs as the input.
+This module formats results only; it does not call an API or verify assertions.
+"""
+
+
+# Implication question mappings.
 IMPLICATION = {
-    # Noul question: the answer is True or False.
     "implication_replace_operator": {
         True: (
-            "An existing implication operator (|-> or |=>) needs to be "
-            "replaced with an operator from a different category."
+            "An existing implication operator (|-> or |=>) needs to be replaced with an "
+            "operator from a different category."
         ),
         False: (
-            "No replacement of an implication operator (|-> or |=>) "
-            "with an operator from a different category is recommended."
+            "No replacement of an implication operator (|-> or |=>) with an operator from "
+            "a different category is recommended."
         ),
     },
-
-    # Choice question: the answer is one of these four strings.
     "implication_presence": {
-        "reference_only": "Implication operators (|->, |=>) appear only in the reference assertion.",
-        "generated_only": "Implication operators (|->, |=>) appear only in the generated assertion.",
+        "reference_only": (
+            "Implication operators (|->, |=>) appear only in the reference assertion."
+        ),
+        "generated_only": (
+            "Implication operators (|->, |=>) appear only in the generated assertion."
+        ),
         "both": "Implication operators (|->, |=>) appear in both assertions.",
         "neither": "Neither assertion contains implication operators (|->, |=>).",
+    },
+    "implication_insert_operator": {
+        True: (
+            "Insert a missing implication operator (|-> or |=>) to express the required "
+            "behavior."
+        ),
+        False: "No insertion of an implication operator (|-> or |=>) is recommended.",
+    },
+    "implication_remove_operator": {
+        True: "Remove an unnecessary implication operator (|-> or |=>).",
+        False: "No removal of an implication operator (|-> or |=>) is recommended.",
+    },
+    "implication_antecedent_consequent": {
+        True: (
+            "Move conditions between the antecedent and consequent so the trigger and "
+            "response are on the correct sides."
+        ),
+        False: "No movement of conditions between the antecedent and consequent is recommended.",
     },
 }
 
 
-def format_diagnosis(answers: dict, confidence_threshold: float = 0.4) -> dict[str, str]:
-    """Format only the two implication questions mapped above."""
+# Logical question mappings.
+LOGICAL = {
+    "logical_presence": {
+        "reference_only": "Logical operators (!, &&, ||) appear only in the reference assertion.",
+        "generated_only": "Logical operators (!, &&, ||) appear only in the generated assertion.",
+        "both": "Logical operators (!, &&, ||) appear in both assertions.",
+        "neither": "Neither assertion contains logical operators (!, &&, ||).",
+    },
+    "logical_replace_operator": {
+        True: "Replace an existing logical operator (!, &&, or ||) with a different operator.",
+        False: "No replacement of an existing logical operator (!, &&, or ||) is recommended.",
+    },
+    "logical_insert_operator": {
+        True: "Insert a missing logical operator (!, &&, or ||).",
+        False: "No insertion of a logical operator (!, &&, or ||) is recommended.",
+    },
+    "logical_remove_operator": {
+        True: "Remove an unnecessary logical operator (!, &&, or ||).",
+        False: "No removal of a logical operator (!, &&, or ||) is recommended.",
+    },
+    "logical_scope": {
+        True: (
+            "Regroup the terms controlled by an existing logical operator to match the "
+            "required behavior."
+        ),
+        False: (
+            "No regrouping of the terms controlled by an existing logical operator is "
+            "recommended."
+        ),
+    },
+}
+
+
+# Comparison question mappings.
+COMPARISON = {
+    "comparison_presence": {
+        "reference_only": (
+            "Comparison operators (==, !=, ===, !==, <, <=, >, >=) appear only in the "
+            "reference assertion."
+        ),
+        "generated_only": (
+            "Comparison operators (==, !=, ===, !==, <, <=, >, >=) appear only in the "
+            "generated assertion."
+        ),
+        "both": "Comparison operators (==, !=, ===, !==, <, <=, >, >=) appear in both assertions.",
+        "neither": (
+            "Neither assertion contains comparison operators (==, !=, ===, !==, <, <=, >, "
+            ">=)."
+        ),
+    },
+    "comparison_replace_operator": {
+        True: "Replace an existing comparison operator with a different operator.",
+        False: "No replacement of an existing comparison operator is recommended.",
+    },
+    "comparison_insert_operator": {
+        True: "Insert a missing comparison operator.",
+        False: "No insertion of a comparison operator is recommended.",
+    },
+    "comparison_remove_operator": {
+        True: "Remove an unnecessary comparison operator.",
+        False: "No removal of a comparison operator is recommended.",
+    },
+    "comparison_operands": {
+        True: "Replace an operand of an existing comparison.",
+        False: "No replacement of an operand of an existing comparison is recommended.",
+    },
+    "comparison_operand_order": {
+        True: "Exchange the left and right operands of an existing comparison.",
+        False: (
+            "No exchange of the left and right operands of an existing comparison is "
+            "recommended."
+        ),
+    },
+    "comparison_four_state_equality": {
+        True: "Change between ==/!= and ===/!== to match the required handling of X/Z values.",
+        False: "No change between ==/!= and ===/!== for X/Z handling is recommended.",
+    },
+}
+
+
+# Bitwise question mappings.
+BITWISE = {
+    "bitwise_presence": {
+        "reference_only": (
+            "Bitwise operators (binary &, |, ^, ~^, ^~, unary ~) appear only in the "
+            "reference assertion."
+        ),
+        "generated_only": (
+            "Bitwise operators (binary &, |, ^, ~^, ^~, unary ~) appear only in the "
+            "generated assertion."
+        ),
+        "both": "Bitwise operators (binary &, |, ^, ~^, ^~, unary ~) appear in both assertions.",
+        "neither": (
+            "Neither assertion contains bitwise operators (binary &, |, ^, ~^, ^~, unary "
+            "~)."
+        ),
+    },
+    "bitwise_replace_operator": {
+        True: "Replace an existing bitwise operator with a different operator.",
+        False: "No replacement of an existing bitwise operator is recommended.",
+    },
+    "bitwise_insert_operator": {
+        True: "Insert a missing bitwise operator.",
+        False: "No insertion of a bitwise operator is recommended.",
+    },
+    "bitwise_remove_operator": {
+        True: "Remove an unnecessary bitwise operator.",
+        False: "No removal of a bitwise operator is recommended.",
+    },
+    "bitwise_operands": {
+        True: (
+            "Use a different signal, vector, bit range, or subexpression in an existing "
+            "bitwise operation."
+        ),
+        False: (
+            "No change to the signal, vector, bit range, or subexpression used by an "
+            "existing bitwise operation is recommended."
+        ),
+    },
+}
+
+
+# Reduction question mappings.
+REDUCTION = {
+    "reduction_presence": {
+        "reference_only": (
+            "Unary reduction operators (&, |, ^, ~&, ~|, ~^, ^~) appear only in the "
+            "reference assertion."
+        ),
+        "generated_only": (
+            "Unary reduction operators (&, |, ^, ~&, ~|, ~^, ^~) appear only in the "
+            "generated assertion."
+        ),
+        "both": "Unary reduction operators (&, |, ^, ~&, ~|, ~^, ^~) appear in both assertions.",
+        "neither": (
+            "Neither assertion contains unary reduction operators (&, |, ^, ~&, ~|, ~^, "
+            "^~)."
+        ),
+    },
+    "reduction_replace_operator": {
+        True: "Replace an existing reduction operator with a different operator.",
+        False: "No replacement of an existing reduction operator is recommended.",
+    },
+    "reduction_insert_operator": {
+        True: "Insert a missing reduction operator.",
+        False: "No insertion of a reduction operator is recommended.",
+    },
+    "reduction_remove_operator": {
+        True: "Remove an unnecessary reduction operator.",
+        False: "No removal of a reduction operator is recommended.",
+    },
+    "reduction_vector_coverage": {
+        True: (
+            "Apply an existing reduction to a different vector, bit range, or expression "
+            "to include the required bits."
+        ),
+        False: (
+            "No change to the vector, bit range, or expression covered by an existing "
+            "reduction is recommended."
+        ),
+    },
+}
+
+
+# Temporal question mappings.
+TEMPORAL = {
+    "temporal_presence": {
+        "reference_only": (
+            "Temporal delays and sampled-value functions (##, $past, $rose, $fell, "
+            "$stable, $changed) appear only in the reference assertion."
+        ),
+        "generated_only": (
+            "Temporal delays and sampled-value functions (##, $past, $rose, $fell, "
+            "$stable, $changed) appear only in the generated assertion."
+        ),
+        "both": (
+            "Temporal delays and sampled-value functions (##, $past, $rose, $fell, "
+            "$stable, $changed) appear in both assertions."
+        ),
+        "neither": (
+            "Neither assertion contains temporal delays and sampled-value functions (##, "
+            "$past, $rose, $fell, $stable, $changed)."
+        ),
+    },
+    "temporal_insert_delay": {
+        True: "Insert a missing ## delay.",
+        False: "No insertion of a ## delay is recommended.",
+    },
+    "temporal_remove_delay": {
+        True: "Remove an unnecessary ## delay.",
+        False: "No removal of a ## delay is recommended.",
+    },
+    "temporal_delay_value": {
+        True: "Change the cycle count of an existing fixed ## delay.",
+        False: "No change to the cycle count of an existing fixed ## delay is recommended.",
+    },
+    "temporal_delay_lower_bound": {
+        True: "Change the lower bound of an existing ## delay range.",
+        False: "No change to the lower bound of an existing ## delay range is recommended.",
+    },
+    "temporal_delay_upper_bound": {
+        True: "Change the upper bound of an existing ## delay range.",
+        False: "No change to the upper bound of an existing ## delay range is recommended.",
+    },
+    "temporal_replace_sampling_function": {
+        True: (
+            "Replace an existing sampled-value function with a different function ($past, "
+            "$rose, $fell, $stable, or $changed)."
+        ),
+        False: "No replacement of an existing sampled-value function is recommended.",
+    },
+    "temporal_insert_sampling_function": {
+        True: "Insert a missing sampled-value function.",
+        False: "No insertion of a sampled-value function is recommended.",
+    },
+    "temporal_remove_sampling_function": {
+        True: "Remove an unnecessary sampled-value function.",
+        False: "No removal of a sampled-value function is recommended.",
+    },
+    "temporal_past_offset": {
+        True: "Change the history offset of an existing $past call.",
+        False: "No change to the history offset of an existing $past call is recommended.",
+    },
+    "temporal_sampling_clock": {
+        True: "Change the sampling clock used by an existing sampled-value function.",
+        False: (
+            "No change to the sampling clock used by an existing sampled-value function "
+            "is recommended."
+        ),
+    },
+    "temporal_scope": {
+        True: "Apply an existing delay or sampled-value function to a different subexpression.",
+        False: (
+            "No change to the subexpression controlled by an existing delay or "
+            "sampled-value function is recommended."
+        ),
+    },
+}
+
+
+# Parentheses question mappings.
+PARENTHESES = {
+    "parentheses_presence": {
+        "reference_only": "Expression-grouping parentheses appear only in the reference assertion.",
+        "generated_only": "Expression-grouping parentheses appear only in the generated assertion.",
+        "both": "Expression-grouping parentheses appear in both assertions.",
+        "neither": "Neither assertion contains expression-grouping parentheses.",
+    },
+    "parentheses_grouping": {
+        True: "Change expression grouping to correct operator precedence or scope.",
+        False: "No change to expression grouping for operator precedence or scope is recommended.",
+    },
+}
+
+
+# Global question mappings.
+GLOBAL = {
+    "global_operator_category_error_count": {
+        "zero": "No operator categories require correction.",
+        "one": "One operator category requires correction.",
+        "two_or_three": "Two or three operator categories require correction.",
+        "more_than_three": "More than three operator categories require correction.",
+    },
+    "global_operator_occurrence_edit_count": {
+        "zero": "No individual operator occurrences require correction.",
+        "one": "One individual operator occurrence requires correction.",
+        "two_or_three": "Two or three individual operator occurrences require correction.",
+        "more_than_three": "More than three individual operator occurrences require correction.",
+    },
+}
+
+
+# Combine the category dictionaries into one question-to-statement lookup.
+STATEMENT_MAPPINGS = {
+    **IMPLICATION,
+    **LOGICAL,
+    **COMPARISON,
+    **BITWISE,
+    **REDUCTION,
+    **TEMPORAL,
+    **PARENTHESES,
+    **GLOBAL,
+}
+
+
+def format_diagnosis(answers: dict,confidence_threshold: float = 0.4,) -> dict[str, str]:
+    """Format confident True and Choice answers; skip Boolean False."""
     statements = {}
 
     for question_name, result in answers.items():
-        # Other questions are outside this starter's scope.
-        if question_name not in IMPLICATION:
+        if question_name not in STATEMENT_MAPPINGS:
+            continue
+
+        decision = result["answer"]
+
+        # Suppress "no change needed" statements.
+        if decision is False:
             continue
 
         if result["confidence"] < confidence_threshold:
             continue
 
-        # First lookup: get the dictionary of possible statements.
-        options = IMPLICATION[question_name]
-
-        # Get the actual answer: a Boolean or a Choice option string.
-        decision = result["answer"]
-
-        # Second lookup: get the statement for that answer.
-        statement = options[decision]
-
-        statements[question_name] = statement
+        options = STATEMENT_MAPPINGS[question_name]
+        statements[question_name] = options[decision]
 
     return statements
 
 
 if __name__ == "__main__":
+    # A small local example; running this file makes no API calls.
     answers = {
-        "implication_replace_operator": {"answer": True, "confidence": 0.8},
-        "implication_presence": {"answer": "both", "confidence": 0.9},
+        "implication_presence": {"answer": "generated_only", "confidence": 1.0},
+        "implication_replace_operator": {"answer": False, "confidence": 0.0},
+        "logical_scope": {"answer": True, "confidence": 0.8},
+        "comparison_four_state_equality": {"answer": False, "confidence": 0.9},
+        "temporal_past_offset": {"answer": True, "confidence": 0.7},
+        "parentheses_grouping": {"answer": True, "confidence": 0.85},
+        "global_operator_category_error_count": {"answer": "two_or_three", "confidence": 0.8},
+        "global_operator_occurrence_edit_count": {"answer": "more_than_three", "confidence": 0.9},
     }
 
     output = format_diagnosis(answers)
 
     for question_name, statement in output.items():
         print(f"{question_name}: {statement}")
+
