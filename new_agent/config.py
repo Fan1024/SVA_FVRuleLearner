@@ -33,6 +33,7 @@ CONFIDENCE_THRESHOLD = 0.4
 # Every invocation creates a separate experiment directory here.
 RUNS_DIR = Path(__file__).resolve().parent / "runs"
 
-# Preserve detailed evidence from every round. False still saves final records,
-# scores, retained rules, and the latest formal input/log when available.
-SAVE_DEBUG_TRACES = True
+# True saves detailed round evidence. False saves only final case records,
+# final scores/rules, and the latest formal input/log; no round history or raw
+# model responses are saved. Temporary tool work is removed when ownership permits.
+SAVE_DEBUG_TRACES = False

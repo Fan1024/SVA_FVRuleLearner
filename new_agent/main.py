@@ -167,6 +167,7 @@ def run_pipeline(directory, record: dict) -> int:
             directory, record, stage="formatting", diagnosis=diagnosis,
             diagnosis_model=diagnosis.get("model"),
         )
+        run_io.save_diagnosis_model(record, diagnosis.get("model"))
         run_io.save_debug_event(directory, record, "diagnosis", diagnosis=diagnosis)
         statements = format_diagnosis(
             diagnosis["answers"], confidence_threshold=config.CONFIDENCE_THRESHOLD,

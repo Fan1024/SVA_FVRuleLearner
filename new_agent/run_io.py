@@ -1,7 +1,7 @@
 """Save case records, readable reports, and experiment summaries.
 
 Experiment decisions belong in main.py. This module manages records and files.
-Only the latest full attempt is kept; earlier rounds retain compact scores.
+Case records contain only final outcomes. Round evidence is optional and separate.
 """
 
 import csv
@@ -18,7 +18,7 @@ from pathlib import Path
 RUN_TIMEZONE = timezone.utc
 SCORE_FIELDS = ("syntax", "pec", "relax_pec", "bleu", "reset_mismatch")
 CSV_FIELDS = (
-    "dataset", "case_number", "design_name", "task_id", "assertion_model", "rule_model",
+    "case_number", "design_name", "task_id",
     "rounds_used", "last_evaluated_round",
     "pipeline_status", "formal_status", "syntax", "pec", "relax_pec", "bleu",
     "reset_mismatch", "passed", "stop_reason",
@@ -57,10 +57,12 @@ def create_experiment(
     directory_label = re.sub(r"[^A-Za-z0-9_-]+", "_", dataset).strip("_") or "dataset"
     directory = create_run(directory_label, runs_root=runs_root)
     metadata = {
+        "output_format_version": 2,
         "dataset": dataset,
         "dataset_path": str(dataset_path),
         "dataset_sha256": hashlib.sha256(Path(dataset_path).read_bytes()).hexdigest(),
         "models": models,
+        "diagnosis_models": [],
         "settings": settings,
         "selected_cases": [
             {
@@ -87,16 +89,11 @@ def finish_experiment(experiment_dir, exit_code: int) -> int:
     directory = Path(experiment_dir)
     metadata_path = directory / "run_metadata.json"
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-    trace_path = directory / "training_traces.jsonl"
-    traces = []
+    score_path = directory / "evaluation.csv"
     try:
-        if trace_path.exists():
-            traces = [
-                json.loads(line)
-                for line in trace_path.read_text(encoding="utf-8").splitlines()
-                if line.strip()
-            ]
+        scores = _read_scores(score_path)
     except (OSError, ValueError) as error:
+        scores = []
         metadata["summary_error"] = f"{type(error).__name__}: {error}"
         if exit_code == 0:
             exit_code = 1
@@ -104,8 +101,8 @@ def finish_experiment(experiment_dir, exit_code: int) -> int:
         finished_at=local_now(),
         status=("INTERRUPTED" if exit_code == 130 else
                 "COMPLETED_WITH_ERRORS" if exit_code else "COMPLETED"),
-        cases_recorded=None if metadata.get("summary_error") else len(traces),
-        cases_passed=None if metadata.get("summary_error") else sum(trace["passed"] for trace in traces),
+        cases_recorded=None if metadata.get("summary_error") else len(scores),
+        cases_passed=None if metadata.get("summary_error") else sum(row["passed"] == "True" for row in scores),
         exit_code=exit_code,
     )
     _atomic_write(metadata_path, json.dumps(metadata, indent=2, ensure_ascii=False) + "\n")
@@ -113,7 +110,7 @@ def finish_experiment(experiment_dir, exit_code: int) -> int:
     if metadata.get("summary_error"):
         print("Batch summary unavailable:", metadata["summary_error"])
     else:
-        print(f"Cases recorded: {len(traces)} | Passed: {metadata['cases_passed']}")
+        print(f"Cases recorded: {len(scores)} | Passed: {metadata['cases_passed']}")
     print("Evaluation:", directory / "evaluation.csv")
     print("Learning evidence:", directory / "learned_rules.jsonl")
     return exit_code
@@ -159,26 +156,68 @@ def _atomic_write(path: Path, text: str) -> None:
     temporary.replace(path)
 
 
+def final_record(record: dict) -> dict:
+    """Select final case data; runtime prompts and round history stay in memory."""
+    saved = {
+        name: record[name] for name in (
+            "case_id", "started_at", "finished_at", "status", "stage",
+            "rounds_used", "last_evaluated_round", "passed", "stop_reason",
+            "summary_error", "trace_error",
+        )
+    }
+    saved["inputs"] = {
+        name: record["inputs"][name]
+        for name in ("case_number", "design_name", "requirement", "reference_assertion")
+        if name in record["inputs"]
+    }
+    saved["generation"] = {"assertion": record["generation"]["assertion"]}
+    formal = record["formal"]
+    saved["formal"] = None if formal is None else {
+        name: formal[name]
+        for name in SCORE_FIELDS + (
+            "status", "generated_reset", "reference_reset", "comparison_scope",
+            "returncode", "source_task_id", "tool_task_id", "log_path", "input_path", "cleanup",
+        )
+        if name in formal
+    }
+    error = record["error"]
+    saved["error"] = None if error is None else {
+        name: error[name] for name in ("stage", "type", "message") if name in error
+    }
+    saved["summary_directory"] = record.get("summary_directory")
+    return saved
+
+
 def save_run(run_dir, record: dict) -> None:
-    """Save JSON and report; keep the full tool output in jasper.log."""
+    """Write compact final records; tracing also permits overwritten checkpoints."""
+    tracing = record["settings"].get("save_debug_traces", False)
+    if not tracing and record["finished_at"] is None:
+        return
     directory = Path(run_dir)
-    saved = dict(record)
-    if record["formal"] is not None:
-        saved["formal"] = {
-            key: value for key, value in record["formal"].items()
-            if key != "tool_output"
-        }
+    saved = final_record(record)
     _atomic_write(
         directory / "result.json",
         json.dumps(saved, indent=2, ensure_ascii=False) + "\n",
     )
-    _atomic_write(directory / "report.txt", _readable_report(record))
+    _atomic_write(directory / "report.txt", _readable_report(saved))
 
 
 def update_run(run_dir, record: dict, **changes) -> None:
     """Replace the supplied top-level fields and save a checkpoint."""
     record.update(changes)
     save_run(run_dir, record)
+
+
+def save_diagnosis_model(record: dict, model: str | None) -> None:
+    """Keep observed diagnosis model names once in experiment metadata."""
+    if not model:
+        return
+    path = Path(record["summary_directory"]) / "run_metadata.json"
+    metadata = json.loads(path.read_text(encoding="utf-8"))
+    models = metadata.setdefault("diagnosis_models", [])
+    if model not in models:
+        models.append(model)
+        _atomic_write(path, json.dumps(metadata, indent=2, ensure_ascii=False) + "\n")
 
 
 def save_debug_event(run_dir, record: dict, event: str, **data) -> None:
@@ -252,7 +291,10 @@ def cleanup_formal_work(run_dir, record: dict, cleanup_work, *, keep_work=False)
     if "cleanup" in formal:
         return formal["cleanup"]
     try:
-        result = cleanup_work(formal, keep_work=keep_work)
+        result = cleanup_work(
+            formal, keep_work=keep_work,
+            preserve_unresolved=record["settings"].get("save_debug_traces", False),
+        )
     except Exception as error:
         result = {
             "retained": True,
@@ -270,12 +312,9 @@ def _summary_row(record: dict) -> dict:
     inputs = record["inputs"]
     formal = record["formal"] or {}
     row = {
-        "dataset": inputs.get("dataset", "nl2sva_human"),
         "case_number": inputs.get("case_number"),
         "design_name": inputs.get("design_name", ""),
         "task_id": record["case_id"],
-        "assertion_model": record["models"]["assertion"],
-        "rule_model": record["models"]["rule"],
         "rounds_used": record["rounds_used"],
         "last_evaluated_round": record["last_evaluated_round"],
         "pipeline_status": record["status"],
@@ -290,16 +329,30 @@ def _summary_row(record: dict) -> dict:
     return row
 
 
+def _read_scores(path: Path) -> list[dict]:
+    """Read the final score table without overwriting an invalid existing file."""
+    if not path.exists():
+        return []
+    with path.open(encoding="utf-8", newline="") as file:
+        reader = csv.DictReader(file)
+        if reader.fieldnames != list(CSV_FIELDS):
+            raise ValueError("Evaluation CSV has an unexpected header.")
+        rows = list(reader)
+    if any(row.get("passed") not in {"True", "False"} for row in rows):
+        raise ValueError("Evaluation CSV contains an invalid passed value.")
+    return rows
+
+
 def _update_case_collection(path: Path, entry: dict) -> list[dict]:
-    """Save one JSONL entry per dataset/design/task and retain other cases."""
+    """Save one JSONL entry per design/task within this experiment."""
     cases = {}
     if path.exists():
         for line in path.read_text(encoding="utf-8").splitlines():
             if line.strip():
                 previous = json.loads(line)
-                key = (previous["dataset"], previous["design_name"], previous["task_id"])
+                key = (previous["design_name"], previous["task_id"])
                 cases[key] = previous
-    key = (entry["dataset"], entry["design_name"], entry["task_id"])
+    key = (entry["design_name"], entry["task_id"])
     cases[key] = entry
     entries = list(cases.values())
     text = "".join(json.dumps(item, ensure_ascii=False) + "\n" for item in entries)
@@ -315,27 +368,37 @@ def save_summaries(summary_dir, record: dict) -> None:
     """
     directory = Path(summary_dir)
     directory.mkdir(parents=True, exist_ok=True)
-    trace = _summary_row(record)
-    trace["round_metrics"] = deepcopy(record["round_metrics"])
-    traces = _update_case_collection(directory / "training_traces.jsonl", trace)
-
+    row = _summary_row(record)
+    score_path = directory / "evaluation.csv"
+    rows = {(old["design_name"], old["task_id"]): old
+            for old in _read_scores(score_path)}
+    rows[(row["design_name"], row["task_id"])] = row
     buffer = io.StringIO(newline="")
     writer = csv.DictWriter(buffer, fieldnames=CSV_FIELDS, extrasaction="ignore")
     writer.writeheader()
-    writer.writerows(traces)  # None becomes a blank CSV cell, not a zero score.
+    writer.writerows(rows.values())  # None becomes blank, not a zero score.
     _atomic_write(directory / "evaluation.csv", buffer.getvalue())
+
+    if record["settings"].get("save_debug_traces", False):
+        trace = {**row, "round_metrics": record["round_metrics"]}
+        _update_case_collection(directory / "training_traces.jsonl", trace)
 
     # Guidance is exported separately from score traces. A passed case does not
     # establish that every individual rule caused the successful revision.
+    rule_groups = {}
+    rules = {}
+    for number, entry in enumerate(record["rule_registry"], start=1):
+        rule_id = f"rule_{number}"
+        rule_groups[rule_id] = entry["group"]
+        rules[rule_id] = entry["rule"]
+
     learning = {
-        "dataset": trace["dataset"], "design_name": trace["design_name"],
-        "task_id": trace["task_id"], "case_number": trace["case_number"],
-        "models": record["models"],
-        "diagnosis_model": record["diagnosis_model"],
+        "case_number": row["case_number"], "design_name": row["design_name"],
+        "task_id": row["task_id"],
         "requirement": record["inputs"]["requirement"],
-        "rule_registry": record["rule_registry"], "rules_used": record["rules_used"],
-        "round_metrics": record["round_metrics"],
-        "passed": record["passed"], "stop_reason": record["stop_reason"],
+        "passed": record["passed"],
+        "rule_groups": rule_groups,
+        "rules": rules,
     }
     _update_case_collection(directory / "learned_rules.jsonl", learning)
 
@@ -440,13 +503,12 @@ def run_experiment(
 # Human-readable views of the same record.
 
 def _readable_report(record: dict) -> str:
-    """Format the record; this function makes no experiment decisions."""
+    """Present only the final checked assertion, scores, outcome, and errors."""
+    inputs = record["inputs"]
     lines = [
         f"Case: {record['case_id']}",
-        f"Selection ID: {record['inputs'].get('case_number', '(standalone)')}",
-        f"Design: {record['inputs'].get('design_name', '(unspecified)')}",
-        f"Assertion model: {record['models']['assertion'] or '(not used)'}",
-        f"Rule model: {record['models']['rule'] or '(not used)'}",
+        f"Selection ID: {inputs.get('case_number', '(standalone)')}",
+        f"Design: {inputs.get('design_name', '(unspecified)')}",
         f"Pipeline status: {record['status']}",
         f"Stage: {record['stage']}",
         f"Passed: {record['passed']}",
@@ -455,11 +517,11 @@ def _readable_report(record: dict) -> str:
         f"Last evaluated round: {record['last_evaluated_round'] or '(none)'}",
         f"Started: {record['started_at']}",
         f"Finished: {record['finished_at'] or '(not finished)'}",
-        "", "REQUIREMENT", record["inputs"]["requirement"],
-        "", "GENERATED ASSERTION",
+        "", "REQUIREMENT", inputs["requirement"],
+        "", "LAST EVALUATED ASSERTION",
         record["generation"]["assertion"] or "(no evaluated assertion)",
-        "", "REFERENCE ASSERTION", record["inputs"]["reference_assertion"],
-        "", "FORMAL RESULT",
+        "", "REFERENCE ASSERTION", inputs["reference_assertion"],
+        "", "FINAL FORMAL RESULT",
     ]
     formal = record["formal"]
     if formal is None:
@@ -476,75 +538,23 @@ def _readable_report(record: dict) -> str:
             lines.append(f"Work directory retained: {formal['cleanup']['retained']}")
             lines.append(f"Cleanup note: {formal['cleanup']['reason']}")
 
-    lines.extend(["", "ROUND SCORES"])
-    for metric in record["round_metrics"]:
-        scores = "; ".join(
-            f"{name}={metric[name] if metric[name] is not None else '(unavailable)'}"
-            for name in SCORE_FIELDS
-        )
-        lines.append(f"Round {metric['round']}: {metric['status']} | {scores}")
-    if not record["round_metrics"]:
-        lines.append("(no round verdicts recorded)")
-
-    for title, entries in (
-        ("RULES USED FOR THE LAST EVALUATED ASSERTION", record["rules_used"]),
-        ("RETAINED RULE REGISTRY", record["rule_registry"]),
-    ):
-        lines.extend(["", title])
-        if not entries:
-            lines.append("(none)")
-        for entry in entries:
-            lines.extend([
-                f"Group: {', '.join(entry['group'])}",
-                entry["rule"],
-                f"First learned: round {entry['first_learned_round']}; "
-                f"updated: round {entry['updated_round']}",
-            ])
-
-    lines.extend(["", "FORMATTED DIAGNOSIS FOR THE LAST EVALUATED ASSERTION"])
-    if record["diagnosis_skipped_reason"]:
-        lines.append(record["diagnosis_skipped_reason"])
-    elif record["statements"]:
-        lines.extend(f"{name}: {text}" for name, text in record["statements"].items())
-    else:
-        lines.append("(none retained for this assertion)")
-
-    learning = record["last_rule_generation"]
-    if learning is not None:
-        lines.extend([
-            "", "LAST RULE GENERATION",
-            f"Learning round: {learning['round']}; model: {learning['model']}",
-            "Its raw response and decoded output are stored in result.json.",
-        ])
-
-    pending = record["pending_attempt"]
-    if pending is not None:
-        lines.extend([
-            "", "PENDING ATTEMPT WITHOUT A RETURNED CHECKER RESULT",
-            f"Round: {pending['round']}",
-            "Its output is separate from the evaluated assertion and scores above.",
-            pending["generation"]["assertion"]
-            or pending["generation"]["raw_response"] or "(no response)",
-        ])
     if record["error"]:
         error = record["error"]
         lines.extend([
             "", "PIPELINE ERROR", f"Stage: {error['stage']}",
-            f"{error['type']}: {error['message']}", error.get("traceback", ""),
+            f"{error['type']}: {error['message']}",
         ])
     if record["trace_error"]:
         lines.extend(["", "TRACE SAVE ERROR", record["trace_error"]])
     if record["summary_error"]:
         lines.extend(["", "SUMMARY SAVE ERROR", record["summary_error"]])
-    lines.extend([
-        "", "Open result.json for the latest prompts, model output, and retained diagnosis.",
-        "Open jasper.log for captured tool output, if a check returned a log.",
-        "Open learned_rules.jsonl for exported guidance and correction outcomes.",
-    ])
     if record.get("summary_directory"):
-        lines.append(f"Shared summary directory: {record['summary_directory']}")
-    if record["settings"].get("save_debug_traces", False):
-        lines.append("Open debug_traces.jsonl for prompts, replies, diagnosis, and round logs.")
+        lines.extend([
+            "", f"Experiment directory: {record['summary_directory']}",
+            "Open run_metadata.json for shared dataset, model, and configuration details.",
+            "Open learned_rules.jsonl for retained guidance and case outcomes.",
+        ])
+    lines.append("This report contains no round history or raw model responses.")
     return "\n".join(lines) + "\n"
 
 

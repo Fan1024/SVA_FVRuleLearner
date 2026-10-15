@@ -40,3 +40,8 @@ paper/
 
 # Local Jasper artifacts
 Jasper/
+
+
+#new_agent output dirs
+new_agent/runs
+new_agent/logs

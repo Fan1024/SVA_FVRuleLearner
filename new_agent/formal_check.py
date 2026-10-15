@@ -310,14 +310,16 @@ def evaluate_assertion(
     return _finish_result(result, output)
 
 
-def cleanup_work(result: dict, keep_work: bool = False) -> dict:
-    """Delete only this checker's owned _work folder for recognized results."""
+def cleanup_work(
+    result: dict, keep_work: bool = False, *, preserve_unresolved: bool = True,
+) -> dict:
+    """Delete owned work; optionally retain unresolved checks for debugging."""
     work = Path(result["work_dir"])
     if not work.exists() and not work.is_symlink():
         return {"retained": False, "reason": "No work directory remains."}
     if keep_work:
         return {"retained": True, "reason": "KEEP_WORK is enabled."}
-    if result["status"] not in {
+    if preserve_unresolved and result["status"] not in {
         "FULL_EQUIVALENCE", "IMPLIES", "NO_EQUIVALENCE", "SYNTAX_ERROR",
     }:
         return {
@@ -342,5 +344,5 @@ def cleanup_work(result: dict, keep_work: bool = False) -> dict:
         shutil.rmtree(work)
     except OSError as error:
         return {"retained": True, "reason": f"Cleanup failed: {error}"}
-    return {"retained": False, "reason": "Recognized result; work files removed."}
+    return {"retained": False, "reason": "Owned work files removed."}
 
