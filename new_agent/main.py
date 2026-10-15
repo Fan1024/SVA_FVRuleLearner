@@ -53,7 +53,8 @@ def validate_config() -> None:
     """Check active settings once, before creating a run or making API calls."""
     if not isinstance(config.DATASET, str) or not config.DATASET.strip():
         raise ValueError("DATASET must be a nonempty dataset name.")
-    formal_check.get_evaluation_policy(config.DATASET)
+    if config.DATASET not in {"nl2sva_human", "nl2sva_machine"}:
+        raise ValueError("DATASET must be 'nl2sva_human' or 'nl2sva_machine'.")
     if type(config.MAX_ROUNDS) is not int or config.MAX_ROUNDS < 1:
         raise ValueError("MAX_ROUNDS must be a positive integer.")
     for name in ("ASSERTION_MODEL", "RULE_MODEL"):
@@ -77,7 +78,6 @@ def validate_config() -> None:
 def run_pipeline(directory, record: dict) -> int:
     """Run the existing round loop for ONE case. Each call has fresh rules."""
     inputs = record["inputs"]
-    policy = formal_check.get_evaluation_policy(inputs.get("dataset", config.DATASET))
     client = OpenAI()
     registry = {}
     previous_assertion = None
@@ -93,7 +93,7 @@ def run_pipeline(directory, record: dict) -> int:
             testbench=inputs["testbench"],
             previous_assertion=previous_assertion,
             rules=selected_rules,
-            comparison_scope=policy["scope"],
+            comparison_scope=formal_check.COMPARISON_SCOPE,
         )
         attempt = run_io.start_attempt(
             directory, record, round_number,
@@ -123,7 +123,7 @@ def run_pipeline(directory, record: dict) -> int:
             run_dir=directory,
             timeout_seconds=config.JASPER_TIMEOUT_SECONDS,
             task_id=inputs["task_id"],
-            dataset=policy["name"],
+            dataset=inputs.get("dataset", config.DATASET),
         )
         run_io.record_formal_result(directory, record, attempt, formal_result)
         run_io.update_run(directory, record, stage="cleanup")
@@ -147,7 +147,7 @@ def run_pipeline(directory, record: dict) -> int:
             run_io.update_run(
                 directory, record, status="PASSED", stage="finished",
                 passed=True, stop_reason="passed",
-                diagnosis_skipped_reason="Strict PEC passed under the selected evaluation policy.",
+                diagnosis_skipped_reason="Both full-assertion implications passed under the supplied testbench.",
             )
             return 0
 
@@ -169,7 +169,7 @@ def run_pipeline(directory, record: dict) -> int:
             reference_assertion=inputs["reference_assertion"],
             design_context=inputs["testbench"],
             formal_feedback=formal_result["feedback"],
-            comparison_scope=policy["scope"],
+            comparison_scope=formal_check.COMPARISON_SCOPE,
         )
         run_io.update_run(
             directory, record, stage="formatting", diagnosis=diagnosis,
@@ -197,7 +197,7 @@ def run_pipeline(directory, record: dict) -> int:
             reference_assertion=inputs["reference_assertion"],
             statements=statements,
             testbench=inputs["testbench"],
-            comparison_scope=policy["scope"],
+            comparison_scope=formal_check.COMPARISON_SCOPE,
         )
         rule_attempt = {
             "round": round_number, "model": config.RULE_MODEL,
@@ -232,7 +232,6 @@ def main() -> int:
     """Load cases once; use the existing round workflow separately for each."""
     # 1. Validate the configuration, CSV, and complete selection before any API call.
     validate_config()
-    policy = formal_check.get_evaluation_policy(config.DATASET)
     cases, dataset_split = dataset_loader.load_training_cases(
         config.DATASET_PATH, config.CASE_IDS,
         train_fraction=config.TRAIN_FRACTION, split_seed=config.SPLIT_SEED,
@@ -242,8 +241,8 @@ def main() -> int:
     settings = {
         "dataset": config.DATASET,
         "dataset_path": str(dataset_path),
-        "checker": policy["name"],
-        "comparison_scope": policy["scope"],
+        "checker": "full_assertion",
+        "comparison_scope": formal_check.COMPARISON_SCOPE,
         "revision_rules": "previous_round_only",
         "case_ids": list(config.CASE_IDS),
         "dataset_split": dataset_split,
@@ -261,7 +260,7 @@ def main() -> int:
         phase="train",
     )
     print("Dataset:", dataset_path)
-    print("Evaluation policy:", policy["name"])
+    print("Evaluation scope: full assertion under the supplied testbench")
     if dataset_split is not None:
         print(
             f"Random split: {len(cases)} training | "
@@ -310,3 +309,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

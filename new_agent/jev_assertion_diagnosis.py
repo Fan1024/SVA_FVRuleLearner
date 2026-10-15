@@ -3,6 +3,8 @@ from typing import Any, Optional
 
 from typesafe_sdk import Choice, Noul, TypeSafeClient
 
+from formal_check import COMPARISON_SCOPE
+
 
 def diagnose_assertion_mismatches(
     requirement: str,
@@ -11,7 +13,7 @@ def diagnose_assertion_mismatches(
     *,
     design_context: str = "",
     formal_feedback: str = "",
-    comparison_scope: str = "",
+    comparison_scope: str = COMPARISON_SCOPE,
     model: Optional[str] = None,
     client: Optional[TypeSafeClient] = None,
 ) -> dict[str, Any]:
@@ -34,7 +36,9 @@ def diagnose_assertion_mismatches(
         "background": (
             "The generated assertion did not pass strict PEC. "
             "Diagnose it using the formal feedback and the supplied comparison_scope. "
-            "Restrict repair recommendations to the active comparison scope. "
+            "Clock events, disable iff conditions, and the property body are all in scope. "
+            "Use testbench definitions to recognize equivalent reset aliases. "
+            "A textual reset difference alone does not require a correction. "
             "Identify the changes needed to fix it using the requirement and "
             "the known-correct reference assertion. Do not recheck whether the "
             "whole assertion has an error. A failed assertion can still contain "
@@ -252,7 +256,10 @@ def diagnose_assertion_mismatches(
                 instructions="Should the history offset of an existing $past call be changed?",
             ),
             "sampling_clock": Noul(
-                instructions="Should the sampling clock used by an existing sampled-value function be changed?",
+                instructions=(
+                    "Should a clock signal, edge, or event used by the assertion "
+                    "or an existing sampled-value function be changed?"
+                ),
             ),
             "scope": Noul(
                 instructions={
@@ -402,3 +409,4 @@ if __name__ == "__main__":
         design_context="a and b are single-bit signals sampled on posedge clk.",
     )
     print(json.dumps(diagnosis, indent=2, ensure_ascii=False))
+

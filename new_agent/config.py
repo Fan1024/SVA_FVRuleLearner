@@ -4,9 +4,8 @@ from pathlib import Path
 
 
 # Supported CSV stems: "nl2sva_human" or "nl2sva_machine".
-# This also selects the matching FVEval scope and prompt guidance automatically:
-# Human compares bodies; Machine retains any disable iff reset condition.
-# The same stem is used as the experiment label. No separate policy setting is needed.
+# Both datasets use the same full-assertion checker and prompt guidance.
+# This selects the CSV and experiment label only.
 DATASET = "nl2sva_human"
 DATASET_PATH = (
     Path(__file__).resolve().parent.parent
@@ -53,3 +52,4 @@ TRAINING_RUN_DIR = None
 # final scores/rules, and the latest formal input/log; no round history or raw
 # model responses are saved. Temporary tool work is removed when ownership permits.
 SAVE_DEBUG_TRACES = False
+

@@ -344,12 +344,7 @@ def _debug_event_text(record: dict, event: str, data: dict) -> str:
             lines.append(f"{label}: {'unavailable' if value is None else value}")
         mismatch = formal.get("reset_mismatch")
         mismatch = "unavailable" if mismatch is None else mismatch
-        note = (
-            "wrapper comparison only; PEC decides behavior"
-            if record["settings"].get("checker") == "nl2sva_machine"
-            else "informational"
-        )
-        lines.append(f"Reset mismatch: {mismatch} ({note})")
+        lines.append(f"Reset text differs: {mismatch} (informational only)")
         if formal["status"] not in {"FULL_EQUIVALENCE", "IMPLIES", "NO_EQUIVALENCE"}:
             feedback = formal.get("feedback", "")
             details = feedback.partition("Tool details:\n")[2] or feedback
@@ -379,7 +374,7 @@ def _debug_event_text(record: dict, event: str, data: dict) -> str:
     if event == "case_finished":
         reason = data["stop_reason"]
         explanation = {
-            "passed": "Strict PEC passed under the selected evaluation policy.",
+            "passed": "Both full-assertion implications passed under the supplied testbench.",
             "max_rounds": "Maximum assertion attempts reached.",
             "no_guidance": "Rule generator returned no rules.",
             "interrupted": "Execution was interrupted by the user.",
@@ -756,7 +751,7 @@ def print_summary(run_dir, record: dict) -> None:
             f"Formal: {formal['status']} | Syntax: {formal['syntax']} | "
             f"Strict: {formal['pec']} | Relaxed: {formal['relax_pec']}"
         )
-        print(f"Reset mismatch: {formal['reset_mismatch']}")
+        print(f"Reset text differs (informational): {formal['reset_mismatch']}")
         cleanup = formal.get("cleanup")
         if cleanup and cleanup["retained"]:
             print("Work retained:", cleanup["reason"])
@@ -768,3 +763,4 @@ def print_summary(run_dir, record: dict) -> None:
     if record["summary_error"]:
         print("Summary save error:", record["summary_error"])
     print("Report:", Path(run_dir) / "report.txt")
+

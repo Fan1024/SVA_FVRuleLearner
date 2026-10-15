@@ -5,6 +5,8 @@ import re
 
 from openai import OpenAI
 
+from formal_check import COMPARISON_SCOPE
+
 
 SYSTEM_PROMPT = """You analyze SystemVerilog assertion mismatches and generate
 reusable natural-language correction rules. Diagnosis statements are hypotheses, not facts.
@@ -13,10 +15,11 @@ You may explore potential issues beyond the supplied statements using the requir
 testbench, generated assertion, and reference as background. Check whether a proposed
 correction is supported before turning it into a rule.
 Return one JSON object containing only groups and their correction rules.
-Follow the supplied comparison_scope for the active benchmark.
-Clock events are outside both supported scopes; do not generate clock repairs.
-For Human, ignore disable iff wrappers. For Machine, retained disable iff
-conditions may need correction. Reset-related body guards remain in scope for both.
+Follow the shared comparison_scope for both datasets.
+Clock events, disable iff conditions, and the property body are all in scope.
+Use testbench definitions to recognize equivalent reset expressions and aliases.
+Do not recommend a reset change just because its text differs from the reference.
+Preserve native disable iff behavior; it is not an antecedent guard.
 The reference is analysis evidence. The later assertion-generation call will
 receive the requirement, testbench, and your guidance, but no reference assertion.
 Your rules must guide that call without copying the reference implementation.
@@ -111,7 +114,7 @@ def build_rule_prompt(
     statements: dict,
     testbench: str,
     *,
-    comparison_scope: str = "",
+    comparison_scope: str = COMPARISON_SCOPE,
 ) -> str:
     """Build the prompt from data; this function makes no API call."""
     inputs = {
@@ -180,3 +183,4 @@ def check_rule_groups(result: dict, statements: dict) -> None:
             raise ValueError(f"{name}.group contains a repeated statement ID.")
         if not isinstance(entry["rule"], str) or not entry["rule"].strip():
             raise ValueError(f"{name}.rule must contain an editing instruction.")
+

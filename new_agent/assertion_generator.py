@@ -2,6 +2,8 @@ import re
 
 from openai import OpenAI
 
+from formal_check import COMPARISON_SCOPE
+
 
 SYSTEM_PROMPT = """You write SystemVerilog assertions from natural-language requirements.
 Use the provided testbench as the context for your translation.
@@ -14,7 +16,7 @@ def build_generation_prompt(
     previous_assertion: str | None = None,
     rules: list[dict] | None = None,
     *,
-    comparison_scope: str = "",
+    comparison_scope: str = COMPARISON_SCOPE,
 ) -> str:
     """Build a fresh initial or revision prompt; never accept a reference."""
     revision = ""
@@ -39,7 +41,7 @@ def build_generation_prompt(
 
     scope_guidance = (
         "\nEVALUATION SCOPE\n" + comparison_scope
-        + "\nChoose appropriate clock and reset syntax from the task and testbench.\n"
+        + "\nChoose clock and reset conditions from the task and testbench.\n"
         if comparison_scope else ""
     )
     return f"""Here is the testbench to perform your translation:
@@ -88,3 +90,4 @@ def extract_assertion(response_text: str) -> str:
         raise ValueError("Expected one nonempty assertion code block.")
 
     return assertion
+
