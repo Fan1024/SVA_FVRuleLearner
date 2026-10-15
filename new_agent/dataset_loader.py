@@ -1,6 +1,6 @@
 """Read an NL2SVA CSV and select numbered examples without running experiments.
 
-Place this file in new_agent/. Run it directly to inspect the fixed test selection.
+Run this file directly to inspect DATASET_PATH and CASE_IDS from config.py.
 The loader uses only the Python standard library and imports no model/tool code.
 """
 
@@ -109,11 +109,10 @@ def load_cases(dataset_path: str | Path, case_ids: list[int] | None = None) -> l
 
 
 def main() -> None:
-    """Standalone inspection only. Edit these two test values before running."""
-    dataset_path = "FVEval/data_nl2sva/data/nl2sva_human.csv"
-    case_ids = [1, 5, 20]
+    """Inspect the same selection main.py will use, without starting experiments."""
+    import config
 
-    cases = load_cases(dataset_path, case_ids)
+    cases = load_cases(config.DATASET_PATH, config.CASE_IDS)
     print(f"Dataset: {cases[0]['dataset_path']}")
     print(f"Selected {len(cases)} example(s).")
     for case in cases:

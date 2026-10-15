@@ -1,20 +1,19 @@
-"""Run one counter case: generate, check, learn rules, and revise."""
+"""Select dataset cases, then generate/check/revise each case independently."""
 
 from copy import deepcopy
+from math import isfinite
+from pathlib import Path
 
 from openai import OpenAI
 
 import assertion_generator
 import config
-import counter_example as example
+import dataset_loader
 import formal_check
 import rule_generator
 import run_io
 from diagnosis_formatter import format_diagnosis, format_reset_mismatch
 from jev_assertion_diagnosis import diagnose_assertion_mismatches
-
-
-CASE_ID = "counter_0"
 
 
 def update_rule_registry(registry: dict, new_rules: dict, round_number: int) -> None:
@@ -50,21 +49,32 @@ def stop_pipeline(directory, record: dict, reason: str, *, unresolved=False) -> 
     return 1 if unresolved else 0
 
 
-def run_pipeline(directory, record: dict) -> int:
-    """Keep experiment decisions here; delegate record/file handling to run_io."""
+def validate_config() -> None:
+    """Check active settings once, before creating a run or making API calls."""
+    if not isinstance(config.DATASET, str) or not config.DATASET.strip():
+        raise ValueError("DATASET must be a nonempty dataset name.")
     if type(config.MAX_ROUNDS) is not int or config.MAX_ROUNDS < 1:
         raise ValueError("MAX_ROUNDS must be a positive integer.")
     for name in ("ASSERTION_MODEL", "RULE_MODEL"):
         value = getattr(config, name)
         if not isinstance(value, str) or not value.strip():
             raise ValueError(f"{name} must be a nonempty model name.")
-    if config.JASPER_TIMEOUT_SECONDS <= 0:
-        raise ValueError("JASPER_TIMEOUT_SECONDS must be positive.")
-    if not 0 <= config.CONFIDENCE_THRESHOLD <= 1:
-        raise ValueError("CONFIDENCE_THRESHOLD must be between 0 and 1.")
+    timeout = config.JASPER_TIMEOUT_SECONDS
+    if type(timeout) not in (int, float) or not isfinite(timeout) or timeout <= 0:
+        raise ValueError("JASPER_TIMEOUT_SECONDS must be a finite positive number.")
+    confidence = config.CONFIDENCE_THRESHOLD
+    if (
+        type(confidence) not in (int, float)
+        or not isfinite(confidence)
+        or not 0 <= confidence <= 1
+    ):
+        raise ValueError("CONFIDENCE_THRESHOLD must be a number between 0 and 1.")
     if type(config.SAVE_DEBUG_TRACES) is not bool:
         raise ValueError("SAVE_DEBUG_TRACES must be True or False.")
 
+
+def run_pipeline(directory, record: dict) -> int:
+    """Run the existing round loop for ONE case. Each call has fresh rules."""
     client = OpenAI()
     inputs = record["inputs"]
     registry = {}
@@ -106,6 +116,7 @@ def run_pipeline(directory, record: dict) -> int:
             requirement=inputs["requirement"],
             run_dir=directory,
             timeout_seconds=config.JASPER_TIMEOUT_SECONDS,
+            task_id=inputs["task_id"],
         )
         run_io.record_formal_result(directory, record, attempt, formal_result)
         run_io.update_run(directory, record, stage="cleanup")
@@ -152,7 +163,10 @@ def run_pipeline(directory, record: dict) -> int:
             design_context=inputs["testbench"],
             formal_feedback=formal_result["feedback"],
         )
-        run_io.update_run(directory, record, stage="formatting", diagnosis=diagnosis)
+        run_io.update_run(
+            directory, record, stage="formatting", diagnosis=diagnosis,
+            diagnosis_model=diagnosis.get("model"),
+        )
         run_io.save_debug_event(directory, record, "diagnosis", diagnosis=diagnosis)
         statements = format_diagnosis(
             diagnosis["answers"], confidence_threshold=config.CONFIDENCE_THRESHOLD,
@@ -205,29 +219,66 @@ def run_pipeline(directory, record: dict) -> int:
 
 
 def main() -> int:
-    """Supply the fixed case and let run_io manage execution and summaries."""
-    return run_io.run_experiment(
-        workflow=run_pipeline,
-        cleanup_work=formal_check.cleanup_work,
-        case_id=CASE_ID,
-        models={"assertion": config.ASSERTION_MODEL, "rule": config.RULE_MODEL},
-        runs_root=config.RUNS_DIR,
-        inputs={
-            "dataset": "nl2sva_human",
-            "design_name": "counter",
-            "requirement": example.REQUIREMENT,
-            "testbench": example.TESTBENCH,
-            "reference_assertion": example.REFERENCE_ASSERTION,
-        },
-        prompts={},
-        settings={
-            "max_rounds": config.MAX_ROUNDS,
-            "timeout_seconds": config.JASPER_TIMEOUT_SECONDS,
-            "confidence_threshold": config.CONFIDENCE_THRESHOLD,
-            "runs_dir": str(config.RUNS_DIR),
-            "save_debug_traces": config.SAVE_DEBUG_TRACES,
-        },
+    """Load cases once; use the existing round workflow separately for each."""
+    # 1. Validate the configuration, CSV, and complete selection before any API call.
+    validate_config()
+    cases = dataset_loader.load_cases(config.DATASET_PATH, config.CASE_IDS)
+    dataset_path = Path(cases[0]["dataset_path"])
+    models = {"assertion": config.ASSERTION_MODEL, "rule": config.RULE_MODEL}
+    settings = {
+        "dataset": config.DATASET,
+        "dataset_path": str(dataset_path),
+        "checker": formal_check.CHECKER_NAME,
+        "case_ids": list(config.CASE_IDS),
+        "max_rounds": config.MAX_ROUNDS,
+        "timeout_seconds": config.JASPER_TIMEOUT_SECONDS,
+        "confidence_threshold": config.CONFIDENCE_THRESHOLD,
+        "runs_dir": str(config.RUNS_DIR),
+        "save_debug_traces": config.SAVE_DEBUG_TRACES,
+    }
+
+    # 2. Create one experiment containing shared summaries and separate case folders.
+    experiment_dir = run_io.create_experiment(
+        dataset=config.DATASET, dataset_path=dataset_path, cases=cases,
+        models=models, settings=settings, runs_root=config.RUNS_DIR,
     )
+    print("Dataset:", dataset_path)
+    print("Selected case IDs:", [case["case_number"] for case in cases])
+    print("Experiment:", experiment_dir)
+
+    # 3. Run each selected case with its own revision loop and rule registry.
+    exit_code = 0
+    try:
+        for position, case in enumerate(cases, start=1):
+            print(
+                f"\nRunning {position}/{len(cases)}: case {case['case_number']} | "
+                f"{case['design_name']} / {case['task_id']}"
+            )
+            case_exit = run_io.run_experiment(
+                workflow=run_pipeline,
+                cleanup_work=formal_check.cleanup_work,
+                case_id=case["task_id"],
+                case_dir=experiment_dir / "cases" / f"case_{case['case_number']:04d}",
+                summary_dir=experiment_dir,
+                models=models,
+                inputs={**case, "dataset": config.DATASET},
+                prompts={},
+                settings=settings,
+            )
+            if case_exit == 130:
+                exit_code = 130
+                break
+            if case_exit != 0:
+                exit_code = 1  # Record the case error; continue to the next selected case.
+    except KeyboardInterrupt:
+        exit_code = 130
+    except Exception:
+        exit_code = 1
+        raise
+    finally:
+        exit_code = run_io.finish_experiment(experiment_dir, exit_code)
+
+    return exit_code
 
 
 if __name__ == "__main__":

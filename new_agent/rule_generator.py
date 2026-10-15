@@ -1,45 +1,8 @@
-"""Test rule generation on one fixed counter example.
-
-Run: python rule_generator.py
-Uses the existing counter_example.py for the requirement, reference, and context.
-Makes one LLM request and prints its result; no experiment files are written.
-"""
+"""Build rule-generation requests and validate the returned correction groups."""
 
 import json
 
 from openai import OpenAI
-
-import counter_example
-import config
-
-
-GENERATED_ASSERTION = """asrt: assert property (@(posedge clk)
-    disable iff (tb_reset_1_cycle_pulse_shadow)
-    (!jump_vld_d1 && (count_d1 == max)) |=> (count <= max)
-);"""
-
-# Handwritten test hypotheses, not captured Jev results.
-# comparison_presence is deliberately incorrect: both assertions use comparisons.
-FIXED_STATEMENTS = {
-    "implication_presence": (
-        "Implication operators (|->, |=>) appear only in the generated assertion."
-    ),
-    "implication_remove_operator": (
-        "Remove an unnecessary implication operator (|-> or |=>)."
-    ),
-    "implication_replace_operator": (
-        "An existing implication operator (|-> or |=>) needs to be replaced "
-        "with an operator from a different category."
-    ),
-    "logical_presence": "Logical operators (!, &&, ||) appear in both assertions.",
-    "logical_insert_operator": "Insert a missing logical operator (!, &&, or ||).",
-    "comparison_four_state_equality": (
-        "Change between ==/!= and ===/!== to match the required handling of X/Z values."
-    ),
-    "comparison_presence": (
-        "Comparison operators appear only in the reference assertion."
-    ),
-}
 
 
 SYSTEM_PROMPT = """You analyze SystemVerilog assertion mismatches and generate
@@ -174,8 +137,7 @@ def check_rule_groups(result: dict, statements: dict) -> None:
     """Check the two-field format and source IDs; this does not prove rule correctness."""
     expected_names = {f"rule_{number}" for number in range(1, len(result) + 1)}
     if set(result) != expected_names:
-        raise ValueError("Use consecutive names: rule_1, r" \
-        "ule_2, and so on.")
+        raise ValueError("Use consecutive names: rule_1, rule_2, and so on.")
     for name, entry in result.items():
         if not isinstance(entry, dict) or set(entry) != {"group", "rule"}:
             raise ValueError(f"{name} must contain only group and rule.")
@@ -190,24 +152,3 @@ def check_rule_groups(result: dict, statements: dict) -> None:
         if not isinstance(entry["rule"], str) or not entry["rule"].strip():
             raise ValueError(f"{name}.rule must contain an editing instruction.")
 
-
-def main() -> None:
-    """Run only this fixed rule-generation example and display the complete result."""
-    user_prompt = build_rule_prompt(
-        requirement=counter_example.REQUIREMENT,
-        generated_assertion=GENERATED_ASSERTION,
-        reference_assertion=counter_example.REFERENCE_ASSERTION,
-        statements=FIXED_STATEMENTS,
-        testbench=counter_example.TESTBENCH,
-    )
-    response_text = generate_rules(
-        client=OpenAI(), model=config.RULE_MODEL, user_prompt=user_prompt,
-    )
-    result = parse_rules(response_text)
-    check_rule_groups(result, FIXED_STATEMENTS)
-    print("RULE GENERATION RESULT:")
-    print(json.dumps(result, indent=2, ensure_ascii=False))
-
-
-if __name__ == "__main__":
-    main()

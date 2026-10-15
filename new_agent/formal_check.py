@@ -1,4 +1,4 @@
-"""A small checker for the fixed NL2SVA-Human example.
+"""Check one selected NL2SVA-Human case.
 
 Reuses FVEval/tool_scripts/run_jg_nl2sva_human.tcl and pec/pec.tcle.
 Preserves syntax/strict/relaxed score categories for recognized tool results.
@@ -15,6 +15,8 @@ import tempfile
 from pathlib import Path
 
 
+CHECKER_NAME = "nl2sva_human"
+
 COMPARISON_SCOPE = (
     "Original NL2SVA-Human PEC: property bodies only; "
     "clock/reset wrappers are removed before PEC. "
@@ -25,6 +27,8 @@ COMPARISON_SCOPE = (
 
 def _assertion_parts(text: str) -> tuple[str, str, str]:
     """Return the unlabeled assertion, property body, and reset signal."""
+    # Comments must not hide extra statements or look like property delimiters.
+    text = re.sub(r"//[^\n]*|/\*.*?\*/", "", text, flags=re.DOTALL)
     assertion = re.sub(r"^\s*[A-Za-z_]\w*\s*:\s*", "", text.strip())
     match = re.fullmatch(
         r"assert\s+property\s*\(\s*@\s*\(\s*posedge\s+clk\s*\)\s*"
@@ -38,7 +42,12 @@ def _assertion_parts(text: str) -> tuple[str, str, str]:
             "This starter expects one assert property (@(posedge clk) "
             "[disable iff (RESET_SIGNAL)] BODY); statement."
         )
-    return assertion, match.group("body").strip(), match.group("reset") or ""
+    body = match.group("body").strip()
+    if ";" in body:
+        raise ValueError("Expected exactly one assertion; extra statements are unsupported.")
+    if re.match(r"disable\s+iff\b", body):
+        raise ValueError("Only disable iff (RESET_SIGNAL) with one signal is supported.")
+    return assertion, body, match.group("reset") or ""
 
 
 def _prepare_formal_input(
@@ -181,16 +190,21 @@ def evaluate_assertion(
     timeout_seconds: float = 300,
     fveval_dir=None,
     jg_executable: str = "jg",
+    task_id: str = "case",
 ) -> dict:
     """Evaluate one assertion and return scores, feedback, and log paths."""
     if timeout_seconds <= 0:
         raise ValueError("timeout_seconds must be positive.")
+    if not isinstance(task_id, str) or not task_id.strip():
+        raise ValueError("task_id must be a nonempty string.")
+    source_task_id = task_id
+    task_id = re.sub(r"[^A-Za-z0-9_-]+", "_", task_id).strip("_") or "case"
 
     # Keep the permanent input/log outside the disposable tool directory.
     if run_dir is None:
         root = Path(__file__).resolve().parent / "runs"
         root.mkdir(parents=True, exist_ok=True)
-        directory = Path(tempfile.mkdtemp(prefix="counter_0_", dir=root))
+        directory = Path(tempfile.mkdtemp(prefix=f"{task_id}_", dir=root))
     else:
         directory = Path(run_dir).expanduser().resolve()
         directory.mkdir(parents=True, exist_ok=True)
@@ -209,10 +223,11 @@ def evaluate_assertion(
         "log_path": str(directory / "jasper.log"),
         "input_path": str(sv_file),
         "returncode": None,
+        "source_task_id": source_task_id,
+        "tool_task_id": task_id,
     }
 
-    experiment_id = "nl2sva_human"
-    task_id = "counter_0"
+    experiment_id = CHECKER_NAME
     try:
         prepared = _prepare_formal_input(
             generated_assertion, reference_assertion,
@@ -329,42 +344,3 @@ def cleanup_work(result: dict, keep_work: bool = False) -> dict:
         return {"retained": True, "reason": f"Cleanup failed: {error}"}
     return {"retained": False, "reason": "Recognized result; work files removed."}
 
-
-if __name__ == "__main__":
-    # Check the reference against itself; no OpenAI or Jev calls.
-    import counter_example as example
-    import run_io
-
-    directory = run_io.create_run("counter_0_selfcheck")
-    record = run_io.create_record(
-        case_id="counter_0_selfcheck",
-        models={"assertion": None, "rule": None},
-        inputs={
-            "requirement": example.REQUIREMENT,
-            "testbench": example.TESTBENCH,
-            "reference_assertion": example.REFERENCE_ASSERTION,
-        },
-        prompts={},
-        settings={"timeout_seconds": 300, "keep_work": False},
-    )
-    record["generation"]["assertion"] = example.REFERENCE_ASSERTION
-    record["stage"] = "formal_check"
-    run_io.save_run(directory, record)
-    result = evaluate_assertion(
-        generated_assertion=example.REFERENCE_ASSERTION,
-        reference_assertion=example.REFERENCE_ASSERTION,
-        testbench=example.TESTBENCH,
-        requirement=example.REQUIREMENT,
-        run_dir=directory,
-    )
-    record["formal"] = result
-    record["status"] = (
-        "CHECK_COMPLETE" if result["status"] in {
-            "FULL_EQUIVALENCE", "IMPLIES", "NO_EQUIVALENCE", "SYNTAX_ERROR",
-        } else "CHECKER_UNRESOLVED"
-    )
-    record["finished_at"] = run_io.local_now()
-    run_io.save_run(directory, record)
-    result["cleanup"] = cleanup_work(result)
-    run_io.save_run(directory, record)
-    run_io.print_summary(directory, record)

@@ -13,10 +13,6 @@ IMPLICATION = {
             "An existing implication operator (|-> or |=>) needs to be replaced with an "
             "operator from a different category."
         ),
-        False: (
-            "No replacement of an implication operator (|-> or |=>) with an operator from "
-            "a different category is recommended."
-        ),
     },
     "implication_presence": {
         "reference_only": (
@@ -33,18 +29,15 @@ IMPLICATION = {
             "Insert a missing implication operator (|-> or |=>) to express the required "
             "behavior."
         ),
-        False: "No insertion of an implication operator (|-> or |=>) is recommended.",
     },
     "implication_remove_operator": {
         True: "Remove an unnecessary implication operator (|-> or |=>).",
-        False: "No removal of an implication operator (|-> or |=>) is recommended.",
     },
     "implication_antecedent_consequent": {
         True: (
             "Move conditions between the antecedent and consequent so the trigger and "
             "response are on the correct sides."
         ),
-        False: "No movement of conditions between the antecedent and consequent is recommended.",
     },
 }
 
@@ -59,24 +52,17 @@ LOGICAL = {
     },
     "logical_replace_operator": {
         True: "Replace an existing logical operator (!, &&, or ||) with a different operator.",
-        False: "No replacement of an existing logical operator (!, &&, or ||) is recommended.",
     },
     "logical_insert_operator": {
         True: "Insert a missing logical operator (!, &&, or ||).",
-        False: "No insertion of a logical operator (!, &&, or ||) is recommended.",
     },
     "logical_remove_operator": {
         True: "Remove an unnecessary logical operator (!, &&, or ||).",
-        False: "No removal of a logical operator (!, &&, or ||) is recommended.",
     },
     "logical_scope": {
         True: (
             "Regroup the terms controlled by an existing logical operator to match the "
             "required behavior."
-        ),
-        False: (
-            "No regrouping of the terms controlled by an existing logical operator is "
-            "recommended."
         ),
     },
 }
@@ -101,30 +87,21 @@ COMPARISON = {
     },
     "comparison_replace_operator": {
         True: "Replace an existing comparison operator with a different operator.",
-        False: "No replacement of an existing comparison operator is recommended.",
     },
     "comparison_insert_operator": {
         True: "Insert a missing comparison operator.",
-        False: "No insertion of a comparison operator is recommended.",
     },
     "comparison_remove_operator": {
         True: "Remove an unnecessary comparison operator.",
-        False: "No removal of a comparison operator is recommended.",
     },
     "comparison_operands": {
         True: "Replace an operand of an existing comparison.",
-        False: "No replacement of an operand of an existing comparison is recommended.",
     },
     "comparison_operand_order": {
         True: "Exchange the left and right operands of an existing comparison.",
-        False: (
-            "No exchange of the left and right operands of an existing comparison is "
-            "recommended."
-        ),
     },
     "comparison_four_state_equality": {
         True: "Change between ==/!= and ===/!== to match the required handling of X/Z values.",
-        False: "No change between ==/!= and ===/!== for X/Z handling is recommended.",
     },
 }
 
@@ -148,24 +125,17 @@ BITWISE = {
     },
     "bitwise_replace_operator": {
         True: "Replace an existing bitwise operator with a different operator.",
-        False: "No replacement of an existing bitwise operator is recommended.",
     },
     "bitwise_insert_operator": {
         True: "Insert a missing bitwise operator.",
-        False: "No insertion of a bitwise operator is recommended.",
     },
     "bitwise_remove_operator": {
         True: "Remove an unnecessary bitwise operator.",
-        False: "No removal of a bitwise operator is recommended.",
     },
     "bitwise_operands": {
         True: (
             "Use a different signal, vector, bit range, or subexpression in an existing "
             "bitwise operation."
-        ),
-        False: (
-            "No change to the signal, vector, bit range, or subexpression used by an "
-            "existing bitwise operation is recommended."
         ),
     },
 }
@@ -190,24 +160,17 @@ REDUCTION = {
     },
     "reduction_replace_operator": {
         True: "Replace an existing reduction operator with a different operator.",
-        False: "No replacement of an existing reduction operator is recommended.",
     },
     "reduction_insert_operator": {
         True: "Insert a missing reduction operator.",
-        False: "No insertion of a reduction operator is recommended.",
     },
     "reduction_remove_operator": {
         True: "Remove an unnecessary reduction operator.",
-        False: "No removal of a reduction operator is recommended.",
     },
     "reduction_vector_coverage": {
         True: (
             "Apply an existing reduction to a different vector, bit range, or expression "
             "to include the required bits."
-        ),
-        False: (
-            "No change to the vector, bit range, or expression covered by an existing "
-            "reduction is recommended."
         ),
     },
 }
@@ -235,56 +198,39 @@ TEMPORAL = {
     },
     "temporal_insert_delay": {
         True: "Insert a missing ## delay.",
-        False: "No insertion of a ## delay is recommended.",
     },
     "temporal_remove_delay": {
         True: "Remove an unnecessary ## delay.",
-        False: "No removal of a ## delay is recommended.",
     },
     "temporal_delay_value": {
         True: "Change the cycle count of an existing fixed ## delay.",
-        False: "No change to the cycle count of an existing fixed ## delay is recommended.",
     },
     "temporal_delay_lower_bound": {
         True: "Change the lower bound of an existing ## delay range.",
-        False: "No change to the lower bound of an existing ## delay range is recommended.",
     },
     "temporal_delay_upper_bound": {
         True: "Change the upper bound of an existing ## delay range.",
-        False: "No change to the upper bound of an existing ## delay range is recommended.",
     },
     "temporal_replace_sampling_function": {
         True: (
             "Replace an existing sampled-value function with a different function ($past, "
             "$rose, $fell, $stable, or $changed)."
         ),
-        False: "No replacement of an existing sampled-value function is recommended.",
     },
     "temporal_insert_sampling_function": {
         True: "Insert a missing sampled-value function.",
-        False: "No insertion of a sampled-value function is recommended.",
     },
     "temporal_remove_sampling_function": {
         True: "Remove an unnecessary sampled-value function.",
-        False: "No removal of a sampled-value function is recommended.",
     },
     "temporal_past_offset": {
         True: "Change the history offset of an existing $past call.",
-        False: "No change to the history offset of an existing $past call is recommended.",
     },
     "temporal_sampling_clock": {
         True: "Change the sampling clock used by an existing sampled-value function.",
-        False: (
-            "No change to the sampling clock used by an existing sampled-value function "
-            "is recommended."
-        ),
     },
     "temporal_scope": {
         True: "Apply an existing delay or sampled-value function to a different subexpression.",
-        False: (
-            "No change to the subexpression controlled by an existing delay or "
-            "sampled-value function is recommended."
-        ),
     },
 }
 
@@ -299,7 +245,6 @@ PARENTHESES = {
     },
     "parentheses_grouping": {
         True: "Change expression grouping to correct operator precedence or scope.",
-        False: "No change to expression grouping for operator precedence or scope is recommended.",
     },
 }
 
@@ -391,5 +336,3 @@ if __name__ == "__main__":
 
     for question_name, statement in output.items():
         print(f"{question_name}: {statement}")
-
-
