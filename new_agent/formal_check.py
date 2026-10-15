@@ -338,7 +338,7 @@ if __name__ == "__main__":
     directory = run_io.create_run("counter_0_selfcheck")
     record = run_io.create_record(
         case_id="counter_0_selfcheck",
-        model=None,
+        models={"assertion": None, "rule": None},
         inputs={
             "requirement": example.REQUIREMENT,
             "testbench": example.TESTBENCH,
@@ -368,4 +368,3 @@ if __name__ == "__main__":
     result["cleanup"] = cleanup_work(result)
     run_io.save_run(directory, record)
     run_io.print_summary(directory, record)
-

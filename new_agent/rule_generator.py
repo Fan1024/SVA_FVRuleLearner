@@ -10,9 +10,8 @@ import json
 from openai import OpenAI
 
 import counter_example
+import config
 
-
-MODEL = "gpt-5.6-terra"
 
 GENERATED_ASSERTION = """asrt: assert property (@(posedge clk)
     disable iff (tb_reset_1_cycle_pulse_shadow)
@@ -147,8 +146,8 @@ def build_rule_prompt(
     )
 
 
-def generate_rules(client: OpenAI, model: str, user_prompt: str) -> dict:
-    """Make one request and convert its JSON response into a Python dictionary."""
+def generate_rules(client: OpenAI, model: str, user_prompt: str) -> str:
+    """Make one request and return text so the caller can save it before parsing."""
     response = client.responses.create(
         model=model,
         instructions=SYSTEM_PROMPT,
@@ -160,7 +159,12 @@ def generate_rules(client: OpenAI, model: str, user_prompt: str) -> dict:
     if not response.output_text.strip():
         raise RuntimeError("The model returned no rule-generation output.")
 
-    result = json.loads(response.output_text)
+    return response.output_text
+
+
+def parse_rules(response_text: str) -> dict:
+    """Decode a saved response; JSON validity does not prove rule correctness."""
+    result = json.loads(response_text)
     if not isinstance(result, dict):
         raise ValueError("Expected a JSON object for the rule-generation result.")
     return result
@@ -196,7 +200,10 @@ def main() -> None:
         statements=FIXED_STATEMENTS,
         testbench=counter_example.TESTBENCH,
     )
-    result = generate_rules(client=OpenAI(), model=MODEL, user_prompt=user_prompt)
+    response_text = generate_rules(
+        client=OpenAI(), model=config.RULE_MODEL, user_prompt=user_prompt,
+    )
+    result = parse_rules(response_text)
     check_rule_groups(result, FIXED_STATEMENTS)
     print("RULE GENERATION RESULT:")
     print(json.dumps(result, indent=2, ensure_ascii=False))

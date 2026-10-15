@@ -5,6 +5,7 @@ from copy import deepcopy
 from openai import OpenAI
 
 import assertion_generator
+import config
 import counter_example as example
 import formal_check
 import rule_generator
@@ -13,12 +14,7 @@ from diagnosis_formatter import format_diagnosis, format_reset_mismatch
 from jev_assertion_diagnosis import diagnose_assertion_mismatches
 
 
-MODEL = "gpt-5.6-terra"
 CASE_ID = "counter_0"
-MAX_ROUNDS = 2  # Initial attempt plus one guided revision.
-TIMEOUT_SECONDS = 300
-CONFIDENCE_THRESHOLD = 0.4
-KEEP_WORK = False
 
 
 def update_rule_registry(registry: dict, new_rules: dict, round_number: int) -> None:
@@ -56,17 +52,25 @@ def stop_pipeline(directory, record: dict, reason: str, *, unresolved=False) -> 
 
 def run_pipeline(directory, record: dict) -> int:
     """Keep experiment decisions here; delegate record/file handling to run_io."""
-    if type(MAX_ROUNDS) is not int or MAX_ROUNDS < 1:
+    if type(config.MAX_ROUNDS) is not int or config.MAX_ROUNDS < 1:
         raise ValueError("MAX_ROUNDS must be a positive integer.")
-    if KEEP_WORK and MAX_ROUNDS > 1:
-        raise ValueError("Use KEEP_WORK=False when reusing _work across rounds.")
+    for name in ("ASSERTION_MODEL", "RULE_MODEL"):
+        value = getattr(config, name)
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"{name} must be a nonempty model name.")
+    if config.JASPER_TIMEOUT_SECONDS <= 0:
+        raise ValueError("JASPER_TIMEOUT_SECONDS must be positive.")
+    if not 0 <= config.CONFIDENCE_THRESHOLD <= 1:
+        raise ValueError("CONFIDENCE_THRESHOLD must be between 0 and 1.")
+    if type(config.SAVE_DEBUG_TRACES) is not bool:
+        raise ValueError("SAVE_DEBUG_TRACES must be True or False.")
 
     client = OpenAI()
     inputs = record["inputs"]
     registry = {}
     previous_assertion = None
 
-    for round_number in range(1, MAX_ROUNDS + 1):
+    for round_number in range(1, config.MAX_ROUNDS + 1):
         # 1. Build a fresh prompt and generate one assertion.
         selected_rules = retained_rules(registry)
         user_prompt = assertion_generator.build_generation_prompt(
@@ -82,10 +86,13 @@ def run_pipeline(directory, record: dict) -> int:
             rules=selected_rules,
         )
         response_text = assertion_generator.generate_assertion(
-            client=client, model=MODEL, user_prompt=user_prompt,
+            client=client, model=config.ASSERTION_MODEL, user_prompt=user_prompt,
         )
         attempt["generation"]["raw_response"] = response_text
         run_io.update_run(directory, record, stage="extraction")
+        run_io.save_debug_event(
+            directory, record, "assertion_response", raw_response=response_text,
+        )
         generated_assertion = assertion_generator.extract_assertion(response_text)
         attempt["generation"]["assertion"] = generated_assertion
         run_io.update_run(directory, record, stage="formal_check")
@@ -98,12 +105,12 @@ def run_pipeline(directory, record: dict) -> int:
             testbench=inputs["testbench"],
             requirement=inputs["requirement"],
             run_dir=directory,
-            timeout_seconds=TIMEOUT_SECONDS,
+            timeout_seconds=config.JASPER_TIMEOUT_SECONDS,
         )
         run_io.record_formal_result(directory, record, attempt, formal_result)
         run_io.update_run(directory, record, stage="cleanup")
         cleanup = run_io.cleanup_formal_work(
-            directory, record, formal_check.cleanup_work, keep_work=KEEP_WORK,
+            directory, record, formal_check.cleanup_work,
         )
 
         # 3. Decide whether another revision is possible and necessary.
@@ -126,7 +133,7 @@ def run_pipeline(directory, record: dict) -> int:
             )
             return 0
 
-        if round_number == MAX_ROUNDS:
+        if round_number == config.MAX_ROUNDS:
             run_io.update_run(
                 directory, record,
                 diagnosis_skipped_reason="Round budget exhausted; no further revision.",
@@ -146,11 +153,13 @@ def run_pipeline(directory, record: dict) -> int:
             formal_feedback=formal_result["feedback"],
         )
         run_io.update_run(directory, record, stage="formatting", diagnosis=diagnosis)
+        run_io.save_debug_event(directory, record, "diagnosis", diagnosis=diagnosis)
         statements = format_diagnosis(
-            diagnosis["answers"], confidence_threshold=CONFIDENCE_THRESHOLD,
+            diagnosis["answers"], confidence_threshold=config.CONFIDENCE_THRESHOLD,
         )
         statements.update(format_reset_mismatch(formal_result))
         run_io.update_run(directory, record, statements=statements)
+        run_io.save_debug_event(directory, record, "statements", statements=statements)
         if not statements:
             return stop_pipeline(directory, record, "no_guidance")
 
@@ -163,10 +172,23 @@ def run_pipeline(directory, record: dict) -> int:
             statements=statements,
             testbench=inputs["testbench"],
         )
-        new_rules = rule_generator.generate_rules(
-            client=client, model=MODEL, user_prompt=rule_prompt,
+        rule_attempt = {
+            "round": round_number, "model": config.RULE_MODEL,
+            "raw_response": None, "rules": None,
+        }
+        run_io.update_run(directory, record, last_rule_generation=rule_attempt)
+        run_io.save_debug_event(
+            directory, record, "rule_request", model=config.RULE_MODEL,
+            system_prompt=rule_generator.SYSTEM_PROMPT, user_prompt=rule_prompt,
         )
+        rule_response = rule_generator.generate_rules(
+            client=client, model=config.RULE_MODEL, user_prompt=rule_prompt,
+        )
+        rule_attempt["raw_response"] = rule_response
         run_io.update_run(directory, record, stage="rule_validation")
+        run_io.save_debug_event(directory, record, "rule_response", raw_response=rule_response)
+        new_rules = rule_generator.parse_rules(rule_response)
+        rule_attempt["rules"] = new_rules
         rule_generator.check_rule_groups(new_rules, statements)
         if not new_rules:
             return stop_pipeline(directory, record, "no_guidance")
@@ -174,6 +196,9 @@ def run_pipeline(directory, record: dict) -> int:
         run_io.update_run(directory, record, stage="rule_update")
         update_rule_registry(registry, new_rules, round_number)
         run_io.update_run(directory, record, rule_registry=retained_rules(registry))
+        run_io.save_debug_event(
+            directory, record, "rule_update", rule_registry=record["rule_registry"],
+        )
         previous_assertion = generated_assertion
 
     raise RuntimeError("The round loop ended without a terminal outcome.")
@@ -185,7 +210,8 @@ def main() -> int:
         workflow=run_pipeline,
         cleanup_work=formal_check.cleanup_work,
         case_id=CASE_ID,
-        model=MODEL,
+        models={"assertion": config.ASSERTION_MODEL, "rule": config.RULE_MODEL},
+        runs_root=config.RUNS_DIR,
         inputs={
             "dataset": "nl2sva_human",
             "design_name": "counter",
@@ -195,14 +221,14 @@ def main() -> int:
         },
         prompts={},
         settings={
-            "max_rounds": MAX_ROUNDS,
-            "timeout_seconds": TIMEOUT_SECONDS,
-            "confidence_threshold": CONFIDENCE_THRESHOLD,
-            "keep_work": KEEP_WORK,
+            "max_rounds": config.MAX_ROUNDS,
+            "timeout_seconds": config.JASPER_TIMEOUT_SECONDS,
+            "confidence_threshold": config.CONFIDENCE_THRESHOLD,
+            "runs_dir": str(config.RUNS_DIR),
+            "save_debug_traces": config.SAVE_DEBUG_TRACES,
         },
     )
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
