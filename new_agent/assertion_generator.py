@@ -13,6 +13,8 @@ def build_generation_prompt(
     testbench: str,
     previous_assertion: str | None = None,
     rules: list[dict] | None = None,
+    *,
+    comparison_scope: str = "",
 ) -> str:
     """Build a fresh initial or revision prompt; never accept a reference."""
     revision = ""
@@ -35,12 +37,17 @@ def build_generation_prompt(
     elif rules:
         raise ValueError("Rules require a previous assertion for this experiment.")
 
+    scope_guidance = (
+        "\nEVALUATION SCOPE\n" + comparison_scope
+        + "\nChoose appropriate clock and reset syntax from the task and testbench.\n"
+        if comparison_scope else ""
+    )
     return f"""Here is the testbench to perform your translation:
 
 {testbench}
 
 Question: Create a SVA assertion checks {requirement}
-{revision}
+{scope_guidance}{revision}
 Generate exactly one assertion, labeled asrt.
 Do not add code to output an error message string.
 Enclose your SVA code with ```systemverilog and ```.
@@ -81,5 +88,3 @@ def extract_assertion(response_text: str) -> str:
         raise ValueError("Expected one nonempty assertion code block.")
 
     return assertion
-
-

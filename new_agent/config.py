@@ -3,7 +3,10 @@
 from pathlib import Path
 
 
-# CSV filename without its extension. Also used as the experiment label.
+# Supported CSV stems: "nl2sva_human" or "nl2sva_machine".
+# This also selects the matching FVEval scope and prompt guidance automatically:
+# Human compares bodies; Machine retains any disable iff reset condition.
+# The same stem is used as the experiment label. No separate policy setting is needed.
 DATASET = "nl2sva_human"
 DATASET_PATH = (
     Path(__file__).resolve().parent.parent
@@ -29,8 +32,8 @@ SPLIT_SEED = 42
 ASSERTION_MODEL = "gpt-5.6-terra"
 RULE_MODEL = "gpt-5.6-terra"
 
-# Total assertion attempts per case: 2 = initial generation + at most one revision.
-MAX_ROUNDS = 2
+# Total assertion attempts per case: 4 = initial generation + at most three revisions.
+MAX_ROUNDS = 4
 
 # Maximum duration of each Jasper invocation, in seconds.
 JASPER_TIMEOUT_SECONDS = 300

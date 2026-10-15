@@ -13,8 +13,10 @@ You may explore potential issues beyond the supplied statements using the requir
 testbench, generated assertion, and reference as background. Check whether a proposed
 correction is supported before turning it into a rule.
 Return one JSON object containing only groups and their correction rules.
-Assess property bodies only; do not generate clock or disable iff reset repairs.
-Conditions inside the property body remain in scope, including reset-related guards.
+Follow the supplied comparison_scope for the active benchmark.
+Clock events are outside both supported scopes; do not generate clock repairs.
+For Human, ignore disable iff wrappers. For Machine, retained disable iff
+conditions may need correction. Reset-related body guards remain in scope for both.
 The reference is analysis evidence. The later assertion-generation call will
 receive the requirement, testbench, and your guidance, but no reference assertion.
 Your rules must guide that call without copying the reference implementation.
@@ -108,6 +110,8 @@ def build_rule_prompt(
     reference_assertion: str,
     statements: dict,
     testbench: str,
+    *,
+    comparison_scope: str = "",
 ) -> str:
     """Build the prompt from data; this function makes no API call."""
     inputs = {
@@ -116,6 +120,7 @@ def build_rule_prompt(
         "reference_assertion": reference_assertion,
         "statements": statements,
         "testbench": testbench,
+        "comparison_scope": comparison_scope,
     }
     return (
         TASK_INSTRUCTIONS
@@ -175,4 +180,3 @@ def check_rule_groups(result: dict, statements: dict) -> None:
             raise ValueError(f"{name}.group contains a repeated statement ID.")
         if not isinstance(entry["rule"], str) or not entry["rule"].strip():
             raise ValueError(f"{name}.rule must contain an editing instruction.")
-

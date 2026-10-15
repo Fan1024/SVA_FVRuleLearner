@@ -64,7 +64,7 @@ def create_experiment(
     directory_label = re.sub(r"[^A-Za-z0-9_-]+", "_", dataset).strip("_") or "dataset"
     directory = create_run(directory_label, runs_root=runs_root, phase=phase)
     metadata = {
-        "output_format_version": 3,
+        "output_format_version": 4,
         "phase": phase,
         "dataset": dataset,
         "dataset_path": str(dataset_path),
@@ -344,7 +344,12 @@ def _debug_event_text(record: dict, event: str, data: dict) -> str:
             lines.append(f"{label}: {'unavailable' if value is None else value}")
         mismatch = formal.get("reset_mismatch")
         mismatch = "unavailable" if mismatch is None else mismatch
-        lines.append(f"Reset mismatch: {mismatch} (informational)")
+        note = (
+            "wrapper comparison only; PEC decides behavior"
+            if record["settings"].get("checker") == "nl2sva_machine"
+            else "informational"
+        )
+        lines.append(f"Reset mismatch: {mismatch} ({note})")
         if formal["status"] not in {"FULL_EQUIVALENCE", "IMPLIES", "NO_EQUIVALENCE"}:
             feedback = formal.get("feedback", "")
             details = feedback.partition("Tool details:\n")[2] or feedback
@@ -374,7 +379,7 @@ def _debug_event_text(record: dict, event: str, data: dict) -> str:
     if event == "case_finished":
         reason = data["stop_reason"]
         explanation = {
-            "passed": "Strict body PEC passed.",
+            "passed": "Strict PEC passed under the selected evaluation policy.",
             "max_rounds": "Maximum assertion attempts reached.",
             "no_guidance": "Rule generator returned no rules.",
             "interrupted": "Execution was interrupted by the user.",
@@ -409,6 +414,9 @@ def save_debug_event(run_dir, record: dict, event: str, **data) -> None:
     with path.open("a", encoding="utf-8", newline="\n") as file:
         if first_write:
             inputs = record["inputs"]
+            checker = record["settings"].get("checker")
+            if checker:
+                file.write(f"EVALUATION POLICY\n{checker}\n\n")
             file.write(
                 f"REQUIREMENT\n{inputs.get('requirement', '')}\n\n"
                 f"REFERENCE ASSERTION\n{inputs.get('reference_assertion', '')}\n\n"

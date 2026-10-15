@@ -1,8 +1,7 @@
-"""Check one selected NL2SVA-Human case.
+"""Check one assertion using the matching FVEval Human or Machine PEC scope.
 
-Reuses FVEval/tool_scripts/run_jg_nl2sva_human.tcl and pec/pec.tcle.
-Preserves syntax/strict/relaxed score categories for recognized tool results.
-Human PEC compares property bodies; clock/reset wrappers are not compared.
+Human compares bodies; Machine also retains an optional disable iff wrapper.
+Both paths compile the complete assertions before comparing their expressions.
 This starter supports one assert property (@(posedge clk) ...) statement and
 an optional disable iff with one reset signal. Unsupported input is reported,
 rather than assigned a formal syntax-failure score.
@@ -15,14 +14,29 @@ import tempfile
 from pathlib import Path
 
 
-CHECKER_NAME = "nl2sva_human"
-
-COMPARISON_SCOPE = (
-    "Original NL2SVA-Human PEC: property bodies only; "
-    "clock/reset wrappers are removed before PEC. "
-    "The complete assertions are compiled first. "
-    "Reset mismatch is reported separately."
-)
+def get_evaluation_policy(dataset: str) -> dict:
+    """Select one of the two supported benchmark scopes, before any API call."""
+    if dataset == "nl2sva_human":
+        scope = (
+            "Human PEC compares property bodies only. Clock events and disable iff "
+            "reset wrappers are excluded; do not recommend repairs to those wrappers. "
+            "Reset-related guards inside the body remain in scope."
+        )
+    elif dataset == "nl2sva_machine":
+        scope = (
+            "Machine PEC compares the property expression after the clock event, "
+            "including any disable iff reset condition. Clock events are excluded; "
+            "do not recommend clock repairs. Reset conditions and body guards are "
+            "in scope. Do not invent a reset condition when the task does not require one."
+        )
+    else:
+        raise ValueError("DATASET must be 'nl2sva_human' or 'nl2sva_machine'.")
+    return {
+        "name": dataset,
+        "include_reset": dataset == "nl2sva_machine",
+        "scope": scope,
+        "tcl_file": f"run_jg_{dataset}.tcl",
+    }
 
 
 def _assertion_parts(text: str) -> tuple[str, str, str]:
@@ -56,14 +70,23 @@ def _prepare_formal_input(
     testbench: str,
     requirement: str,
     destination: Path,
+    *,
+    include_reset: bool = False,
 ) -> dict:
-    """Package full assertions; extract bodies and signal names for PEC."""
+    """Compile full assertions; select the expressions and signals sent to PEC."""
     candidate, candidate_body, candidate_reset = _assertion_parts(
         generated_assertion
     )
     reference, reference_body, reference_reset = _assertion_parts(
         reference_assertion
     )
+    candidate_expression = candidate_body
+    reference_expression = reference_body
+    if include_reset:
+        if candidate_reset:
+            candidate_expression = f"disable iff ({candidate_reset}) {candidate_body}"
+        if reference_reset:
+            reference_expression = f"disable iff ({reference_reset}) {reference_body}"
     before_end, end, after_end = testbench.rpartition("endmodule")
     if not end or after_end.strip() or re.search(r"\bendmodule\b", before_end):
         raise ValueError("This starter expects a testbench with one module.")
@@ -78,6 +101,11 @@ def _prepare_formal_input(
 
     # Start with the quoted signals and parameters used by the original flow.
     signals = set(re.findall(r"'([^'\s]+)'", requirement))
+    if include_reset:
+        # Machine benchmark signals follow sig_*; reset identifiers must also
+        # be visible when they appear only in a retained disable iff wrapper.
+        signals.update(re.findall(r"\bsig_\w+", candidate_expression + " " + reference_expression))
+        signals.update(reset for reset in (candidate_reset, reference_reset) if reset)
     declarations = re.findall(
         r"\b(input|output|inout|wire|reg|logic|parameter|localparam)\s+"
         r"(?:(?:signed|unsigned|int|integer|real|bit|logic)\s+)*"
@@ -85,15 +113,15 @@ def _prepare_formal_input(
         testbench,
     )
     used_names = set(
-        re.findall(r"\b[A-Za-z_]\w*\b", candidate_body + " " + reference_body)
+        re.findall(r"\b[A-Za-z_]\w*\b", candidate_expression + " " + reference_expression)
     )
     for kind, name in declarations:
         if kind in {"parameter", "localparam"} or name in used_names:
             signals.add(name)
 
     return {
-        "candidate_body": candidate_body,
-        "reference_body": reference_body,
+        "candidate_expression": candidate_expression,
+        "reference_expression": reference_expression,
         "signal_list": ",".join(sorted(signals)),
         "generated_reset": candidate_reset,
         "reference_reset": reference_reset,
@@ -175,7 +203,7 @@ def _finish_result(result: dict, output: str) -> dict:
         f"Generated reset: {result['generated_reset'] or '(none)'}\n"
         f"Reference reset: {result['reference_reset'] or '(none)'}\n"
         f"Reset mismatch: {result['reset_mismatch']}\n"
-        f"Comparison scope: {COMPARISON_SCOPE}\n"
+        f"Comparison scope: {result['comparison_scope']}\n"
         f"Tool details:\n{details[:6000]}"
     )
     return result
@@ -191,8 +219,10 @@ def evaluate_assertion(
     fveval_dir=None,
     jg_executable: str = "jg",
     task_id: str = "case",
+    dataset: str = "nl2sva_human",
 ) -> dict:
     """Evaluate one assertion and return scores, feedback, and log paths."""
+    policy = get_evaluation_policy(dataset)
     if timeout_seconds <= 0:
         raise ValueError("timeout_seconds must be positive.")
     if not isinstance(task_id, str) or not task_id.strip():
@@ -217,7 +247,7 @@ def evaluate_assertion(
         "syntax": None, "pec": None, "relax_pec": None,
         "generated_reset": "", "reference_reset": "",
         "reset_mismatch": None,
-        "comparison_scope": COMPARISON_SCOPE,
+        "comparison_scope": policy["scope"],
         "run_dir": str(directory),
         "work_dir": str(work),
         "log_path": str(directory / "jasper.log"),
@@ -227,11 +257,11 @@ def evaluate_assertion(
         "tool_task_id": task_id,
     }
 
-    experiment_id = CHECKER_NAME
+    experiment_id = policy["name"]
     try:
         prepared = _prepare_formal_input(
             generated_assertion, reference_assertion,
-            testbench, requirement, sv_file,
+            testbench, requirement, sv_file, include_reset=policy["include_reset"],
         )
     except ValueError as error:
         return _finish_result(result, str(error))
@@ -239,7 +269,7 @@ def evaluate_assertion(
         result[key] = prepared[key]
     result["comparison_inputs"] = {
         key: prepared[key]
-        for key in ("candidate_body", "reference_body", "signal_list")
+        for key in ("candidate_expression", "reference_expression", "signal_list")
     }
     tool_sv_file = work / f"{experiment_id}_{task_id}.sva"
     shutil.copyfile(sv_file, tool_sv_file)
@@ -260,7 +290,7 @@ def evaluate_assertion(
             "or supply fveval_dir explicitly."
         )
 
-    tcl_file = fveval / "tool_scripts" / "run_jg_nl2sva_human.tcl"
+    tcl_file = fveval / "tool_scripts" / policy["tcl_file"]
     pec_file = fveval / "tool_scripts" / "pec" / "pec.tcle"
     for required_file in (tcl_file, pec_file):
         if not required_file.is_file():
@@ -271,8 +301,8 @@ def evaluate_assertion(
     project.parent.mkdir()
     command = [
         str(jg_executable), "-fpv", "-batch", "-tcl", str(tcl_file),
-        "-define", "LM_ASSERT_TEXT", prepared["candidate_body"],
-        "-define", "REF_ASSERT_TEXT", prepared["reference_body"],
+        "-define", "LM_ASSERT_TEXT", prepared["candidate_expression"],
+        "-define", "REF_ASSERT_TEXT", prepared["reference_expression"],
         "-define", "SIGNAL_LIST", prepared["signal_list"],
         "-define", "EXP_ID", experiment_id,
         "-define", "TASK_ID", task_id,
@@ -345,4 +375,3 @@ def cleanup_work(
     except OSError as error:
         return {"retained": True, "reason": f"Cleanup failed: {error}"}
     return {"retained": False, "reason": "Owned work files removed."}
-

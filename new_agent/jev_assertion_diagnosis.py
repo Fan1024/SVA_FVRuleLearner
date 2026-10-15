@@ -11,6 +11,7 @@ def diagnose_assertion_mismatches(
     *,
     design_context: str = "",
     formal_feedback: str = "",
+    comparison_scope: str = "",
     model: Optional[str] = None,
     client: Optional[TypeSafeClient] = None,
 ) -> dict[str, Any]:
@@ -20,6 +21,7 @@ def diagnose_assertion_mismatches(
         "reference_assertion": reference_assertion,
         "design_context": design_context,
         "formal_feedback": formal_feedback,
+        "comparison_scope": comparison_scope,
     }
     for name, value in inputs.items():
         if not isinstance(value, str):
@@ -30,10 +32,9 @@ def diagnose_assertion_mismatches(
 
     state = {
         "background": (
-            "The generated assertion did not pass strict property-body PEC. "
-            "Diagnose the property body using the formal feedback. Clock and "
-            "disable iff reset wrappers are outside this comparison scope; "
-            "do not recommend changes to those wrappers or their signal names. "
+            "The generated assertion did not pass strict PEC. "
+            "Diagnose it using the formal feedback and the supplied comparison_scope. "
+            "Restrict repair recommendations to the active comparison scope. "
             "Identify the changes needed to fix it using the requirement and "
             "the known-correct reference assertion. Do not recheck whether the "
             "whole assertion has an error. A failed assertion can still contain "
@@ -401,4 +402,3 @@ if __name__ == "__main__":
         design_context="a and b are single-bit signals sampled on posedge clk.",
     )
     print(json.dumps(diagnosis, indent=2, ensure_ascii=False))
-
