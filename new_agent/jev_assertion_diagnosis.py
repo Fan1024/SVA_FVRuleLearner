@@ -30,10 +30,10 @@ def diagnose_assertion_mismatches(
 
     state = {
         "background": (
-            "The generated assertion did not satisfy the pipeline acceptance criterion. "
-            "Read the formal feedback: the property body may have failed PEC, or "
-            "body PEC may have passed while reset names differ. A reset-name "
-            "mismatch alone does not prove different reset semantics. "
+            "The generated assertion did not pass strict property-body PEC. "
+            "Diagnose the property body using the formal feedback. Clock and "
+            "disable iff reset wrappers are outside this comparison scope; "
+            "do not recommend changes to those wrappers or their signal names. "
             "Identify the changes needed to fix it using the requirement and "
             "the known-correct reference assertion. Do not recheck whether the "
             "whole assertion has an error. A failed assertion can still contain "

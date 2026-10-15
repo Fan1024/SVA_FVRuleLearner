@@ -10,6 +10,7 @@ reusable natural-language correction rules. Diagnosis statements are hypotheses,
 Use the requirement, testbench, and reference to assess and group them.
 Return one JSON object containing only groups and their correction rules.
 Work only on issues represented by the supplied statements.
+Assess property bodies only; do not generate clock or disable iff reset repairs.
 The reference is analysis evidence. The later assertion-generation call will
 receive the requirement, testbench, and your guidance, but no reference assertion.
 Your rules must guide that call without copying the reference implementation.

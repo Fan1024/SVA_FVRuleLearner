@@ -12,7 +12,7 @@ import dataset_loader
 import formal_check
 import rule_generator
 import run_io
-from diagnosis_formatter import format_diagnosis, format_reset_mismatch
+from diagnosis_formatter import format_diagnosis
 from jev_assertion_diagnosis import diagnose_assertion_mismatches
 
 
@@ -136,11 +136,11 @@ def run_pipeline(directory, record: dict) -> int:
                 directory, record, formal_result["status"].lower(), unresolved=True,
             )
 
-        if formal_result["pec"] == 1.0 and formal_result["reset_mismatch"] is False:
+        if formal_result["pec"] == 1.0:
             run_io.update_run(
                 directory, record, status="PASSED", stage="finished",
                 passed=True, stop_reason="passed",
-                diagnosis_skipped_reason="Strict body PEC passed and reset names match.",
+                diagnosis_skipped_reason="Strict body PEC passed; reset is informational.",
             )
             return 0
 
@@ -171,7 +171,6 @@ def run_pipeline(directory, record: dict) -> int:
         statements = format_diagnosis(
             diagnosis["answers"], confidence_threshold=config.CONFIDENCE_THRESHOLD,
         )
-        statements.update(format_reset_mismatch(formal_result))
         run_io.update_run(directory, record, statements=statements)
         run_io.save_debug_event(directory, record, "statements", statements=statements)
         if not statements:
