@@ -1,29 +1,41 @@
 """Build rule-generation requests and validate the returned correction groups."""
 
 import json
+import re
 
 from openai import OpenAI
 
 
 SYSTEM_PROMPT = """You analyze SystemVerilog assertion mismatches and generate
 reusable natural-language correction rules. Diagnosis statements are hypotheses, not facts.
-Use the requirement, testbench, and reference to assess and group them.
+They are supporting evidence, not an exhaustive list of potential issues.
+You may explore potential issues beyond the supplied statements using the requirement,
+testbench, generated assertion, and reference as background. Check whether a proposed
+correction is supported before turning it into a rule.
 Return one JSON object containing only groups and their correction rules.
-Work only on issues represented by the supplied statements.
 Assess property bodies only; do not generate clock or disable iff reset repairs.
+Conditions inside the property body remain in scope, including reset-related guards.
 The reference is analysis evidence. The later assertion-generation call will
 receive the requirement, testbench, and your guidance, but no reference assertion.
 Your rules must guide that call without copying the reference implementation.
 """
 
 
-TASK_INSTRUCTIONS = """Group the supplied diagnosis statements into correction
-issues. Generate exactly ONE rule for EACH group. There is no fixed rule count;
-the number of rules is determined by the number of supported correction groups.
+TASK_INSTRUCTIONS = """Identify potential correction issues using the supplied
+background and diagnosis statements. Generate exactly ONE rule for EACH group.
+There is no fixed rule count; it is determined by the number of supported groups.
 
 HOW TO GROUP STATEMENTS
 - Check the statements against the requirement, generated assertion, reference,
   and testbench. Presence observations are evidence, not automatic edit commands.
+- You may explore potential issues not identified by diagnosis. Empty or weak
+  statements do not establish equivalence and do not prevent this exploration.
+- Use supplied statement IDs when they support an issue. For an additional
+  potential issue, use a short descriptive tag beginning with potential_, such
+  as potential_missing_condition. Use lowercase letters, digits, and underscores;
+  describe the issue rather than this case's signal names. Keep the same tag
+  when the same issue recurs. Related statement IDs and a potential tag may
+  share a group when they describe one coherent correction.
 - Exclude factually incorrect observations from the output groups. For example,
   a claim that a category occurs only in the reference is incorrect if the
   generated assertion also contains that category. Do not treat it as support.
@@ -67,22 +79,24 @@ HOW TO GENERATE THE RULE FOR EACH GROUP
 - If a group requires several coordinated edits, combine them into one rule.
 - Resolve competing proposals rather than issuing incompatible commands.
 - Avoid vague instructions such as 'fix the timing' or 'match the reference'.
-- Work only on issues covered by the supplied statements. Do not add new issues,
-  labels, keywords, assessment sections, or a complete rewritten assertion.
+- Do not invent a correction just to produce a rule. Different syntax can be
+  behaviorally equivalent. Keep the output limited to correction groups and
+  rules, without assessment sections or a complete rewritten assertion.
 
 OUTPUT
 Return only a JSON object with consecutive keys rule_1, rule_2, and so on.
 Each entry must contain exactly TWO fields:
-- group: a list of original statement IDs belonging to the correction group.
+- group: a list of supporting statement IDs and/or descriptive potential_ tags.
 - rule: the reusable natural-language editing instruction for that group.
 The layout below illustrates one entry, not a limit of one rule. Generate one
-entry per supported group. Return {} if no supported correction can be formed.
+entry per supported group. Return {} if no supported correction can be formed
+after considering both the statements and potential issues in the background.
 """
 
 
 OUTPUT_LAYOUT = {
     "rule_1": {
-        "group": ["original statement ID", "another related statement ID"],
+        "group": ["supporting_statement_id_or_potential_issue_tag"],
         "rule": "When a behavioral condition applies, replace/remove/insert/modify the relevant construct as specified by this correction principle.",
     },
 }
@@ -135,7 +149,7 @@ def parse_rules(response_text: str) -> dict:
 
 
 def check_rule_groups(result: dict, statements: dict) -> None:
-    """Check the two-field format and source IDs; this does not prove rule correctness."""
+    """Validate group structure, allowing additional potential-issue tags."""
     expected_names = {f"rule_{number}" for number in range(1, len(result) + 1)}
     if set(result) != expected_names:
         raise ValueError("Use consecutive names: rule_1, rule_2, and so on.")
@@ -145,9 +159,18 @@ def check_rule_groups(result: dict, statements: dict) -> None:
         group = entry["group"]
         if (
             not isinstance(group, list) or not group
-            or any(not isinstance(item, str) or item not in statements for item in group)
+            or any(
+                not isinstance(item, str)
+                or (
+                    item not in statements
+                    and not re.fullmatch(r"potential_[a-z][a-z0-9_]*", item)
+                )
+                for item in group
+            )
         ):
-            raise ValueError(f"{name}.group must list original statement IDs.")
+            raise ValueError(
+                f"{name}.group must list supplied statement IDs or descriptive potential_ tags."
+            )
         if len(group) != len(set(group)):
             raise ValueError(f"{name}.group contains a repeated statement ID.")
         if not isinstance(entry["rule"], str) or not entry["rule"].strip():

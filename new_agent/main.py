@@ -168,16 +168,20 @@ def run_pipeline(directory, record: dict) -> int:
             diagnosis_model=diagnosis.get("model"),
         )
         run_io.save_diagnosis_model(record, diagnosis.get("model"))
-        run_io.save_debug_event(directory, record, "diagnosis", diagnosis=diagnosis)
-        statements = format_diagnosis(
-            diagnosis["answers"], confidence_threshold=config.CONFIDENCE_THRESHOLD,
-        )
+        statements = None
+        try:
+            statements = format_diagnosis(
+                diagnosis["answers"], confidence_threshold=config.CONFIDENCE_THRESHOLD,
+            )
+        finally:
+            # Preserve the diagnosis output even if formatting fails.
+            run_io.save_debug_event(
+                directory, record, "diagnosis", diagnosis=diagnosis, statements=statements,
+            )
         run_io.update_run(directory, record, statements=statements)
         run_io.save_debug_event(directory, record, "statements", statements=statements)
-        if not statements:
-            return stop_pipeline(directory, record, "no_guidance")
 
-        # 5. Learn rules from current statements; Python manages older rules.
+        # 5. Explore potential issues, even with no statements. Python manages older rules.
         run_io.update_run(directory, record, stage="rule_generation")
         rule_prompt = rule_generator.build_rule_prompt(
             requirement=inputs["requirement"],
@@ -191,10 +195,7 @@ def run_pipeline(directory, record: dict) -> int:
             "raw_response": None, "rules": None,
         }
         run_io.update_run(directory, record, last_rule_generation=rule_attempt)
-        run_io.save_debug_event(
-            directory, record, "rule_request", model=config.RULE_MODEL,
-            system_prompt=rule_generator.SYSTEM_PROMPT, user_prompt=rule_prompt,
-        )
+        run_io.save_debug_event(directory, record, "rule_request")
         rule_response = rule_generator.generate_rules(
             client=client, model=config.RULE_MODEL, user_prompt=rule_prompt,
         )

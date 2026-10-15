@@ -64,7 +64,7 @@ def create_experiment(
     directory_label = re.sub(r"[^A-Za-z0-9_-]+", "_", dataset).strip("_") or "dataset"
     directory = create_run(directory_label, runs_root=runs_root, phase=phase)
     metadata = {
-        "output_format_version": 2,
+        "output_format_version": 3,
         "phase": phase,
         "dataset": dataset,
         "dataset_path": str(dataset_path),
@@ -296,18 +296,124 @@ def save_diagnosis_model(record: dict, model: str | None) -> None:
         _atomic_write(path, json.dumps(metadata, indent=2, ensure_ascii=False) + "\n")
 
 
-def save_debug_event(run_dir, record: dict, event: str, **data) -> None:
-    """Append one round event when detailed evidence is enabled.
+# Readable debug evidence. Prompts, paths, and internal objects are not serialized.
 
-    These records are saved evidence, not conversation history sent to models.
-    """
+def _debug_diagnosis_text(diagnosis: dict, statements: dict | None) -> str:
+    """Show every answer and whether it survived the actual formatter."""
+    lines = [f"{'Question':<44} {'Answer':<16} {'Noul':>5} {'Confidence':>10} Selection"]
+    for name, result in diagnosis.get("answers", {}).items():
+        answer = result["answer"]
+        if isinstance(answer, bool):
+            answer = "yes" if answer else "no"
+        else:
+            answer = str(answer)
+        raw = diagnosis.get("raw_answers", {}).get(name, {})
+        if statements is None:
+            selected = "not formatted"
+        else:
+            selected = "kept" if name in statements else "excluded"
+        lines.append(
+            f"{name:<44} {answer:<16} {str(raw.get('noul', '-')):>5} "
+            f"{str(result.get('confidence', '-')):>10} {selected}"
+        )
+    if len(lines) == 1:
+        return "No diagnosis answers returned."
+    return "\n".join(lines)
+
+
+def _debug_event_text(record: dict, event: str, data: dict) -> str:
+    """Render only the outputs and decisions useful when inspecting a case."""
+    if event == "assertion_request":
+        number = record["pending_attempt"]["round"]
+        groups = "; ".join(
+            ", ".join(rule["group"]) for rule in data.get("rules_used", [])
+        ) or "none"
+        return (
+            f"\nROUND {number}\n=======\nRule groups used: {groups}\n\n"
+            "ASSERTION GENERATOR OUTPUT"
+        )
+    if event == "assertion_response":
+        return data["raw_response"]
+    if event == "formal_check":
+        formal = data["formal_result"]
+        lines = ["\nFORMAL RESULT", f"Status: {formal['status']}"]
+        for label, key in (
+            ("Syntax", "syntax"), ("Strict PEC", "pec"), ("Relaxed PEC", "relax_pec"),
+        ):
+            value = formal.get(key)
+            lines.append(f"{label}: {'unavailable' if value is None else value}")
+        mismatch = formal.get("reset_mismatch")
+        mismatch = "unavailable" if mismatch is None else mismatch
+        lines.append(f"Reset mismatch: {mismatch} (informational)")
+        if formal["status"] not in {"FULL_EQUIVALENCE", "IMPLIES", "NO_EQUIVALENCE"}:
+            feedback = formal.get("feedback", "")
+            details = feedback.partition("Tool details:\n")[2] or feedback
+            if details:
+                lines.extend(["Details:", details])
+        return "\n".join(lines)
+    if event == "diagnosis":
+        return "\nDIAGNOSIS OUTPUT\n" + _debug_diagnosis_text(
+            data["diagnosis"], data.get("statements"),
+        )
+    if event == "statements":
+        lines = [f"{name}: {text}" for name, text in data["statements"].items()]
+        return "\nSTATEMENTS SENT TO RULE GENERATOR\n" + (
+            "\n".join(lines) if lines else
+            "None. Rule generation may explore potential issues using the background."
+        )
+    if event == "rule_request":
+        return "\nRULE GENERATOR OUTPUT"
+    if event == "rule_response":
+        raw = data["raw_response"]
+        try:
+            return json.dumps(json.loads(raw), indent=2, ensure_ascii=False)
+        except ValueError:
+            return raw  # Preserve malformed output before parsing reports the error.
+    if event == "rule_update":
+        return "\nDECISION\nContinue: strict PEC failed; correction guidance is available."
+    if event == "case_finished":
+        reason = data["stop_reason"]
+        explanation = {
+            "passed": "Strict body PEC passed.",
+            "max_rounds": "Maximum assertion attempts reached.",
+            "no_guidance": "Rule generator returned no rules.",
+            "interrupted": "Execution was interrupted by the user.",
+        }.get(reason, f"Processing ended with {reason}.")
+        lines = ["\nDECISION", f"Stop: {explanation}"]
+        error = data.get("error")
+        if error:
+            lines.extend(["\nEXCEPTION / INTERRUPTION"])
+            for label, key in (("Stage", "stage"), ("Type", "type"), ("Message", "message")):
+                lines.append(f"{label}: {error.get(key, '(unavailable)')}")
+            if error.get("traceback"):
+                lines.extend(["Traceback:", error["traceback"]])
+        if reason == "cleanup_failed":
+            lines.append(record["formal"]["cleanup"]["reason"])
+        lines.extend([
+            "\nFINAL RESULT", f"Pipeline: {data['status']}", f"Passed: {data['passed']}",
+            f"Rounds used: {record['rounds_used']}", f"Stop reason: {reason}",
+        ])
+        return "\n".join(lines)
+    return ""
+
+
+def save_debug_event(run_dir, record: dict, event: str, **data) -> None:
+    """Append readable outputs as they arrive, including output preceding errors."""
     if not record["settings"].get("save_debug_traces", False):
         return
-    pending = record["pending_attempt"]
-    round_number = pending["round"] if pending else record["last_evaluated_round"]
-    entry = {"round": round_number, "event": event, "time": local_now(), **data}
-    with (Path(run_dir) / "debug_traces.jsonl").open("a", encoding="utf-8") as file:
-        file.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    text = _debug_event_text(record, event, data)
+    if not text:
+        return
+    path = Path(run_dir) / "debug_trace.txt"
+    first_write = not path.exists()
+    with path.open("a", encoding="utf-8", newline="\n") as file:
+        if first_write:
+            inputs = record["inputs"]
+            file.write(
+                f"REQUIREMENT\n{inputs.get('requirement', '')}\n\n"
+                f"REFERENCE ASSERTION\n{inputs.get('reference_assertion', '')}\n\n"
+            )
+        file.write(text.rstrip() + "\n")
 
 
 def start_attempt(
@@ -326,8 +432,7 @@ def start_attempt(
         rounds_used=round_number, pending_attempt=attempt,
     )
     save_debug_event(
-        run_dir, record, "assertion_request", model=record["models"]["assertion"],
-        system_prompt=system_prompt, user_prompt=user_prompt, rules_used=rules,
+        run_dir, record, "assertion_request", rules_used=rules,
     )
     return attempt
 
@@ -454,10 +559,6 @@ def save_summaries(summary_dir, record: dict) -> None:
     writer.writeheader()
     writer.writerows(rows.values())  # None becomes blank, not a zero score.
     _atomic_write(directory / "evaluation.csv", buffer.getvalue())
-
-    if record["settings"].get("save_debug_traces", False):
-        trace = {**row, "round_metrics": record["round_metrics"]}
-        _update_case_collection(directory / "training_traces.jsonl", trace)
 
     # Guidance is exported separately from score traces. A passed case does not
     # establish that every individual rule caused the successful revision.
