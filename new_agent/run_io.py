@@ -33,10 +33,12 @@ def local_now() -> str:
     return datetime.now(RUN_TIMEZONE).isoformat(timespec="seconds")
 
 
-def create_run(case_id: str, runs_root=None) -> Path:
-    """Create one timestamped case directory, with no round subdirectories."""
+def create_run(case_id: str, runs_root=None, *, phase: str | None = None) -> Path:
+    """Create a timestamped directory, optionally labeled Train or Infer."""
     if not re.fullmatch(r"[A-Za-z0-9_-]+", case_id):
         raise ValueError("case_id must contain only letters, digits, _ or -.")
+    if phase not in (None, "train", "infer"):
+        raise ValueError("phase must be 'train' or 'infer'.")
     root = (
         Path(runs_root).expanduser().resolve()
         if runs_root is not None
@@ -44,20 +46,26 @@ def create_run(case_id: str, runs_root=None) -> Path:
     )
     root.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now(RUN_TIMEZONE).strftime("%Y%m%d_%H%M%S_%fZ")
-    directory = root / f"{timestamp}_{case_id}"
+    prefix = f"{phase.title()}_" if phase else ""
+    directory = root / f"{prefix}{timestamp}_{case_id}"
     directory.mkdir()
     return directory
 
 
 def create_experiment(
     *, dataset: str, dataset_path, cases: list[dict], models: dict,
-    settings: dict, runs_root=None,
+    settings: dict, runs_root=None, phase: str = "train", source_training_run=None,
 ) -> Path:
     """Create one batch directory and save its resolved inputs/selection once."""
+    if phase not in ("train", "infer"):
+        raise ValueError("phase must be 'train' or 'infer'.")
+    if (phase == "infer") != (source_training_run is not None):
+        raise ValueError("Only inference experiments require source_training_run.")
     directory_label = re.sub(r"[^A-Za-z0-9_-]+", "_", dataset).strip("_") or "dataset"
-    directory = create_run(directory_label, runs_root=runs_root)
+    directory = create_run(directory_label, runs_root=runs_root, phase=phase)
     metadata = {
         "output_format_version": 2,
+        "phase": phase,
         "dataset": dataset,
         "dataset_path": str(dataset_path),
         "dataset_sha256": hashlib.sha256(Path(dataset_path).read_bytes()).hexdigest(),
@@ -77,11 +85,79 @@ def create_experiment(
         "finished_at": None,
         "status": "RUNNING",
     }
+    if source_training_run is not None:
+        metadata["source_training_run"] = str(Path(source_training_run).expanduser().resolve())
     _atomic_write(
         directory / "run_metadata.json",
         json.dumps(metadata, indent=2, ensure_ascii=False) + "\n",
     )
     return directory
+
+
+def _read_training_metadata(directory: Path, dataset: str, dataset_sha256: str) -> dict:
+    """Check whether an experiment can supply a saved split and learning evidence."""
+    metadata = json.loads((directory / "run_metadata.json").read_text(encoding="utf-8"))
+    if not isinstance(metadata, dict):
+        raise ValueError("run_metadata.json must contain an object.")
+    if metadata.get("phase") != "train" or metadata.get("status") != "COMPLETED":
+        raise ValueError("The source must be a COMPLETED training experiment.")
+    if metadata.get("dataset") != dataset or metadata.get("dataset_sha256") != dataset_sha256:
+        raise ValueError("The training dataset name or CSV contents do not match the current dataset.")
+    settings = metadata.get("settings")
+    split = settings.get("dataset_split") if isinstance(settings, dict) else None
+    if (
+        not isinstance(split, dict)
+        or not split.get("training_case_ids")
+        or not split.get("inference_case_ids")
+    ):
+        raise ValueError("The training experiment has no saved train/inference split.")
+    finished_at = metadata.get("finished_at")
+    if not isinstance(finished_at, str) or datetime.fromisoformat(finished_at).tzinfo is None:
+        raise ValueError("The training experiment has no valid completion timestamp.")
+    for name in ("evaluation.csv", "learned_rules.jsonl"):
+        if not (directory / name).is_file():
+            raise ValueError(f"The training experiment is missing {name}.")
+    return metadata
+
+
+def select_training_run(
+    *, dataset: str, dataset_path, runs_root, training_run_dir=None,
+) -> tuple[Path, dict]:
+    """Select an explicit source or the compatible run that finished most recently.
+
+    Relative explicit paths are resolved from runs_root. Invalid explicit paths
+    fail without falling back. Automatic selection ignores incomplete,
+    incompatible, and older-format experiments without phase/split metadata.
+    """
+    root = Path(runs_root).expanduser().resolve()
+    dataset_sha256 = hashlib.sha256(Path(dataset_path).read_bytes()).hexdigest()
+    if training_run_dir is not None:
+        directory = Path(training_run_dir).expanduser()
+        directory = (directory if directory.is_absolute() else root / directory).resolve()
+        try:
+            return directory, _read_training_metadata(directory, dataset, dataset_sha256)
+        except (OSError, ValueError) as error:
+            raise ValueError(f"Cannot use training run {directory}: {error}") from error
+
+    candidates = []
+    directories = root.iterdir() if root.is_dir() else []
+    for directory in directories:
+        if not directory.is_dir():
+            continue
+        try:
+            metadata = _read_training_metadata(directory, dataset, dataset_sha256)
+        except (OSError, ValueError):
+            continue
+        candidates.append((directory, metadata))
+    if not candidates:
+        raise ValueError(
+            f"No completed training experiment with a saved split matches {dataset!r} "
+            f"and the current CSV in {root}. Train with CASE_IDS = [] first, "
+            "or set TRAINING_RUN_DIR to a compatible experiment."
+        )
+    return max(candidates, key=lambda item: (
+        datetime.fromisoformat(item[1]["finished_at"]), item[0].name,
+    ))
 
 
 def finish_experiment(experiment_dir, exit_code: int) -> int:

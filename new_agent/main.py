@@ -1,4 +1,4 @@
-"""Select dataset cases, then generate/check/revise each case independently."""
+"""Prepare training cases, then generate/check/revise each case independently."""
 
 from copy import deepcopy
 from math import isfinite
@@ -222,7 +222,10 @@ def main() -> int:
     """Load cases once; use the existing round workflow separately for each."""
     # 1. Validate the configuration, CSV, and complete selection before any API call.
     validate_config()
-    cases = dataset_loader.load_cases(config.DATASET_PATH, config.CASE_IDS)
+    cases, dataset_split = dataset_loader.load_training_cases(
+        config.DATASET_PATH, config.CASE_IDS,
+        train_fraction=config.TRAIN_FRACTION, split_seed=config.SPLIT_SEED,
+    )
     dataset_path = Path(cases[0]["dataset_path"])
     models = {"assertion": config.ASSERTION_MODEL, "rule": config.RULE_MODEL}
     settings = {
@@ -230,6 +233,7 @@ def main() -> int:
         "dataset_path": str(dataset_path),
         "checker": formal_check.CHECKER_NAME,
         "case_ids": list(config.CASE_IDS),
+        "dataset_split": dataset_split,
         "max_rounds": config.MAX_ROUNDS,
         "timeout_seconds": config.JASPER_TIMEOUT_SECONDS,
         "confidence_threshold": config.CONFIDENCE_THRESHOLD,
@@ -241,8 +245,17 @@ def main() -> int:
     experiment_dir = run_io.create_experiment(
         dataset=config.DATASET, dataset_path=dataset_path, cases=cases,
         models=models, settings=settings, runs_root=config.RUNS_DIR,
+        phase="train",
     )
     print("Dataset:", dataset_path)
+    if dataset_split is not None:
+        print(
+            f"Random split: {len(cases)} training | "
+            f"{len(dataset_split['inference_case_ids'])} reserved for inference | "
+            f"seed {dataset_split['seed']}"
+        )
+    else:
+        print("Explicit case selection: random splitting is not applied.")
     print("Selected case IDs:", [case["case_number"] for case in cases])
     print("Experiment:", experiment_dir)
 

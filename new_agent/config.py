@@ -13,9 +13,17 @@ DATASET_PATH = (
     / f"{DATASET}.csv"
 )
 
-# 1-based parsed examples: [] = all, [1] = first, [1, 5, 20] = selected examples.
+# [] = split the full dataset and train only on the training portion.
+# [1] or [1, 5, 20] = run exactly these examples, bypassing the random split.
 # These numbers are not physical CSV line numbers or source task_id values.
 CASE_IDS = [1]
+
+# Used only when CASE_IDS = []. The remainder is reserved for inference.
+# Training count = int(total cases * TRAIN_FRACTION); both parts must be nonempty.
+TRAIN_FRACTION = 0.8
+
+# Keep this seed and the CSV unchanged to reproduce the same split.
+SPLIT_SEED = 42
 
 # Models for the two generation components. Jev uses its service default.
 ASSERTION_MODEL = "gpt-5.6-terra"
@@ -32,6 +40,11 @@ CONFIDENCE_THRESHOLD = 0.4
 
 # Every invocation creates a separate experiment directory here.
 RUNS_DIR = Path(__file__).resolve().parent / "runs"
+
+# Inference preparation only: None selects the latest completed compatible
+# training run. To use an older run, set RUNS_DIR / "Train_<timestamp>_<dataset>".
+# Training with main.py ignores this setting.
+TRAINING_RUN_DIR = None
 
 # True saves detailed round evidence. False saves only final case records,
 # final scores/rules, and the latest formal input/log; no round history or raw
