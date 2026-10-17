@@ -23,24 +23,27 @@ Preserve native disable iff behavior; it is not an antecedent guard.
 The reference is analysis evidence. The later assertion-generation call will
 receive the requirement, testbench, and your guidance, but no reference assertion.
 Your rules must guide that call without copying the reference implementation.
+This call follows a failed formal evaluation. Always return at least one labeled
+rule. If the precise correction remains uncertain, give an actionable re-analysis
+instruction instead of returning an empty object or inventing a specific cause.
 """
 
 
 TASK_INSTRUCTIONS = """Identify potential correction issues using the supplied
-background and diagnosis statements. Generate exactly ONE rule for EACH group.
-There is no fixed rule count; it is determined by the number of supported groups.
+background, formal feedback, and diagnosis statements. Generate exactly ONE rule
+for EACH group and at least ONE rule overall. Do not return an empty object.
 
 HOW TO GROUP STATEMENTS
 - Check the statements against the requirement, generated assertion, reference,
   and testbench. Presence observations are evidence, not automatic edit commands.
 - You may explore potential issues not identified by diagnosis. Empty or weak
   statements do not establish equivalence and do not prevent this exploration.
-- Use supplied statement IDs when they support an issue. For an additional
-  potential issue, use a short descriptive tag beginning with potential_, such
-  as potential_missing_condition. Use lowercase letters, digits, and underscores;
-  describe the issue rather than this case's signal names. Keep the same tag
-  when the same issue recurs. Related statement IDs and a potential tag may
-  share a group when they describe one coherent correction.
+- Identify the correction groups yourself and choose their descriptive labels
+  from your analysis. No group name or prefix is prescribed. Use lowercase
+  snake_case labels: start with a letter, then use letters, digits, and underscores.
+  Describe the behavioral issue rather than this case's signal names. Reuse a
+  label when the same issue recurs. You may also include original statement IDs
+  when they support the rule and make its diagnostic evidence traceable.
 - Exclude factually incorrect observations from the output groups. For example,
   a claim that a category occurs only in the reference is incorrect if the
   generated assertion also contains that category. Do not treat it as support.
@@ -60,9 +63,9 @@ HOW TO GROUP STATEMENTS
   For example, implication removal and logical insertion may form one correction.
 - Keep independent issues separate, even if their statements share a category.
   A supported issue described by only one statement can form a group by itself.
-- Do not force every statement into a group. Omit unsupported or unresolved
-  recommendations unless considering them helps resolve a supported correction.
-  Do not create a group containing only observations with no supported edit.
+- Do not force every statement into a group or attach an observed label that
+  does not support the rule. Exclude unsupported correction claims. If no
+  specific edit is established, use the re-analysis rule described below.
 - A statement ID may appear in more than one group if it supports distinct issues.
 
 HOW TO GENERATE THE RULE FOR EACH GROUP
@@ -84,24 +87,33 @@ HOW TO GENERATE THE RULE FOR EACH GROUP
 - If a group requires several coordinated edits, combine them into one rule.
 - Resolve competing proposals rather than issuing incompatible commands.
 - Avoid vague instructions such as 'fix the timing' or 'match the reference'.
-- Do not invent a correction just to produce a rule. Different syntax can be
-  behaviorally equivalent. Keep the output limited to correction groups and
-  rules, without assessment sections or a complete rewritten assertion.
+- Different syntax can be behaviorally equivalent. Do not invent a specific
+  correction to satisfy the nonempty-output requirement. Use formal feedback
+  and the reference to investigate what remains unresolved.
+- If no specific correction is established, return an actionable instruction
+  to re-derive the assertion from the requirement and testbench and reconsider
+  its clock, disable condition, trigger, response, signal relations, and timing.
+  Choose a descriptive label yourself for the issue or uncertainty you actually
+  identified. Explain the uncertainty in the rule; do not present a hypothesis
+  as an observed fact. No generic fallback group name is prescribed.
+- Keep the output limited to groups and rules, without assessment sections
+  or a complete rewritten assertion.
 
 OUTPUT
 Return only a JSON object with consecutive keys rule_1, rule_2, and so on.
 Each entry must contain exactly TWO fields:
-- group: a list of supporting statement IDs and/or descriptive potential_ tags.
+- group: a list of descriptive labels you choose and/or supporting statement IDs.
 - rule: the reusable natural-language editing instruction for that group.
-The layout below illustrates one entry, not a limit of one rule. Generate one
-entry per supported group. Return {} if no supported correction can be formed
-after considering both the statements and potential issues in the background.
+The layout below illustrates one entry, not a limit of one rule. Return at least
+one entry. You must identify and name its group from the supplied evidence.
+The label in the output layout is a placeholder, not a prescribed group name.
+Never return {}.
 """
 
 
 OUTPUT_LAYOUT = {
     "rule_1": {
-        "group": ["supporting_statement_id_or_potential_issue_tag"],
+        "group": ["your_descriptive_issue_label"],
         "rule": "When a behavioral condition applies, replace/remove/insert/modify the relevant construct as specified by this correction principle.",
     },
 }
@@ -115,6 +127,7 @@ def build_rule_prompt(
     testbench: str,
     *,
     comparison_scope: str = COMPARISON_SCOPE,
+    formal_feedback: str = "",
 ) -> str:
     """Build the prompt from data; this function makes no API call."""
     inputs = {
@@ -124,6 +137,7 @@ def build_rule_prompt(
         "statements": statements,
         "testbench": testbench,
         "comparison_scope": comparison_scope,
+        "formal_feedback": formal_feedback,
     }
     return (
         TASK_INSTRUCTIONS
@@ -132,7 +146,9 @@ def build_rule_prompt(
     )
 
 
-def generate_rules(client: OpenAI, model: str, user_prompt: str) -> str:
+def generate_rules(
+    client: OpenAI, model: str, user_prompt: str, *, usage_callback=None,
+) -> str:
     """Make one request and return text so the caller can save it before parsing."""
     response = client.responses.create(
         model=model,
@@ -140,6 +156,8 @@ def generate_rules(client: OpenAI, model: str, user_prompt: str) -> str:
         input=user_prompt,
         text={"format": {"type": "json_object"}},
     )
+    if usage_callback is not None:
+        usage_callback(getattr(response, "usage", None))
     if response.status != "completed":
         raise RuntimeError(f"Rule generation did not complete: {response.status}")
     if not response.output_text.strip():
@@ -157,7 +175,7 @@ def parse_rules(response_text: str) -> dict:
 
 
 def check_rule_groups(result: dict, statements: dict) -> None:
-    """Validate group structure, allowing additional potential-issue tags."""
+    """Check output structure and label format, not a fixed list of group names."""
     expected_names = {f"rule_{number}" for number in range(1, len(result) + 1)}
     if set(result) != expected_names:
         raise ValueError("Use consecutive names: rule_1, rule_2, and so on.")
@@ -169,18 +187,16 @@ def check_rule_groups(result: dict, statements: dict) -> None:
             not isinstance(group, list) or not group
             or any(
                 not isinstance(item, str)
-                or (
-                    item not in statements
-                    and not re.fullmatch(r"potential_[a-z][a-z0-9_]*", item)
-                )
+                or not re.fullmatch(r"[a-z][a-z0-9_]*", item)
                 for item in group
             )
         ):
             raise ValueError(
-                f"{name}.group must list supplied statement IDs or descriptive potential_ tags."
+                f"{name}.group must contain nonempty lowercase snake_case labels."
             )
         if len(group) != len(set(group)):
-            raise ValueError(f"{name}.group contains a repeated statement ID.")
+            raise ValueError(f"{name}.group contains a repeated label.")
         if not isinstance(entry["rule"], str) or not entry["rule"].strip():
             raise ValueError(f"{name}.rule must contain an editing instruction.")
+
 

@@ -3,6 +3,7 @@
 from copy import deepcopy
 from math import isfinite
 from pathlib import Path
+from time import perf_counter
 
 from openai import OpenAI
 
@@ -83,6 +84,7 @@ def run_pipeline(directory, record: dict) -> int:
     previous_assertion = None
 
     for round_number in range(1, config.MAX_ROUNDS + 1):
+        run_io.start_usage_round(record, round_number)
         # 1. Revise using only the immediately preceding round's rules.
         selected_rules = [
             rule for rule in retained_rules(registry)
@@ -101,9 +103,11 @@ def run_pipeline(directory, record: dict) -> int:
             user_prompt=user_prompt,
             rules=selected_rules,
         )
-        response_text = assertion_generator.generate_assertion(
-            client=client, model=config.ASSERTION_MODEL, user_prompt=user_prompt,
-        )
+        with run_io.measure_stage(record, "assertion") as capture_usage:
+            response_text = assertion_generator.generate_assertion(
+                client=client, model=config.ASSERTION_MODEL, user_prompt=user_prompt,
+                usage_callback=capture_usage,
+            )
         attempt["generation"]["raw_response"] = response_text
         run_io.update_run(directory, record, stage="extraction")
         run_io.save_debug_event(
@@ -115,16 +119,17 @@ def run_pipeline(directory, record: dict) -> int:
 
         # 2. Check the assertion, record its verdict, and clean temporary work.
         run_io.prepare_formal_check(directory)
-        formal_result = formal_check.evaluate_assertion(
-            generated_assertion=generated_assertion,
-            reference_assertion=inputs["reference_assertion"],
-            testbench=inputs["testbench"],
-            requirement=inputs["requirement"],
-            run_dir=directory,
-            timeout_seconds=config.JASPER_TIMEOUT_SECONDS,
-            task_id=inputs["task_id"],
-            dataset=inputs.get("dataset", config.DATASET),
-        )
+        with run_io.measure_stage(record, "tool"):
+            formal_result = formal_check.evaluate_assertion(
+                generated_assertion=generated_assertion,
+                reference_assertion=inputs["reference_assertion"],
+                testbench=inputs["testbench"],
+                requirement=inputs["requirement"],
+                run_dir=directory,
+                timeout_seconds=config.JASPER_TIMEOUT_SECONDS,
+                task_id=inputs["task_id"],
+                dataset=inputs.get("dataset", config.DATASET),
+            )
         run_io.record_formal_result(directory, record, attempt, formal_result)
         run_io.update_run(directory, record, stage="cleanup")
         cleanup = run_io.cleanup_formal_work(
@@ -163,14 +168,16 @@ def run_pipeline(directory, record: dict) -> int:
 
         # 4. Diagnose this failure and format current correction hypotheses.
         run_io.update_run(directory, record, stage="diagnosis")
-        diagnosis = diagnose_assertion_mismatches(
-            requirement=inputs["requirement"],
-            generated_assertion=generated_assertion,
-            reference_assertion=inputs["reference_assertion"],
-            design_context=inputs["testbench"],
-            formal_feedback=formal_result["feedback"],
-            comparison_scope=formal_check.COMPARISON_SCOPE,
-        )
+        with run_io.measure_stage(record, "diagnosis") as capture_usage:
+            diagnosis = diagnose_assertion_mismatches(
+                requirement=inputs["requirement"],
+                generated_assertion=generated_assertion,
+                reference_assertion=inputs["reference_assertion"],
+                design_context=inputs["testbench"],
+                formal_feedback=formal_result["feedback"],
+                comparison_scope=formal_check.COMPARISON_SCOPE,
+                usage_callback=capture_usage,
+            )
         run_io.update_run(
             directory, record, stage="formatting", diagnosis=diagnosis,
             diagnosis_model=diagnosis.get("model"),
@@ -198,6 +205,7 @@ def run_pipeline(directory, record: dict) -> int:
             statements=statements,
             testbench=inputs["testbench"],
             comparison_scope=formal_check.COMPARISON_SCOPE,
+            formal_feedback=formal_result["feedback"],
         )
         rule_attempt = {
             "round": round_number, "model": config.RULE_MODEL,
@@ -205,24 +213,27 @@ def run_pipeline(directory, record: dict) -> int:
         }
         run_io.update_run(directory, record, last_rule_generation=rule_attempt)
         run_io.save_debug_event(directory, record, "rule_request")
-        rule_response = rule_generator.generate_rules(
-            client=client, model=config.RULE_MODEL, user_prompt=rule_prompt,
-        )
+        with run_io.measure_stage(record, "rule") as capture_usage:
+            rule_response = rule_generator.generate_rules(
+                client=client, model=config.RULE_MODEL, user_prompt=rule_prompt,
+                usage_callback=capture_usage,
+            )
         rule_attempt["raw_response"] = rule_response
         run_io.update_run(directory, record, stage="rule_validation")
         run_io.save_debug_event(directory, record, "rule_response", raw_response=rule_response)
         new_rules = rule_generator.parse_rules(rule_response)
         rule_attempt["rules"] = new_rules
         rule_generator.check_rule_groups(new_rules, statements)
-        if not new_rules:
-            return stop_pipeline(directory, record, "no_guidance")
 
         run_io.update_run(directory, record, stage="rule_update")
         update_rule_registry(registry, new_rules, round_number)
         run_io.update_run(directory, record, rule_registry=retained_rules(registry))
-        run_io.save_debug_event(
-            directory, record, "rule_update", rule_registry=record["rule_registry"],
-        )
+        if new_rules:
+            run_io.save_debug_event(
+                directory, record, "rule_update", rule_registry=record["rule_registry"],
+            )
+        # If the model still returns {}, revise next round without new rules.
+        # The assertion generator accepts empty guidance; Python invents no labels.
         previous_assertion = generated_assertion
 
     raise RuntimeError("The round loop ended without a terminal outcome.")
@@ -230,6 +241,7 @@ def run_pipeline(directory, record: dict) -> int:
 
 def main() -> int:
     """Load cases once; use the existing round workflow separately for each."""
+    experiment_started = perf_counter()
     # 1. Validate the configuration, CSV, and complete selection before any API call.
     validate_config()
     cases, dataset_split = dataset_loader.load_training_cases(
@@ -302,11 +314,15 @@ def main() -> int:
         exit_code = 1
         raise
     finally:
-        exit_code = run_io.finish_experiment(experiment_dir, exit_code)
+        exit_code = run_io.finish_experiment(
+            experiment_dir, exit_code,
+            elapsed_seconds=perf_counter() - experiment_started,
+        )
 
     return exit_code
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
 

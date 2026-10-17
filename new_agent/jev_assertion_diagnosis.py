@@ -16,6 +16,7 @@ def diagnose_assertion_mismatches(
     comparison_scope: str = COMPARISON_SCOPE,
     model: Optional[str] = None,
     client: Optional[TypeSafeClient] = None,
+    usage_callback=None,
 ) -> dict[str, Any]:
     inputs = {
         "requirement": requirement,
@@ -365,6 +366,8 @@ def diagnose_assertion_mismatches(
             response = owned_client.system_one(**request)
     else:
         response = client.system_one(**request)
+    if usage_callback is not None:
+        usage_callback(getattr(response, "usage", None))
     if set(response.answers) != set(questions):
         raise RuntimeError("Jev response question names do not match the request")
 
@@ -409,4 +412,5 @@ if __name__ == "__main__":
         design_context="a and b are single-bit signals sampled on posedge clk.",
     )
     print(json.dumps(diagnosis, indent=2, ensure_ascii=False))
+
 

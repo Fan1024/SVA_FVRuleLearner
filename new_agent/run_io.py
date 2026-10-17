@@ -11,8 +11,10 @@ import json
 import re
 import traceback
 from copy import deepcopy
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+from time import perf_counter
 
 
 RUN_TIMEZONE = timezone.utc
@@ -24,6 +26,151 @@ CSV_FIELDS = (
     "reset_mismatch", "passed", "stop_reason",
     "generated_assertion", "reference_assertion",
 )
+
+MODEL_STAGES = ("assertion", "diagnosis", "rule")
+USAGE_METRIC_FIELDS = tuple(
+    f"{stage}_{name}"
+    for stage in MODEL_STAGES
+    for name in ("input_tokens", "output_tokens", "total_tokens", "seconds")
+) + (
+    "tool_seconds", "input_tokens", "output_tokens", "total_tokens",
+    "other_seconds", "total_seconds",
+)
+USAGE_FIELDS = ("case_id", "round") + USAGE_METRIC_FIELDS + ("passed",)
+
+
+# Tokens and wall time. These records contain no model names or formal scores.
+
+def _sum_usage(values) -> int | float | None:
+    """Missing usage makes the sum unknown; skipped stages contribute zero."""
+    values = list(values)
+    return None if any(value is None for value in values) else sum(values)
+
+
+def finish_usage_round(record: dict) -> None:
+    """Close the active round once, including any failed or interrupted stage."""
+    rounds = record.get("usage_rounds", [])
+    if rounds and rounds[-1]["total_seconds"] is None:
+        rounds[-1]["total_seconds"] = perf_counter() - rounds[-1]["started_counter"]
+
+
+def start_usage_round(record: dict, round_number: int) -> None:
+    """Start before prompt preparation; close the previous round if necessary."""
+    finish_usage_round(record)
+    record.setdefault("usage_rounds", []).append({
+        "round": round_number,
+        "started_counter": perf_counter(),
+        "total_seconds": None,
+        "passed": False,
+        "stages": {
+            stage: {"input_tokens": 0, "output_tokens": 0, "seconds": 0.0}
+            for stage in (*MODEL_STAGES, "tool")
+        },
+    })
+
+
+@contextmanager
+def measure_stage(record: dict, stage: str):
+    """Time a stage, capturing provider usage before response validation."""
+    metric = record["usage_rounds"][-1]["stages"][stage]
+    if stage in MODEL_STAGES:
+        # Invoked but unreported is unknown, rather than a free/skipped call.
+        metric["input_tokens"] = metric["output_tokens"] = None
+    received = False
+
+    def capture_usage(usage) -> None:
+        nonlocal received
+        for field in ("input_tokens", "output_tokens"):
+            value = usage.get(field) if isinstance(usage, dict) else getattr(usage, field, None)
+            if type(value) is not int or value < 0:
+                value = None
+            metric[field] = _sum_usage((metric[field], value)) if received else value
+        received = True
+
+    started = perf_counter()
+    try:
+        yield capture_usage
+    finally:
+        metric["seconds"] += perf_counter() - started
+
+
+def _usage_metrics(rounds: list[dict], elapsed_seconds: float) -> dict:
+    """Produce the same numeric columns for one round or a whole case."""
+    row = {}
+    for stage in MODEL_STAGES:
+        for field in ("input_tokens", "output_tokens"):
+            row[f"{stage}_{field}"] = _sum_usage(r["stages"][stage][field] for r in rounds)
+        row[f"{stage}_total_tokens"] = _sum_usage(
+            (row[f"{stage}_input_tokens"], row[f"{stage}_output_tokens"])
+        )
+        row[f"{stage}_seconds"] = sum(r["stages"][stage]["seconds"] for r in rounds)
+    row["tool_seconds"] = sum(r["stages"]["tool"]["seconds"] for r in rounds)
+    for field in ("input_tokens", "output_tokens", "total_tokens"):
+        row[field] = _sum_usage(row[f"{stage}_{field}"] for stage in MODEL_STAGES)
+    stage_seconds = sum(row[f"{stage}_seconds"] for stage in (*MODEL_STAGES, "tool"))
+    row["other_seconds"] = max(0.0, elapsed_seconds - stage_seconds)
+    row["total_seconds"] = elapsed_seconds
+    return row
+
+
+def save_usage(summary_dir, record: dict, elapsed_seconds: float) -> None:
+    """Write contiguous case blocks, labeling only the first row of each case."""
+    path = Path(summary_dir) / "token_time.csv"
+    cases = {}
+    if path.exists():
+        with path.open(encoding="utf-8", newline="") as source:
+            reader = csv.DictReader(source)
+            if reader.fieldnames != list(USAGE_FIELDS):
+                raise ValueError(f"Unexpected usage CSV header: {path.name}")
+            case_id = None
+            for row in reader:
+                if row["case_id"]:
+                    case_id = row["case_id"]
+                    cases[case_id] = []
+                if case_id is None:
+                    raise ValueError("The first usage row must identify its case.")
+                cases[case_id].append(row)
+
+    rounds = record.get("usage_rounds", [])
+    rows = [
+        {"case_id": "", "round": r["round"],
+         **_usage_metrics([r], r["total_seconds"]), "passed": r["passed"]}
+        for r in rounds
+    ]
+    rows.append({
+        "case_id": "", "round": "case_total",
+        **_usage_metrics(rounds, elapsed_seconds), "passed": record["passed"],
+    })
+    rows[0]["case_id"] = str(record["case_id"])
+    cases[str(record["case_id"])] = rows
+
+    buffer = io.StringIO(newline="")
+    writer = csv.DictWriter(buffer, fieldnames=USAGE_FIELDS)
+    writer.writeheader()
+    for case_rows in cases.values():
+        for row in case_rows:
+            writer.writerow({
+                key: round(value, 6) if isinstance(value, float) else value
+                for key, value in row.items()
+            })
+    _atomic_write(path, buffer.getvalue())
+
+
+def _experiment_usage(directory: Path, elapsed_seconds: float) -> dict:
+    """Accumulate case-total rows without counting round rows again."""
+    with (directory / "token_time.csv").open(encoding="utf-8", newline="") as source:
+        cases = [row for row in csv.DictReader(source) if row["round"] == "case_total"]
+    totals = {}
+    for field in USAGE_METRIC_FIELDS:
+        convert = int if field.endswith("tokens") else float
+        totals[field] = _sum_usage(
+            None if row[field] == "" else convert(row[field]) for row in cases
+        )
+    totals["case_seconds"] = totals.pop("total_seconds")
+    totals["experiment_seconds"] = elapsed_seconds
+    stage_seconds = sum(totals[f"{stage}_seconds"] for stage in (*MODEL_STAGES, "tool"))
+    totals["other_seconds"] = max(0.0, elapsed_seconds - stage_seconds)
+    return totals
 
 
 # Case records and checkpoints.
@@ -160,7 +307,7 @@ def select_training_run(
     ))
 
 
-def finish_experiment(experiment_dir, exit_code: int) -> int:
+def finish_experiment(experiment_dir, exit_code: int, *, elapsed_seconds=None) -> int:
     """Finalize batch metadata; individual assertion acceptance stays in the CSV."""
     directory = Path(experiment_dir)
     metadata_path = directory / "run_metadata.json"
@@ -181,6 +328,10 @@ def finish_experiment(experiment_dir, exit_code: int) -> int:
         cases_passed=None if metadata.get("summary_error") else sum(row["passed"] == "True" for row in scores),
         exit_code=exit_code,
     )
+    if elapsed_seconds is not None:
+        metadata["experiment_seconds"] = elapsed_seconds
+        if (directory / "token_time.csv").is_file():
+            metadata["usage_totals"] = _experiment_usage(directory, elapsed_seconds)
     _atomic_write(metadata_path, json.dumps(metadata, indent=2, ensure_ascii=False) + "\n")
     print("\nBatch:", metadata["status"])
     if metadata.get("summary_error"):
@@ -212,6 +363,7 @@ def create_record(case_id: str, models: dict, inputs: dict, prompts: dict, setti
         "rounds_used": 0,
         "last_evaluated_round": None,
         "round_metrics": [],
+        "usage_rounds": [],
         "passed": False,
         "stop_reason": None,
         "rule_registry": [],
@@ -445,6 +597,8 @@ def record_formal_result(run_dir, record: dict, attempt: dict, formal: dict) -> 
     metric = {"round": attempt["round"], "status": formal["status"]}
     for name in SCORE_FIELDS:
         metric[name] = formal.get(name)  # Unavailable scores remain None.
+    if record.get("usage_rounds"):
+        record["usage_rounds"][-1]["passed"] = formal.get("pec") == 1.0
     update_run(
         run_dir, record,
         generation=deepcopy(attempt["generation"]),
@@ -594,6 +748,7 @@ def run_experiment(
     Exit codes: 0 for normal completion, 1 for unresolved/errors, 130 for Ctrl+C.
     Normal completion does not necessarily mean the assertion passed.
     """
+    case_started = perf_counter()
     if case_dir is None:
         directory = create_run(case_id, runs_root=runs_root)
     else:
@@ -656,6 +811,7 @@ def run_experiment(
             directory, record, cleanup_work,
             keep_work=settings.get("keep_work", False),
         )
+        finish_usage_round(record)
         save_run(directory, record)
         try:
             save_debug_event(
@@ -672,6 +828,16 @@ def run_experiment(
             save_summaries(directory if summary_dir is None else summary_dir, record)
         except Exception as error:
             record["summary_error"] = f"{type(error).__name__}: {error}"
+            save_run(directory, record)
+            if exit_code == 0:
+                exit_code = 1
+        try:
+            save_usage(
+                directory if summary_dir is None else summary_dir,
+                record, perf_counter() - case_started,
+            )
+        except Exception as error:
+            record["summary_error"] = f"Usage save failed: {type(error).__name__}: {error}"
             save_run(directory, record)
             if exit_code == 0:
                 exit_code = 1
@@ -763,4 +929,5 @@ def print_summary(run_dir, record: dict) -> None:
     if record["summary_error"]:
         print("Summary save error:", record["summary_error"])
     print("Report:", Path(run_dir) / "report.txt")
+
 

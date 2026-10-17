@@ -21,20 +21,28 @@ def build_generation_prompt(
     """Build a fresh initial or revision prompt; never accept a reference."""
     revision = ""
     if previous_assertion is not None:
-        if not previous_assertion.strip() or not rules:
-            raise ValueError("A revision requires a previous assertion and rules.")
+        if not previous_assertion.strip():
+            raise ValueError("A revision requires a nonempty previous assertion.")
         guidance = []
-        for number, entry in enumerate(rules, 1):
+        for number, entry in enumerate(rules or [], 1):
             rule = entry.get("rule")
             if not isinstance(rule, str) or not rule.strip():
                 raise ValueError("Every selected rule must contain nonempty rule text.")
             guidance.append(f"{number}. {rule.strip()}")
+        guidance_text = "\n".join(guidance) or (
+            "No specific correction rule is available. Re-derive the assertion "
+            "from the requirement and testbench, reviewing its clock, disable "
+            "condition, trigger, response, signal relationships, and timing."
+        )
         revision = (
             "\nRevise the previous assertion using the correction guidance below.\n"
-            "Apply each rule only when its behavioral condition fits the requirement.\n"
+            "Consider every supplied rule as guidance for this revision.\n"
+            "Resolve its applicability using the requirement and testbench.\n"
+            "If guidance is uncertain or calls for re-analysis, re-derive the behavior.\n"
             "Preserve correct behavior while correcting the identified issues.\n"
+            "Always return one complete assertion, even when guidance is empty or uncertain.\n"
             "\nPREVIOUS ASSERTION\n" + previous_assertion
-            + "\n\nCORRECTION GUIDANCE\n" + "\n".join(guidance) + "\n"
+            + "\n\nCORRECTION GUIDANCE\n" + guidance_text + "\n"
         )
     elif rules:
         raise ValueError("Rules require a previous assertion for this experiment.")
@@ -58,13 +66,17 @@ Only output the code snippet and do NOT output anything else.
 Answer:"""
 
 
-def generate_assertion(client: OpenAI, model: str, user_prompt: str) -> str:
+def generate_assertion(
+    client: OpenAI, model: str, user_prompt: str, *, usage_callback=None,
+) -> str:
     """Send one generation request and return the response text unchanged."""
     response = client.responses.create(
         model=model,
         instructions=SYSTEM_PROMPT,
         input=user_prompt,
     )
+    if usage_callback is not None:
+        usage_callback(getattr(response, "usage", None))
 
     if response.status != "completed":
         raise RuntimeError(f"Generation did not complete: {response.status}")
@@ -90,4 +102,3 @@ def extract_assertion(response_text: str) -> str:
         raise ValueError("Expected one nonempty assertion code block.")
 
     return assertion
-
