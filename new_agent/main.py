@@ -98,7 +98,7 @@ def _remember_round_error(directory, record, number, stage, error):
 
 
 def run_pipeline(directory, record: dict) -> int:
-    """Stop on strict PEC success or exhaustion of the configured attempt budget.
+    """Stop on PEC/BLEU success or exhaustion of the configured attempt budget.
 
     Ordinary generation, extraction, checker, diagnosis and rule-output errors
     are round outcomes. KeyboardInterrupt/SystemExit are deliberately not caught.
@@ -169,13 +169,20 @@ def run_pipeline(directory, record: dict) -> int:
         run_io.update_run(directory, record, stage="cleanup")
         run_io.cleanup_formal_work(directory, record, formal_check.cleanup_work)
         status = formal_result["status"]
-        passed = formal_result.get("pec") == 1.0
+        pec_pass = formal_result.get("pec") == 1.0
+        bleu_pass = formal_result.get("bleu") == 1.0
+        passed = pec_pass or bleu_pass
         print(f"Round {round_number}/{config.MAX_ROUNDS}: {status}", flush=True)
         if passed:
             run_io.update_run(
                 directory, record, status="PASSED", passed=True, stage="finished",
-                stop_reason="passed",
-                diagnosis_skipped_reason="The supplied PEC checker reported full equivalence.",
+                stop_reason="passed" if pec_pass else "bleu_match",
+                diagnosis_skipped_reason=(
+                    "The supplied PEC checker reported full equivalence."
+                    if pec_pass else
+                    "BLEU is 1.0; accepted under FVRuleLearner's PEC-or-BLEU policy. "
+                    "The raw PEC result is retained unchanged."
+                ),
             )
             return 0
 
@@ -295,7 +302,7 @@ def main() -> int:
         "checker": "fvrulelearner_pec",
         "comparison_scope": policy["scope"],
         "revision_rules": "previous_round_only",
-        "round_policy": "pass_or_max_rounds",
+        "round_policy": "pec_or_bleu_or_max_rounds",
         "case_ids": list(config.CASE_IDS),
         "dataset_split": dataset_split,
         "max_rounds": config.MAX_ROUNDS,

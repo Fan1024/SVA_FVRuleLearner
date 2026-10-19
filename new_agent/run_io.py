@@ -544,6 +544,7 @@ def _debug_event_text(record: dict, event: str, data: dict) -> str:
         reason = data["stop_reason"]
         explanation = {
             "passed": "The supplied FVRuleLearner PEC checker reported full equivalence.",
+            "bleu_match": "BLEU is 1.0; accepted under FVRuleLearner's PEC-or-BLEU policy. Raw PEC scores remain unchanged.",
             "max_rounds": "Maximum assertion attempts reached.",
             "no_guidance": "Rule generator returned no rules.",
             "interrupted": "Execution was interrupted by the user.",
@@ -627,7 +628,9 @@ def record_formal_result(run_dir, record: dict, attempt: dict, formal: dict) -> 
     for name in SCORE_FIELDS:
         metric[name] = formal.get(name)  # Unavailable scores remain None.
     if record.get("usage_rounds"):
-        record["usage_rounds"][-1]["passed"] = formal.get("pec") == 1.0
+        record["usage_rounds"][-1]["passed"] = (
+            formal.get("pec") == 1.0 or formal.get("bleu") == 1.0
+        )
     update_run(
         run_dir, record,
         generation=deepcopy(attempt["generation"]),
