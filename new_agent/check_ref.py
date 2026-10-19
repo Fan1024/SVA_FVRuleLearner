@@ -71,10 +71,10 @@ def run_original(repo, row, folder):
     return result
 
 
-def run_wrapper(repo, row, folder):
+def run_wrapper(repo, row, folder, candidate=None):
     """Pass the same complete reference as both generated and reference SVA."""
     return formal_check.evaluate_assertion(
-        generated_assertion=row["ref_solution"],
+        generated_assertion=row["ref_solution"] if candidate is None else candidate,
         reference_assertion=row["ref_solution"],
         testbench=row["testbench"], requirement=row["prompt"],
         run_dir=folder, fveval_dir=repo / "FVEval",
@@ -132,14 +132,46 @@ def main():
             same = (a["candidate_expression"] == b["candidate_expression"]
                     and a["reference_expression"] == b["reference_expression"]
                     and set(a["signal_list"].split(",")) == set(b["signal_list"].split(",")))
+            adapted = pair[1].get("input_adapter")
             line = f"  Same comparison expressions and signal-name set: {same}"
+            if adapted:
+                line += " (expected: the wrapper now expands vector inputs into scalar bits)"
             print(line)
             lines.append(line)
+    # A vector negative control checks that adaptation does not simply accept
+    # everything. Both properties compile, but differ for known in-range values.
+    control = {
+        "task_id": "vector_negative_control", "design_name": "vector_control",
+        "prompt": "Use signals 'v' and 'idx'.",
+        "testbench": "module control; input clk; input tb_reset; input [5:0] v; input [2:0] idx; endmodule",
+        "ref_solution": "asrt: assert property (@(posedge clk) disable iff (tb_reset) v[idx]);",
+    }
+    negative = "asrt: assert property (@(posedge clk) disable iff (tb_reset) !v[idx]);"
+    folder = output / "vector_negative_control"
+    folder.mkdir()
+    try:
+        result = formal_check.evaluate_assertion(
+            generated_assertion=negative, reference_assertion=control["ref_solution"],
+            testbench=control["testbench"], requirement=control["prompt"],
+            run_dir=folder, fveval_dir=repo / "FVEval",
+            task_id=control["task_id"], dataset="nl2sva_human",
+        )
+    except Exception as error:
+        result = {"status": "CHECK_ERROR", "error": f"{type(error).__name__}: {error}"}
+    result["backend"] = "negative_control"
+    results.append(result)
+    (folder / "result.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
+    line = f"  vector_negative_control: {result['status']} (expected: NO_EQUIVALENCE)"
+    print("\n" + line, flush=True)
+    lines.append(line)
     (output / "summary.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
     (output / "summary.json").write_text(json.dumps(results, indent=2), encoding="utf-8")
-    print("\nExpected: FULL_EQUIVALENCE for every reference-versus-itself check.")
+    print("\nExpected: current_wrapper self-checks FULL_EQUIVALENCE; negative control NO_EQUIVALENCE.")
+    print("The original_inputs baseline may reproduce the old PEC_COMPILE_ERROR.")
     print("Logs and generated PEC files are retained in:", output)
-    return int(any(result["status"] != "FULL_EQUIVALENCE" for result in results))
+    failed_self_check = any(result["status"] != "FULL_EQUIVALENCE"
+                            for result in results if result["backend"] == "current_wrapper")
+    return int(failed_self_check or results[-1]["status"] != "NO_EQUIVALENCE")
 
 
 if __name__ == "__main__":

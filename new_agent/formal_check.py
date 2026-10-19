@@ -6,6 +6,7 @@ the clock event. This module prepares inputs and parses the helper's verdict;
 it does not implement an alternative equivalence proof.
 """
 
+import json
 import re
 import shutil
 import subprocess
@@ -117,6 +118,288 @@ def _assertion_parts(text: str) -> tuple[str, str, str, str]:
     return assertion, expression, body, reset
 
 
+class _PecAdapterUnsupported(ValueError):
+    """The scalar adapter cannot safely preserve a construct's type semantics."""
+
+
+def _pec_constant(expression, constants):
+    """Evaluate only a small, explicit subset of SV integer constant expressions."""
+    import ast
+    import operator
+
+    def literal(match):
+        width, signed, base, digits = match.groups()
+        radix = {"b": 2, "o": 8, "d": 10, "h": 16}[base.lower()]
+        if re.search(r"[xXzZ?]", digits):
+            raise _PecAdapterUnsupported("Unknown-valued parameter or range.")
+        value = int(digits.replace("_", ""), radix)
+        if width:
+            bits = int(width)
+            value &= (1 << bits) - 1
+            if signed and value & (1 << (bits - 1)):
+                value -= 1 << bits
+        return str(value)
+
+    expression = re.sub(r"(\d+)?'([sS]?)([bBoOdDhH])([0-9a-fA-F_xXzZ?]+)", literal, expression)
+    expression = expression.replace("$clog2", "clog2")
+    binary = {ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul,
+              ast.LShift: operator.lshift, ast.RShift: operator.rshift,
+              ast.BitAnd: operator.and_, ast.BitOr: operator.or_, ast.BitXor: operator.xor,
+              ast.Mod: operator.mod}
+
+    def evaluate(node):
+        if isinstance(node, ast.Constant) and type(node.value) is int:
+            return node.value
+        if isinstance(node, ast.Name) and node.id in constants:
+            return constants[node.id]
+        if isinstance(node, ast.UnaryOp):
+            value = evaluate(node.operand)
+            if isinstance(node.op, ast.USub):
+                return -value
+            if isinstance(node.op, ast.UAdd):
+                return value
+            if isinstance(node.op, ast.Invert):
+                return ~value
+        if isinstance(node, ast.BinOp):
+            a, b = evaluate(node.left), evaluate(node.right)
+            if isinstance(node.op, ast.Div):
+                if not b:
+                    raise _PecAdapterUnsupported("Division by zero in a range.")
+                return (abs(a) // abs(b)) * (-1 if (a < 0) != (b < 0) else 1)
+            function = binary.get(type(node.op))
+            if function:
+                if isinstance(node.op, (ast.LShift, ast.RShift)) and not 0 <= b <= 64:
+                    raise _PecAdapterUnsupported("Unsupported range shift.")
+                return function(a, b)
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                and node.func.id == "clog2" and len(node.args) == 1 and not node.keywords):
+            value = evaluate(node.args[0])
+            if value < 0:
+                raise _PecAdapterUnsupported("Negative $clog2 argument.")
+            return max(0, value - 1).bit_length()
+        raise _PecAdapterUnsupported(f"Unsupported constant expression: {expression}")
+
+    try:
+        return evaluate(ast.parse(expression.strip(), mode="eval").body)
+    except (SyntaxError, ValueError, ArithmeticError, KeyError) as error:
+        raise _PecAdapterUnsupported(f"Cannot resolve constant expression: {expression}") from error
+
+
+def _pec_symbols(testbench):
+    """Read simple non-ANSI/ANSI packed declarations; retain unsupported names."""
+    text = _without_comments(testbench)
+    constants, constant_types, pending = {}, {}, []
+    for match in re.finditer(r"\b(?:localparam|parameter)\s+([^;]+);", text):
+        declaration = match[1].strip()
+        assignment = re.fullmatch(r"(.*?)\b([A-Za-z_]\w*)\s*=\s*(.+)", declaration, re.S)
+        if assignment:
+            prefix, name, value = assignment.groups()
+            pending.append((name, value))
+            # Only plain unsized decimal parameters/int declarations are inlined.
+            constant_types[name] = (not prefix.strip() or prefix.strip() in {"int", "integer"}) and bool(re.fullmatch(r"\d+", value.strip()))
+    while pending:
+        remaining = []
+        for name, value in pending:
+            try:
+                constants[name] = _pec_constant(value, constants)
+            except _PecAdapterUnsupported:
+                remaining.append((name, value))
+        if len(remaining) == len(pending):
+            break
+        pending = remaining
+
+    symbols = {}
+    # Split top-level declaration fields without splitting function arguments or ranges.
+    def fields(value):
+        result, start, depth = [], 0, 0
+        for index, character in enumerate(value):
+            if character in "([{":
+                depth += 1
+            elif character in ")]}":
+                depth -= 1
+            elif character == "," and depth == 0:
+                result.append(value[start:index])
+                start = index + 1
+        result.append(value[start:])
+        return result
+
+    def declaration(value):
+        two_state = bool(re.search(r"\bbit\b", value))
+        value = re.sub(r"^(?:input|output|inout)\b\s*", "", value.strip())
+        value = re.sub(r"^(?:wire|reg|logic|bit)\b\s*", "", value)
+        signed = bool(re.match(r"signed\b", value))
+        value = re.sub(r"^(?:signed|unsigned)\b\s*", "", value)
+        indices = None
+        unsupported = "Signed packed declarations require an elaborated type parser." if signed else None
+        if two_state:
+            unsupported = "Two-state bit declarations require an elaborated type parser."
+        if value.startswith("["):
+            closing = value.find("]")
+            if closing < 0:
+                return
+            packed, value = value[1:closing], value[closing + 1:].strip()
+            try:
+                left, right = [_pec_constant(x, constants) for x in packed.split(":")]
+                if min(left, right) < 0 or abs(left - right) >= 256:
+                    raise _PecAdapterUnsupported("Packed ranges must be nonnegative and at most 256 bits.")
+                indices = list(range(left, right + (-1 if left >= right else 1), -1 if left >= right else 1))
+            except (ValueError, _PecAdapterUnsupported) as error:
+                unsupported = str(error)
+        while value.startswith("["):
+            closing = value.find("]")
+            if closing < 0:
+                return
+            unsupported = "Multiple packed dimensions require an elaborated type parser."
+            value = value[closing + 1:].strip()
+        for field in fields(value):
+            field = field.strip()
+            # An initialized wire remains an unconstrained PEC input, as in upstream.
+            name = re.match(r"([A-Za-z_]\w*)\b(.*)", field, re.S)
+            if not name:
+                continue
+            tail = name[2].lstrip()
+            reason = unsupported
+            if tail and not tail.startswith("="):
+                reason = "Unpacked arrays, multiple packed dimensions, and complex declarations are unsupported."
+            symbols[name[1]] = {"indices": indices, "unsupported": reason}
+
+    # Dataset Human files use non-ANSI declarations.
+    for match in re.finditer(r"(?:(?<=;)|^)\s*((?:input|output|inout|wire|reg|logic|bit)\b[^;]*);", text, re.M):
+        declaration(match[1])
+    # Handle simple ANSI port lists used by small diagnostic controls.
+    header = re.search(r"\bmodule\s+[A-Za-z_]\w*\s*\((.*?)\)\s*;", text, re.S)
+    if header:
+        current = None
+        for field in fields(header[1]):
+            field = field.strip()
+            if re.match(r"(?:input|output|inout)\b", field):
+                current = field
+                declaration(field)
+            elif current:
+                prefix = re.match(r"(.*?)([A-Za-z_]\w*)\s*$", current, re.S)
+                if prefix:
+                    declaration(prefix[1] + field)
+    return symbols, constants, constant_types
+
+
+def _pec_lower_comparison(candidate, reference, testbench):
+    """Expand unsigned packed inputs into scalars for the unchanged PEC engine.
+
+    This changes representation, not values: every declared input bit gets one
+    shared free scalar. A dynamic bit-select becomes a case-equality mux with
+    an X default, preserving unknown and out-of-range index results.
+    Unsupported types/index forms are rejected rather than guessed.
+    """
+    symbols, constants, constant_types = _pec_symbols(testbench)
+    numeric = r"(?:\d+)?'[sS]?[bBoOdDhH][0-9a-fA-F_xXzZ?]+|'[01xXzZ]|\d[\d_]*"
+    operators = r"\|->|\|=>|<<<|>>>|===|!==|&&&|##|&&|\|\||==|!=|<=|>=|<<|>>|\*\*|->|=>|~\^|\^~|~&|~\||\+:|-:"
+    lexer = re.compile(r"\s+|" + numeric + r"|\$?[A-Za-z_]\w*|" + operators + r"|.", re.S)
+    def tokens(expression):
+        return [m[0] for m in lexer.finditer(expression) if not m[0].isspace()]
+    all_tokens = tokens(candidate) + tokens(reference)
+    used_vectors = {word for word in all_tokens if word in symbols and symbols[word]["indices"] is not None}
+    bad_used = {word for word in all_tokens if word in symbols and symbols[word]["unsupported"]}
+    if bad_used:
+        raise _PecAdapterUnsupported("Unsupported declared input: " + ", ".join(sorted(bad_used)))
+    if not used_vectors:
+        return None
+    forbidden = {"$left", "$right", "$high", "$low", "$increment", "$dimensions", "$unpacked_dimensions"}
+    if forbidden.intersection(all_tokens) or "." in all_tokens or "\\" in all_tokens:
+        raise _PecAdapterUnsupported("Type queries, hierarchical names and escaped identifiers require an elaborated type parser.")
+    reserved = {"disable", "iff", "and", "or", "not", "intersect", "throughout", "within",
+                "until", "s_until", "until_with", "s_until_with", "strong", "weak", "first_match",
+                "eventually", "s_eventually", "always", "s_always", "nexttime", "s_nexttime",
+                "accept_on", "reject_on", "sync_accept_on", "sync_reject_on", "if", "else"}
+    scalars, layout = set(), {}
+    # Avoid collisions with any original identifier.
+    prefix = "__pec_bit_"
+    while any(word.startswith(prefix) for word in all_tokens if re.fullmatch(r"[A-Za-z_]\w*", word)):
+        prefix = "_" + prefix
+
+    def bit_name(name, index):
+        atom = f"{prefix}{name}_{index}"
+        scalars.add(atom)
+        layout.setdefault(name, {})[str(index)] = atom
+        return atom
+
+    def vector(name, selected=None):
+        indices = symbols[name]["indices"] if selected is None else selected
+        return "{" + ",".join(bit_name(name, i) for i in indices) + "}"
+
+    def lower(sequence):
+        result, position = [], 0
+        while position < len(sequence):
+            word = sequence[position]
+            position += 1
+            if word in symbols:
+                info = symbols[word]
+                indices = info["indices"]
+                if position < len(sequence) and sequence[position] == "[":
+                    if indices is None:
+                        raise _PecAdapterUnsupported(f"Cannot select a bit of scalar {word}.")
+                    start, depth = position + 1, 1
+                    position += 1
+                    while position < len(sequence) and depth:
+                        depth += (sequence[position] == "[") - (sequence[position] == "]")
+                        position += 1
+                    if depth:
+                        raise _PecAdapterUnsupported("Unbalanced bit-select.")
+                    selection = sequence[start:position - 1]
+                    if any(operator in selection for operator in {"+:", "-:"}):
+                        raise _PecAdapterUnsupported("Indexed part-selects require an elaborated type parser.")
+                    if position < len(sequence) and sequence[position] == "[":
+                        raise _PecAdapterUnsupported("Multiple selections are unsupported.")
+                    if ":" in selection:
+                        if selection.count(":") != 1 or "+" in selection or "-" in selection:
+                            raise _PecAdapterUnsupported("Only fixed part-selects are supported.")
+                        colon = selection.index(":")
+                        left = _pec_constant("".join(selection[:colon]), constants)
+                        right = _pec_constant("".join(selection[colon + 1:]), constants)
+                        if left != right and (left > right) != (indices[0] >= indices[-1]):
+                            raise _PecAdapterUnsupported("Part-select direction does not match the declaration.")
+                        chosen = list(range(left, right + (-1 if left >= right else 1), -1 if left >= right else 1))
+                        if any(i not in indices for i in chosen):
+                            raise _PecAdapterUnsupported("Out-of-range part-select requires an elaborated type parser.")
+                        result.append(vector(word, chosen))
+                    else:
+                        try:
+                            fixed = _pec_constant("".join(selection), constants)
+                        except _PecAdapterUnsupported:
+                            fixed = None
+                        if fixed is not None:
+                            result.append(bit_name(word, fixed) if fixed in indices else "1'bx")
+                        else:
+                            index = lower(selection)
+                            mux = "1'bx"
+                            for i in reversed(indices):
+                                mux = f"((({index}) === 32'd{i}) ? {bit_name(word, i)} : {mux})"
+                            result.append(mux)
+                elif indices is not None:
+                    result.append(vector(word))
+                else:
+                    scalars.add(word)
+                    result.append(word)
+            elif word in constants:
+                if not constant_types.get(word) or not 0 <= constants[word] < (1 << 31):
+                    raise _PecAdapterUnsupported(f"Property parameter {word} needs an elaborated type parser.")
+                result.append(f"32'sd{constants[word]}")
+            elif re.fullmatch(r"\$?[A-Za-z_]\w*", word):
+                if word.startswith("$") or word in reserved:
+                    result.append(word)
+                else:
+                    raise _PecAdapterUnsupported(f"No supported declaration for signal/operator {word}.")
+            else:
+                result.append(word)
+        # Keep complete operator tokens intact and keep adjacent distinct tokens
+        # separate: binary & followed by reduction & must never become &&.
+        return " ".join(result)
+
+    lowered_candidate, lowered_reference = lower(tokens(candidate)), lower(tokens(reference))
+    return {"candidate_expression": lowered_candidate, "reference_expression": lowered_reference,
+            "signal_list": ",".join(sorted(scalars)), "input_adapter": "unsigned_packed_scalar_expansion_v1",
+            "signal_layout": layout}
+
+
 def _prepare_formal_input(
     generated_assertion: str,
     reference_assertion: str,
@@ -169,7 +452,7 @@ def _prepare_formal_input(
         + testbench[insertion:],
         encoding="utf-8",
     )
-    return {
+    prepared = {
         "candidate_expression": candidate_expression,
         "reference_expression": reference_expression,
         "signal_list": ",".join(sorted(signals)),
@@ -178,6 +461,18 @@ def _prepare_formal_input(
         # Textual information only. Equivalent aliases can differ here.
         "reset_mismatch": candidate_reset != reference_reset,
     }
+    # The upstream PEC interface reconstructs name-only scalar inputs. Expand
+    # supported Human vectors before passing the expressions to that engine.
+    if dataset == "nl2sva_human":
+        lowered = _pec_lower_comparison(candidate_expression, reference_expression, testbench)
+        if lowered:
+            prepared["original_comparison_inputs"] = {
+                name: prepared[name] for name in
+                ("candidate_expression", "reference_expression", "signal_list")
+            }
+            prepared.update(lowered)
+    return prepared
+
 
 
 def _parse_formal_result(output: str, returncode: int) -> dict:
@@ -310,6 +605,9 @@ def evaluate_assertion(
             generated_assertion, reference_assertion, testbench, requirement, sv_file,
             dataset=dataset,
         )
+    except _PecAdapterUnsupported as error:
+        result.update(status="UNSUPPORTED_PEC_INPUT", error_origin="input_adapter")
+        return _finish_result(result, str(error))
     except ValueError as error:
         message = str(error)
         if message.startswith("Generated assertion:"):
@@ -326,6 +624,16 @@ def evaluate_assertion(
         name: prepared[name]
         for name in ("candidate_expression", "reference_expression", "signal_list")
     }
+    if prepared.get("input_adapter"):
+        result["input_adapter"] = prepared["input_adapter"]
+        result["signal_layout"] = prepared["signal_layout"]
+        result["comparison_scope"] += " Unsigned packed inputs expanded into shared scalar bits."
+        (directory / "pec_inputs.json").write_text(
+            json.dumps({key: prepared[key] for key in (
+                "original_comparison_inputs", "candidate_expression", "reference_expression",
+                "signal_list", "input_adapter", "signal_layout",
+            )}, indent=2) + "\n", encoding="utf-8",
+        )
     # FVEval's scripts resolve pec/pec.tcle relative to this working directory.
     if fveval_dir is None:
         fveval = next(
