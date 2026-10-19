@@ -197,6 +197,11 @@ def _parse_formal_result(output: str, returncode: int) -> dict:
     )
     if any(marker in lower for marker in infrastructure_markers):
         return {"status": "TOOL_ERROR"}
+    if re.search(r"(?:^|[/\\])pec\.sve(?:\(|:)", text, re.MULTILINE | re.IGNORECASE) and re.search(
+        r"VERI-\d+|ignored due to previous errors", text, re.IGNORECASE,
+    ):
+        return {"status": "PEC_COMPILE_ERROR", "error_origin": "pec",
+                "syntax": None, "pec": None, "relax_pec": None}
     if re.search(
         r"\bERROR\s+\((?:VERI-[^)]+|ENL\d+)\)"
         r"|\bsyntax error\b|ignored due to previous errors",
@@ -306,7 +311,14 @@ def evaluate_assertion(
             dataset=dataset,
         )
     except ValueError as error:
-        return _finish_result(result, str(error))
+        message = str(error)
+        if message.startswith("Generated assertion:"):
+            result.update(error_origin="candidate", syntax=0.0, pec=0.0, relax_pec=0.0)
+        elif message.startswith("Reference assertion:"):
+            result["error_origin"] = "reference"
+        else:
+            result["error_origin"] = "testbench"
+        return _finish_result(result, message)
     for key in ("generated_reset", "reference_reset", "reset_mismatch"):
         result[key] = prepared[key]
 
@@ -384,6 +396,8 @@ def cleanup_work(
         return {"retained": False, "reason": "No work directory remains."}
     if keep_work:
         return {"retained": True, "reason": "KEEP_WORK is enabled."}
+    if (result["status"] == "PEC_COMPILE_ERROR" or result.get("error_origin") in {"reference", "testbench"}):
+        return {"retained": True, "reason": "Retained checker/reference failure for inspection."}
     if preserve_unresolved and result["status"] not in {
         "FULL_EQUIVALENCE", "IMPLIES", "NO_EQUIVALENCE", "SYNTAX_ERROR",
     }:

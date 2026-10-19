@@ -17,6 +17,7 @@ def build_generation_prompt(
     rules: list[dict] | None = None,
     *,
     comparison_scope: str = COMPARISON_SCOPE,
+    revision_feedback: str | None = None,
 ) -> str:
     """Build a fresh initial or revision prompt; never accept a reference."""
     revision = ""
@@ -52,13 +53,19 @@ def build_generation_prompt(
         + "\nChoose clock and reset conditions from the task and testbench.\n"
         if comparison_scope else ""
     )
+    retry_guidance = ("\nPREVIOUS ATTEMPT FEEDBACK\n" + revision_feedback + "\n") if revision_feedback else ""
     return f"""Here is the testbench to perform your translation:
 
 {testbench}
 
 Question: Create a SVA assertion checks {requirement}
-{scope_guidance}{revision}
-Generate exactly one assertion, labeled asrt.
+{scope_guidance}{revision}{retry_guidance}
+Generate exactly one assertion using this statement structure:
+asrt: assert property (@(posedge clk) BODY);
+If the testbench/task requires reset disabling, put disable iff (RESET) after
+the clock event, inside the same outer parentheses.
+The label is asrt: BEFORE assert property. Do not write assert property asrt.
+Close the outer property parentheses before the final semicolon.
 Do not add code to output an error message string.
 Enclose your SVA code with ```systemverilog and ```.
 Only output the code snippet and do NOT output anything else.

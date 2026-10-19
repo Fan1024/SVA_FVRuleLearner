@@ -409,6 +409,8 @@ def final_record(record: dict) -> dict:
             "summary_error", "trace_error",
         )
     }
+    saved["round_failures"] = record.get("round_failures", [])
+    saved["round_metrics"] = record.get("round_metrics", [])
     saved["inputs"] = {
         name: record["inputs"][name]
         for name in ("case_number", "design_name", "requirement", "reference_assertion")
@@ -611,12 +613,16 @@ def record_formal_result(run_dir, record: dict, attempt: dict, formal: dict) -> 
     """Publish matching assertion/verdict fields and append compact round scores."""
     # Score exactly the assertion associated with this formal result.
     # BLEU is text similarity only; it never changes the formal verdict.
-    formal["bleu"] = float(load_bleu_metric().compute(
-        predictions=[attempt["generation"]["assertion"]],
-        references=[record["inputs"]["reference_assertion"]],
-        max_order=4,
-        smooth=False,
-    )["bleu"])
+    candidate = attempt["generation"].get("assertion")
+    formal["bleu"] = None
+    if candidate:
+        try:
+            formal["bleu"] = float(load_bleu_metric().compute(
+                predictions=[candidate], references=[record["inputs"]["reference_assertion"]],
+                max_order=4, smooth=False,
+            )["bleu"])
+        except Exception as error:
+            formal["bleu_error"] = f"{type(error).__name__}: {error}"
     metric = {"round": attempt["round"], "status": formal["status"]}
     for name in SCORE_FIELDS:
         metric[name] = formal.get(name)  # Unavailable scores remain None.
@@ -771,8 +777,7 @@ def run_experiment(
     Exit codes: 0 for normal completion, 1 for unresolved/errors, 130 for Ctrl+C.
     Normal completion does not necessarily mean the assertion passed.
     """
-    # Validate the dependency/cache before any paid generation calls.
-    load_bleu_metric()
+    # BLEU loads lazily during scoring; metric errors must not stop fixing.
     case_started = perf_counter()
     if case_dir is None:
         directory = create_run(case_id, runs_root=runs_root)
