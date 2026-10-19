@@ -246,6 +246,18 @@ PARENTHESES = {
     "parentheses_grouping": {
         True: "Change expression grouping to correct operator precedence or scope.",
     },
+    "parentheses_insert": {
+        True: "Add grouping parentheses around terms that must be evaluated together.",
+    },
+    "parentheses_remove": {
+        True: "Remove grouping parentheses that force an incorrect evaluation order.",
+    },
+    "parentheses_misplaced": {
+        True: (
+            "Move an existing grouping boundary to include the required terms "
+            "and exclude unintended terms."
+        ),
+    },
 }
 
 

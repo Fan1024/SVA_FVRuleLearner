@@ -1,10 +1,9 @@
-"""Compare complete assertions in the supplied testbench with JasperGold.
+"""Evaluate assertions with FVRuleLearner's supplied FVEval/PEC checker.
 
-Human and Machine use the same scope: clock, disable iff, and property body.
-Strict equivalence requires both directional proofs. Relaxed equivalence
-requires at least one proof and a counterexample in the other direction.
-These are trace-level implications under the testbench, not the original
-FVEval property-body metric.
+Both complete assertions are compiled in the testbench first. The original
+PEC helper then compares Human property bodies or Machine expressions after
+the clock event. This module prepares inputs and parses the helper's verdict;
+it does not implement an alternative equivalence proof.
 """
 
 import re
@@ -15,12 +14,38 @@ from pathlib import Path
 
 
 COMPARISON_SCOPE = (
-    "Compare complete assertion behavior under the supplied testbench: "
-    "clock events, disable iff conditions, and the property body are all in scope. "
-    "Use testbench definitions when judging equivalent expressions, including "
-    "reset aliases. Labels and harmless formatting do not affect correctness. "
-    "Recommend only behaviorally necessary corrections."
+    "Use FVRuleLearner's supplied PEC checker and the dataset's comparison scope. "
+    "Complete assertions must compile in the testbench. Only recommend changes "
+    "that correct syntax or behavior within the supplied scope; harmless "
+    "formatting differences do not require correction."
 )
+
+
+def get_evaluation_policy(dataset: str) -> dict:
+    """Match the expression scope used by the original dataset evaluators."""
+    if dataset == "nl2sva_human":
+        scope = (
+            "Human PEC compares property bodies only. Clock events and disable iff "
+            "wrappers are excluded from equivalence comparison, but the complete "
+            "assertions must compile. Do not recommend wrapper edits solely to "
+            "resolve a PEC mismatch. Reset-related conditions inside the body "
+            "remain in scope."
+        )
+    elif dataset == "nl2sva_machine":
+        scope = (
+            "Machine PEC compares the property expression after the clock event, "
+            "including any disable iff condition. Clock events are excluded from "
+            "equivalence comparison, but the complete assertions must compile. "
+            "Do not recommend clock edits solely to resolve a PEC mismatch. "
+            "Do not invent reset conditions when the task does not require them."
+        )
+    else:
+        raise ValueError("DATASET must be 'nl2sva_human' or 'nl2sva_machine'.")
+    return {
+        "scope": scope,
+        "include_reset": dataset == "nl2sva_machine",
+        "tcl_file": f"run_jg_{dataset}.tcl",
+    }
 
 
 def _without_comments(text: str) -> str:
@@ -61,11 +86,11 @@ def _parenthesized(text: str) -> tuple[str, str]:
     raise ValueError("Unbalanced parentheses in the assertion.")
 
 
-def _assertion_parts(text: str) -> tuple[str, str, str]:
-    """Return the unlabeled assertion, complete property spec, and reset text.
+def _assertion_parts(text: str) -> tuple[str, str, str, str]:
+    """Return the assertion, expression after clock, body, and reset text.
 
-    The property spec is preserved for JasperGold, including clock and reset.
-    Reset extraction is only for reporting; it never changes the verdict.
+    Balanced parentheses allow reset expressions such as !reset_ or a || b.
+    The complete assertion is preserved for compilation.
     """
     assertion = re.sub(
         r"^\s*[A-Za-z_]\w*\s*:\s*", "", _without_comments(text).strip(),
@@ -77,17 +102,19 @@ def _assertion_parts(text: str) -> tuple[str, str, str]:
     if not specification or trailing != ";":
         raise ValueError("Expected exactly one assert property (...) statement.")
 
-    # Read past an explicit clock only to locate an optional disable iff.
-    remaining = specification
-    if remaining.startswith("@"):
-        _, remaining = _parenthesized(remaining[1:])
-    disable = re.match(r"disable\s+iff\b", remaining)
+    expression = specification
+    if expression.startswith("@"):
+        _, expression = _parenthesized(expression[1:])
+    body = expression
+    disable = re.match(r"disable\s+iff\b", expression)
     reset = ""
     if disable:
-        reset, body = _parenthesized(remaining[disable.end():])
+        reset, body = _parenthesized(expression[disable.end():])
         if not reset or not body:
             raise ValueError("Expected a disable iff condition followed by a property body.")
-    return assertion, specification, reset
+    if not body:
+        raise ValueError("Expected a nonempty property body.")
+    return assertion, expression, body, reset
 
 
 def _prepare_formal_input(
@@ -96,16 +123,38 @@ def _prepare_formal_input(
     testbench: str,
     requirement: str,
     destination: Path,
+    *,
+    dataset: str,
 ) -> dict:
-    """Insert both complete assertions into the existing single-module testbench."""
+    """Compile full assertions and select the original PEC expressions/signals."""
+    policy = get_evaluation_policy(dataset)
     try:
-        candidate, candidate_expression, candidate_reset = _assertion_parts(generated_assertion)
+        candidate, candidate_expression, candidate_body, candidate_reset = (
+            _assertion_parts(generated_assertion)
+        )
     except ValueError as error:
         raise ValueError(f"Generated assertion: {error}") from error
     try:
-        reference, reference_expression, reference_reset = _assertion_parts(reference_assertion)
+        reference, reference_expression, reference_body, reference_reset = (
+            _assertion_parts(reference_assertion)
+        )
     except ValueError as error:
         raise ValueError(f"Reference assertion: {error}") from error
+
+    if not policy["include_reset"]:
+        candidate_expression = candidate_body
+        reference_expression = reference_body
+
+    # Follow the original evaluators' signal-list construction.
+    if dataset == "nl2sva_human":
+        signals = set(re.findall(r"'([^'\s]+)'", requirement))
+        parameters = re.findall(
+            r"\b(parameter|localparam)\s+(int\s+|real\s+|bit\s+|\[[^]]+\]\s*)?(\w+)",
+            testbench,
+        )
+        signals.update(match[2] for match in parameters)
+    else:
+        signals = set(re.findall(r"\bsig_\w+", reference_assertion))
 
     clean_testbench = _without_comments(testbench)
     modules = re.findall(r"\bmodule\s+([A-Za-z_]\w*)\b", clean_testbench)
@@ -123,7 +172,7 @@ def _prepare_formal_input(
     return {
         "candidate_expression": candidate_expression,
         "reference_expression": reference_expression,
-        "top_module": modules[0],
+        "signal_list": ",".join(sorted(signals)),
         "generated_reset": candidate_reset,
         "reference_reset": reference_reset,
         # Textual information only. Equivalent aliases can differ here.
@@ -132,7 +181,7 @@ def _prepare_formal_input(
 
 
 def _parse_formal_result(output: str, returncode: int) -> dict:
-    """Accept only explicit completed directional results from our Tcl script."""
+    """Map the supplied PEC helper's explicit verdict to the existing scores."""
     lines = [
         line for line in output.splitlines()
         if not line.lstrip().startswith("#")
@@ -157,32 +206,25 @@ def _parse_formal_result(output: str, returncode: int) -> dict:
             "status": "SYNTAX_ERROR",
             "syntax": 0.0, "pec": 0.0, "relax_pec": 0.0,
         }
-    if returncode != 0 or re.search(r"^SVA_TOOL_ERROR\b", text, re.MULTILINE):
+    if returncode != 0:
         return {"status": "TOOL_ERROR"}
 
-    compiled = bool(re.search(r"^SVA_COMPILED\s*$", text, re.MULTILINE))
-    directions = re.findall(
-        r"^SVA_DIRECTION (reference_to_generated|generated_to_reference) (\S+)\s*$",
-        text, flags=re.MULTILINE,
-    )
-    if (
-        not compiled
-        or not re.search(r"^SVA_COMPLETE\s*$", text, re.MULTILINE)
-        or len(directions) != 2
-        or {name for name, _ in directions} != {"reference_to_generated", "generated_to_reference"}
+    if re.search(r"^\s*Full equivalence between\b", text, re.MULTILINE):
+        return {
+            "status": "FULL_EQUIVALENCE",
+            "syntax": 1.0, "pec": 1.0, "relax_pec": 1.0,
+        }
+    if re.search(r"^\s*implies\s*$", text, re.MULTILINE):
+        return {"status": "IMPLIES", "syntax": 1.0, "pec": 0.0, "relax_pec": 1.0}
+    if re.search(
+        r"^\s*(?:No equivalence between\b|conflict with each other\b)",
+        text, re.MULTILINE,
     ):
-        return {"status": "INCONCLUSIVE", "syntax": 1.0 if compiled else None}
-    statuses = [status for _, status in directions]
-    if any(status not in {"proven", "cex"} for status in statuses):
-        return {"status": "INCONCLUSIVE", "syntax": 1.0}
-    proven_count = statuses.count("proven")
-    return {
-        "status": ("FULL_EQUIVALENCE" if proven_count == 2 else
-                   "IMPLIES" if proven_count == 1 else "NO_EQUIVALENCE"),
-        "syntax": 1.0,
-        "pec": float(proven_count == 2),
-        "relax_pec": float(proven_count >= 1),
-    }
+        return {
+            "status": "NO_EQUIVALENCE",
+            "syntax": 1.0, "pec": 0.0, "relax_pec": 0.0,
+        }
+    return {"status": "INCONCLUSIVE"}
 
 
 def _finish_result(result: dict, output: str) -> dict:
@@ -194,7 +236,7 @@ def _finish_result(result: dict, output: str) -> dict:
         if not line.lstrip().startswith("#")
         and not re.match(r"^\s*%\s*#", line)
         and re.search(
-            r"ERROR|syntax error|SVA_DIRECTION|SVA_COMPLETE|"
+            r"ERROR|syntax error|equivalence|implies|conflict|"
             r"TIMEOUT|license|not found|Expected|Missing",
             line, flags=re.IGNORECASE,
         )
@@ -225,13 +267,8 @@ def evaluate_assertion(
     task_id: str = "case",
     dataset: str = "nl2sva_human",
 ) -> dict:
-    """Check both implications in one Jasper invocation and timeout budget.
-
-    dataset is an experiment label; both datasets use the same checker.
-    fveval_dir is retained for existing callers; this checker needs no FVEval files.
-    """
-    if dataset not in {"nl2sva_human", "nl2sva_machine"}:
-        raise ValueError("DATASET must be 'nl2sva_human' or 'nl2sva_machine'.")
+    """Invoke the original FVEval Tcl driver and its supplied PEC helper."""
+    policy = get_evaluation_policy(dataset)
     if timeout_seconds <= 0:
         raise ValueError("timeout_seconds must be positive.")
     if not isinstance(task_id, str) or not task_id.strip():
@@ -254,7 +291,7 @@ def evaluate_assertion(
         "syntax": None, "pec": None, "relax_pec": None,
         "generated_reset": "", "reference_reset": "",
         "reset_mismatch": None,
-        "comparison_scope": COMPARISON_SCOPE,
+        "comparison_scope": policy["scope"],
         "run_dir": str(directory),
         "work_dir": str(work),
         "log_path": str(directory / "jasper.log"),
@@ -266,31 +303,56 @@ def evaluate_assertion(
     try:
         prepared = _prepare_formal_input(
             generated_assertion, reference_assertion, testbench, requirement, sv_file,
+            dataset=dataset,
         )
     except ValueError as error:
         return _finish_result(result, str(error))
     for key in ("generated_reset", "reference_reset", "reset_mismatch"):
         result[key] = prepared[key]
 
-    tcl_file = Path(__file__).resolve().with_name("run_jg_full_assertion.tcl")
-    if not tcl_file.is_file():
+    result["comparison_inputs"] = {
+        name: prepared[name]
+        for name in ("candidate_expression", "reference_expression", "signal_list")
+    }
+    # FVEval's scripts resolve pec/pec.tcle relative to this working directory.
+    if fveval_dir is None:
+        fveval = next(
+            (parent / "FVEval" for parent in Path(__file__).resolve().parents
+             if (parent / "FVEval").is_dir()),
+            None,
+        )
+    else:
+        fveval = Path(fveval_dir).expanduser().resolve()
+    if fveval is None:
         result["status"] = "TOOL_ERROR"
-        return _finish_result(result, f"Missing required file: {tcl_file}")
+        return _finish_result(
+            result,
+            "FVEval not found. Keep new_agent inside the repository or supply fveval_dir.",
+        )
+    tcl_file = fveval / "tool_scripts" / policy["tcl_file"]
+    for required in (tcl_file, fveval / "tool_scripts" / "pec" / "pec.tcle"):
+        if not required.is_file():
+            result["status"] = "TOOL_ERROR"
+            return _finish_result(result, f"Missing required file: {required}")
+
+    shutil.copyfile(sv_file, work / f"{dataset}_{task_id}.sva")
     project = work / "jg" / task_id
     project.parent.mkdir()
     command = [
         str(jg_executable), "-fpv", "-batch", "-tcl", str(tcl_file),
-        "-define", "SV_FILE", str(sv_file),
-        "-define", "TOP_MODULE", prepared["top_module"],
+        "-define", "LM_ASSERT_TEXT", prepared["candidate_expression"],
+        "-define", "REF_ASSERT_TEXT", prepared["reference_expression"],
+        "-define", "SIGNAL_LIST", prepared["signal_list"],
+        "-define", "EXP_ID", dataset,
         "-define", "TASK_ID", task_id,
-        "-define", "PROOF_SECONDS", str(timeout_seconds / 2),
+        "-define", "SV_DIR", str(work),
         "-proj", str(project), "-allow_unsupported_OS",
     ]
     result["command"] = command
-    result["working_directory"] = str(work)
+    result["working_directory"] = str(fveval)
     try:
         completed = subprocess.run(
-            command, cwd=work, capture_output=True, text=True, timeout=timeout_seconds,
+            command, cwd=fveval, capture_output=True, text=True, timeout=timeout_seconds,
         )
     except subprocess.TimeoutExpired as error:
         result["status"] = "TIMEOUT"
@@ -348,4 +410,5 @@ def cleanup_work(
     except OSError as error:
         return {"retained": True, "reason": f"Cleanup failed: {error}"}
     return {"retained": False, "reason": "Owned work files removed."}
+
 

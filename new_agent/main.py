@@ -79,6 +79,8 @@ def validate_config() -> None:
 def run_pipeline(directory, record: dict) -> int:
     """Run the existing round loop for ONE case. Each call has fresh rules."""
     inputs = record["inputs"]
+    policy = formal_check.get_evaluation_policy(inputs.get("dataset", config.DATASET))
+    comparison_scope = policy["scope"]
     client = OpenAI()
     registry = {}
     previous_assertion = None
@@ -95,7 +97,7 @@ def run_pipeline(directory, record: dict) -> int:
             testbench=inputs["testbench"],
             previous_assertion=previous_assertion,
             rules=selected_rules,
-            comparison_scope=formal_check.COMPARISON_SCOPE,
+            comparison_scope=comparison_scope,
         )
         attempt = run_io.start_attempt(
             directory, record, round_number,
@@ -152,7 +154,7 @@ def run_pipeline(directory, record: dict) -> int:
             run_io.update_run(
                 directory, record, status="PASSED", stage="finished",
                 passed=True, stop_reason="passed",
-                diagnosis_skipped_reason="Both full-assertion implications passed under the supplied testbench.",
+                diagnosis_skipped_reason="The supplied FVRuleLearner PEC checker reported full equivalence.",
             )
             return 0
 
@@ -175,7 +177,7 @@ def run_pipeline(directory, record: dict) -> int:
                 reference_assertion=inputs["reference_assertion"],
                 design_context=inputs["testbench"],
                 formal_feedback=formal_result["feedback"],
-                comparison_scope=formal_check.COMPARISON_SCOPE,
+                comparison_scope=comparison_scope,
                 usage_callback=capture_usage,
             )
         run_io.update_run(
@@ -204,7 +206,7 @@ def run_pipeline(directory, record: dict) -> int:
             reference_assertion=inputs["reference_assertion"],
             statements=statements,
             testbench=inputs["testbench"],
-            comparison_scope=formal_check.COMPARISON_SCOPE,
+            comparison_scope=comparison_scope,
             formal_feedback=formal_result["feedback"],
         )
         rule_attempt = {
@@ -244,6 +246,7 @@ def main() -> int:
     experiment_started = perf_counter()
     # 1. Validate the configuration, CSV, and complete selection before any API call.
     validate_config()
+    policy = formal_check.get_evaluation_policy(config.DATASET)
     cases, dataset_split = dataset_loader.load_training_cases(
         config.DATASET_PATH, config.CASE_IDS,
         train_fraction=config.TRAIN_FRACTION, split_seed=config.SPLIT_SEED,
@@ -253,8 +256,8 @@ def main() -> int:
     settings = {
         "dataset": config.DATASET,
         "dataset_path": str(dataset_path),
-        "checker": "full_assertion",
-        "comparison_scope": formal_check.COMPARISON_SCOPE,
+        "checker": "fvrulelearner_pec",
+        "comparison_scope": policy["scope"],
         "revision_rules": "previous_round_only",
         "case_ids": list(config.CASE_IDS),
         "dataset_split": dataset_split,
@@ -272,7 +275,7 @@ def main() -> int:
         phase="train",
     )
     print("Dataset:", dataset_path)
-    print("Evaluation scope: full assertion under the supplied testbench")
+    print("Evaluation scope:", policy["scope"])
     if dataset_split is not None:
         print(
             f"Random split: {len(cases)} training | "
@@ -324,5 +327,6 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
 
 

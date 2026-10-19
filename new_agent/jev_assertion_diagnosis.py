@@ -37,7 +37,8 @@ def diagnose_assertion_mismatches(
         "background": (
             "The generated assertion did not pass strict PEC. "
             "Diagnose it using the formal feedback and the supplied comparison_scope. "
-            "Clock events, disable iff conditions, and the property body are all in scope. "
+            "The supplied comparison_scope determines which assertion parts PEC compares. "
+            "The complete assertion must compile, even when a wrapper is excluded from PEC. "
             "Use testbench definitions to recognize equivalent reset aliases. "
             "A textual reset difference alone does not require a correction. "
             "Identify the changes needed to fix it using the requirement and "
@@ -412,5 +413,6 @@ if __name__ == "__main__":
         design_context="a and b are single-bit signals sampled on posedge clk.",
     )
     print(json.dumps(diagnosis, indent=2, ensure_ascii=False))
+
 
 

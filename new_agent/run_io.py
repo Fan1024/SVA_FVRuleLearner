@@ -1,4 +1,4 @@
-"""Save case records, readable reports, and experiment summaries.
+"""Save case records, usage, and experiment summaries.
 
 Experiment decisions belong in main.py. This module manages records and files.
 Case records contain only final outcomes. Round evidence is optional and separate.
@@ -13,6 +13,7 @@ import traceback
 from copy import deepcopy
 from contextlib import contextmanager
 from datetime import datetime, timezone
+from functools import lru_cache
 from pathlib import Path
 from time import perf_counter
 
@@ -37,6 +38,14 @@ USAGE_METRIC_FIELDS = tuple(
     "other_seconds", "total_seconds",
 )
 USAGE_FIELDS = ("case_id", "round") + USAGE_METRIC_FIELDS + ("passed",)
+
+
+@lru_cache(maxsize=1)
+def load_bleu_metric():
+    """Load the same Hugging Face BLEU metric used by FVRuleLearner once."""
+    import evaluate
+
+    return evaluate.load("bleu")
 
 
 # Tokens and wall time. These records contain no model names or formal scores.
@@ -141,8 +150,15 @@ def save_usage(summary_dir, record: dict, elapsed_seconds: float) -> None:
         "case_id": "", "round": "case_total",
         **_usage_metrics(rounds, elapsed_seconds), "passed": record["passed"],
     })
-    rows[0]["case_id"] = str(record["case_id"])
-    cases[str(record["case_id"])] = rows
+    inputs = record["inputs"]
+    # Task names repeat across designs; the selection ID identifies the case.
+    selection_id = inputs.get("case_number", "")
+    design_name = inputs.get("design_name", "")
+    case_label = f"{design_name}/{record['case_id']}" if design_name else str(record["case_id"])
+    if selection_id != "":
+        case_label = f"{selection_id}: {case_label}"
+    rows[0]["case_id"] = case_label
+    cases[case_label] = rows
 
     buffer = io.StringIO(newline="")
     writer = csv.DictWriter(buffer, fieldnames=USAGE_FIELDS)
@@ -427,7 +443,6 @@ def save_run(run_dir, record: dict) -> None:
         directory / "result.json",
         json.dumps(saved, indent=2, ensure_ascii=False) + "\n",
     )
-    _atomic_write(directory / "report.txt", _readable_report(saved))
 
 
 def update_run(run_dir, record: dict, **changes) -> None:
@@ -526,7 +541,7 @@ def _debug_event_text(record: dict, event: str, data: dict) -> str:
     if event == "case_finished":
         reason = data["stop_reason"]
         explanation = {
-            "passed": "Both full-assertion implications passed under the supplied testbench.",
+            "passed": "The supplied FVRuleLearner PEC checker reported full equivalence.",
             "max_rounds": "Maximum assertion attempts reached.",
             "no_guidance": "Rule generator returned no rules.",
             "interrupted": "Execution was interrupted by the user.",
@@ -594,6 +609,14 @@ def start_attempt(
 
 def record_formal_result(run_dir, record: dict, attempt: dict, formal: dict) -> None:
     """Publish matching assertion/verdict fields and append compact round scores."""
+    # Score exactly the assertion associated with this formal result.
+    # BLEU is text similarity only; it never changes the formal verdict.
+    formal["bleu"] = float(load_bleu_metric().compute(
+        predictions=[attempt["generation"]["assertion"]],
+        references=[record["inputs"]["reference_assertion"]],
+        max_order=4,
+        smooth=False,
+    )["bleu"])
     metric = {"round": attempt["round"], "status": formal["status"]}
     for name in SCORE_FIELDS:
         metric[name] = formal.get(name)  # Unavailable scores remain None.
@@ -748,6 +771,8 @@ def run_experiment(
     Exit codes: 0 for normal completion, 1 for unresolved/errors, 130 for Ctrl+C.
     Normal completion does not necessarily mean the assertion passed.
     """
+    # Validate the dependency/cache before any paid generation calls.
+    load_bleu_metric()
     case_started = perf_counter()
     if case_dir is None:
         directory = create_run(case_id, runs_root=runs_root)
@@ -846,66 +871,10 @@ def run_experiment(
     return exit_code
 
 
-# Human-readable views of the same record.
-
-def _readable_report(record: dict) -> str:
-    """Present only the final checked assertion, scores, outcome, and errors."""
-    inputs = record["inputs"]
-    lines = [
-        f"Case: {record['case_id']}",
-        f"Selection ID: {inputs.get('case_number', '(standalone)')}",
-        f"Design: {inputs.get('design_name', '(unspecified)')}",
-        f"Pipeline status: {record['status']}",
-        f"Stage: {record['stage']}",
-        f"Passed: {record['passed']}",
-        f"Stop reason: {record['stop_reason'] or '(not stopped)'}",
-        f"Rounds used: {record['rounds_used']}",
-        f"Last evaluated round: {record['last_evaluated_round'] or '(none)'}",
-        f"Started: {record['started_at']}",
-        f"Finished: {record['finished_at'] or '(not finished)'}",
-        "", "REQUIREMENT", inputs["requirement"],
-        "", "LAST EVALUATED ASSERTION",
-        record["generation"]["assertion"] or "(no evaluated assertion)",
-        "", "REFERENCE ASSERTION", inputs["reference_assertion"],
-        "", "FINAL FORMAL RESULT",
-    ]
-    formal = record["formal"]
-    if formal is None:
-        lines.append("(not run)")
-    else:
-        for name in (
-            "status", "syntax", "pec", "relax_pec", "generated_reset",
-            "reference_reset", "reset_mismatch", "comparison_scope",
-            "log_path", "input_path",
-        ):
-            value = formal.get(name)
-            lines.append(f"{name}: {value if value is not None else '(unavailable)'}")
-        if formal.get("cleanup"):
-            lines.append(f"Work directory retained: {formal['cleanup']['retained']}")
-            lines.append(f"Cleanup note: {formal['cleanup']['reason']}")
-
-    if record["error"]:
-        error = record["error"]
-        lines.extend([
-            "", "PIPELINE ERROR", f"Stage: {error['stage']}",
-            f"{error['type']}: {error['message']}",
-        ])
-    if record["trace_error"]:
-        lines.extend(["", "TRACE SAVE ERROR", record["trace_error"]])
-    if record["summary_error"]:
-        lines.extend(["", "SUMMARY SAVE ERROR", record["summary_error"]])
-    if record.get("summary_directory"):
-        lines.extend([
-            "", f"Experiment directory: {record['summary_directory']}",
-            "Open run_metadata.json for shared dataset, model, and configuration details.",
-            "Open learned_rules.jsonl for retained guidance and case outcomes.",
-        ])
-    lines.append("This report contains no round history or raw model responses.")
-    return "\n".join(lines) + "\n"
-
+# Terminal summary.
 
 def print_summary(run_dir, record: dict) -> None:
-    """Print the outcome and report path; detailed records stay in files."""
+    """Print the outcome and result path; terminal output is not saved."""
     print(f"Case: {record['case_id']} | Pipeline: {record['status']}")
     print(
         f"Rounds: {record['rounds_used']} | Passed: {record['passed']} | "
@@ -928,6 +897,6 @@ def print_summary(run_dir, record: dict) -> None:
         print("Trace save error:", record["trace_error"])
     if record["summary_error"]:
         print("Summary save error:", record["summary_error"])
-    print("Report:", Path(run_dir) / "report.txt")
+    print("Result:", Path(run_dir) / "result.json")
 
 
