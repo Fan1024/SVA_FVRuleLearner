@@ -5,7 +5,7 @@ import re
 
 from openai import OpenAI
 
-from formal_check import COMPARISON_SCOPE
+from new_agent.formal_check import COMPARISON_SCOPE
 
 
 SYSTEM_PROMPT = """You analyze SystemVerilog assertion mismatches and generate
@@ -15,8 +15,9 @@ You may explore potential issues beyond the supplied statements using the requir
 testbench, generated assertion, and reference as background. Check whether a proposed
 correction is supported before turning it into a rule.
 Return one JSON object containing only groups and their correction rules.
-Follow the shared comparison_scope for both datasets.
-Clock events, disable iff conditions, and the property body are all in scope.
+Follow the supplied dataset-specific comparison_scope. Human and Machine use
+different native extraction policies; excluded clock/reset wrappers are not
+evidence of a PEC mismatch. Do not assume the full assertion was compared.
 Use testbench definitions to recognize equivalent reset expressions and aliases.
 Do not recommend a reset change just because its text differs from the reference.
 Preserve native disable iff behavior; it is not an antecedent guard.

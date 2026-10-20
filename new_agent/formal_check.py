@@ -1,736 +1,322 @@
-"""Evaluate assertions with FVRuleLearner's supplied FVEval/PEC checker.
+"""Call this repository's native evaluation.py directly, in the current process.
 
-Both complete assertions are compiled in the testbench first. The original
-PEC helper then compares Human property bodies or Machine expressions after
-the clock event. This module prepares inputs and parses the helper's verdict;
-it does not implement an alternative equivalence proof.
+The native evaluator prepares the properties and invokes its original Jasper
+launcher/Tcl/PEC. This module supplies LMResult records and records results; it
+contains no SVA parser, signal extractor, expression adapter, or Jasper command.
 """
 
+from dataclasses import asdict
+from contextlib import contextmanager, redirect_stdout, redirect_stderr
+import hashlib
+import importlib
 import json
+import math
+from pathlib import Path
 import re
 import shutil
-import subprocess
+import sys
 import tempfile
-from pathlib import Path
+from time import perf_counter
+import traceback
+from types import SimpleNamespace
 
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
 COMPARISON_SCOPE = (
-    "Use FVRuleLearner's supplied PEC checker and the dataset's comparison scope. "
-    "Complete assertions must compile in the testbench. Only recommend changes "
-    "that correct syntax or behavior within the supplied scope; harmless "
-    "formatting differences do not require correction."
+    "Use the supplied dataset-specific FVRuleLearner comparison_scope. Generate "
+    "a complete assertion using the original testbench. Do not infer that "
+    "excluded clock/reset wrappers were compared by PEC."
 )
+SEMANTIC_STATUSES = frozenset({"FULL_EQUIVALENCE", "IMPLIES", "NO_EQUIVALENCE"})
+_SESSION = None
 
 
-def get_evaluation_policy(dataset: str) -> dict:
-    """Match the expression scope used by the original dataset evaluators."""
-    if dataset == "nl2sva_human":
-        scope = (
-            "Human PEC compares property bodies only. Clock events and disable iff "
-            "wrappers are excluded from equivalence comparison, but the complete "
-            "assertions must compile. Do not recommend wrapper edits solely to "
-            "resolve a PEC mismatch. Reset-related conditions inside the body "
-            "remain in scope."
-        )
-    elif dataset == "nl2sva_machine":
-        scope = (
-            "Machine PEC compares the property expression after the clock event, "
-            "including any disable iff condition. Clock events are excluded from "
-            "equivalence comparison, but the complete assertions must compile. "
-            "Do not recommend clock edits solely to resolve a PEC mismatch. "
-            "Do not invent reset conditions when the task does not require them."
-        )
-    else:
-        raise ValueError("DATASET must be 'nl2sva_human' or 'nl2sva_machine'.")
-    return {
-        "scope": scope,
-        "include_reset": dataset == "nl2sva_machine",
-        "tcl_file": f"run_jg_{dataset}.tcl",
-    }
-
-
-def _without_comments(text: str) -> str:
-    """Remove comments while preserving strings and character positions."""
-    return re.sub(
-        r'"(?:\\.|[^"\\])*"|//[^\n]*|/\*.*?\*/',
-        lambda match: match[0] if match[0].startswith('"') else " " * len(match[0]),
-        text,
-        flags=re.DOTALL,
-    )
-
-
-def _parenthesized(text: str) -> tuple[str, str]:
-    """Read one balanced (...) group, returning its content and remaining text."""
-    text = text.lstrip()
-    if not text.startswith("("):
-        raise ValueError("Expected a parenthesized expression.")
-    depth = 0
-    in_string = False
-    escaped = False
-    for index, character in enumerate(text):
-        if in_string:
-            if escaped:
-                escaped = False
-            elif character == "\\":
-                escaped = True
-            elif character == '"':
-                in_string = False
-            continue
-        if character == '"':
-            in_string = True
-        elif character == "(":
-            depth += 1
-        elif character == ")":
-            depth -= 1
-            if depth == 0:
-                return text[1:index].strip(), text[index + 1:].strip()
-    raise ValueError("Unbalanced parentheses in the assertion.")
-
-
-def _assertion_parts(text: str) -> tuple[str, str, str, str]:
-    """Return the assertion, expression after clock, body, and reset text.
-
-    Balanced parentheses allow reset expressions such as !reset_ or a || b.
-    The complete assertion is preserved for compilation.
-    """
-    assertion = re.sub(
-        r"^\s*[A-Za-z_]\w*\s*:\s*", "", _without_comments(text).strip(),
-    )
-    header = re.match(r"assert\s+property\b", assertion)
-    if header is None:
-        raise ValueError("Expected exactly one assert property (...) statement.")
-    specification, trailing = _parenthesized(assertion[header.end():])
-    if not specification or trailing != ";":
-        raise ValueError("Expected exactly one assert property (...) statement.")
-
-    expression = specification
-    if expression.startswith("@"):
-        _, expression = _parenthesized(expression[1:])
-    body = expression
-    disable = re.match(r"disable\s+iff\b", expression)
-    reset = ""
-    if disable:
-        reset, body = _parenthesized(expression[disable.end():])
-        if not reset or not body:
-            raise ValueError("Expected a disable iff condition followed by a property body.")
-    if not body:
-        raise ValueError("Expected a nonempty property body.")
-    return assertion, expression, body, reset
-
-
-class _PecAdapterUnsupported(ValueError):
-    """The scalar adapter cannot safely preserve a construct's type semantics."""
-
-
-def _pec_constant(expression, constants):
-    """Evaluate only a small, explicit subset of SV integer constant expressions."""
-    import ast
-    import operator
-
-    def literal(match):
-        width, signed, base, digits = match.groups()
-        radix = {"b": 2, "o": 8, "d": 10, "h": 16}[base.lower()]
-        if re.search(r"[xXzZ?]", digits):
-            raise _PecAdapterUnsupported("Unknown-valued parameter or range.")
-        value = int(digits.replace("_", ""), radix)
-        if width:
-            bits = int(width)
-            value &= (1 << bits) - 1
-            if signed and value & (1 << (bits - 1)):
-                value -= 1 << bits
-        return str(value)
-
-    expression = re.sub(r"(\d+)?'([sS]?)([bBoOdDhH])([0-9a-fA-F_xXzZ?]+)", literal, expression)
-    expression = expression.replace("$clog2", "clog2")
-    binary = {ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul,
-              ast.LShift: operator.lshift, ast.RShift: operator.rshift,
-              ast.BitAnd: operator.and_, ast.BitOr: operator.or_, ast.BitXor: operator.xor,
-              ast.Mod: operator.mod}
-
-    def evaluate(node):
-        if isinstance(node, ast.Constant) and type(node.value) is int:
-            return node.value
-        if isinstance(node, ast.Name) and node.id in constants:
-            return constants[node.id]
-        if isinstance(node, ast.UnaryOp):
-            value = evaluate(node.operand)
-            if isinstance(node.op, ast.USub):
-                return -value
-            if isinstance(node.op, ast.UAdd):
-                return value
-            if isinstance(node.op, ast.Invert):
-                return ~value
-        if isinstance(node, ast.BinOp):
-            a, b = evaluate(node.left), evaluate(node.right)
-            if isinstance(node.op, ast.Div):
-                if not b:
-                    raise _PecAdapterUnsupported("Division by zero in a range.")
-                return (abs(a) // abs(b)) * (-1 if (a < 0) != (b < 0) else 1)
-            function = binary.get(type(node.op))
-            if function:
-                if isinstance(node.op, (ast.LShift, ast.RShift)) and not 0 <= b <= 64:
-                    raise _PecAdapterUnsupported("Unsupported range shift.")
-                return function(a, b)
-        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
-                and node.func.id == "clog2" and len(node.args) == 1 and not node.keywords):
-            value = evaluate(node.args[0])
-            if value < 0:
-                raise _PecAdapterUnsupported("Negative $clog2 argument.")
-            return max(0, value - 1).bit_length()
-        raise _PecAdapterUnsupported(f"Unsupported constant expression: {expression}")
-
-    try:
-        return evaluate(ast.parse(expression.strip(), mode="eval").body)
-    except (SyntaxError, ValueError, ArithmeticError, KeyError) as error:
-        raise _PecAdapterUnsupported(f"Cannot resolve constant expression: {expression}") from error
-
-
-def _pec_symbols(testbench):
-    """Read simple non-ANSI/ANSI packed declarations; retain unsupported names."""
-    text = _without_comments(testbench)
-    constants, constant_types, pending = {}, {}, []
-    for match in re.finditer(r"\b(?:localparam|parameter)\s+([^;]+);", text):
-        declaration = match[1].strip()
-        assignment = re.fullmatch(r"(.*?)\b([A-Za-z_]\w*)\s*=\s*(.+)", declaration, re.S)
-        if assignment:
-            prefix, name, value = assignment.groups()
-            pending.append((name, value))
-            # Only plain unsized decimal parameters/int declarations are inlined.
-            constant_types[name] = (not prefix.strip() or prefix.strip() in {"int", "integer"}) and bool(re.fullmatch(r"\d+", value.strip()))
-    while pending:
-        remaining = []
-        for name, value in pending:
-            try:
-                constants[name] = _pec_constant(value, constants)
-            except _PecAdapterUnsupported:
-                remaining.append((name, value))
-        if len(remaining) == len(pending):
-            break
-        pending = remaining
-
-    symbols = {}
-    # Split top-level declaration fields without splitting function arguments or ranges.
-    def fields(value):
-        result, start, depth = [], 0, 0
-        for index, character in enumerate(value):
-            if character in "([{":
-                depth += 1
-            elif character in ")]}":
-                depth -= 1
-            elif character == "," and depth == 0:
-                result.append(value[start:index])
-                start = index + 1
-        result.append(value[start:])
-        return result
-
-    def declaration(value):
-        two_state = bool(re.search(r"\bbit\b", value))
-        value = re.sub(r"^(?:input|output|inout)\b\s*", "", value.strip())
-        value = re.sub(r"^(?:wire|reg|logic|bit)\b\s*", "", value)
-        signed = bool(re.match(r"signed\b", value))
-        value = re.sub(r"^(?:signed|unsigned)\b\s*", "", value)
-        indices = None
-        unsupported = "Signed packed declarations require an elaborated type parser." if signed else None
-        if two_state:
-            unsupported = "Two-state bit declarations require an elaborated type parser."
-        if value.startswith("["):
-            closing = value.find("]")
-            if closing < 0:
-                return
-            packed, value = value[1:closing], value[closing + 1:].strip()
-            try:
-                left, right = [_pec_constant(x, constants) for x in packed.split(":")]
-                if min(left, right) < 0 or abs(left - right) >= 256:
-                    raise _PecAdapterUnsupported("Packed ranges must be nonnegative and at most 256 bits.")
-                indices = list(range(left, right + (-1 if left >= right else 1), -1 if left >= right else 1))
-            except (ValueError, _PecAdapterUnsupported) as error:
-                unsupported = str(error)
-        while value.startswith("["):
-            closing = value.find("]")
-            if closing < 0:
-                return
-            unsupported = "Multiple packed dimensions require an elaborated type parser."
-            value = value[closing + 1:].strip()
-        for field in fields(value):
-            field = field.strip()
-            # An initialized wire remains an unconstrained PEC input, as in upstream.
-            name = re.match(r"([A-Za-z_]\w*)\b(.*)", field, re.S)
-            if not name:
-                continue
-            tail = name[2].lstrip()
-            reason = unsupported
-            if tail and not tail.startswith("="):
-                reason = "Unpacked arrays, multiple packed dimensions, and complex declarations are unsupported."
-            symbols[name[1]] = {"indices": indices, "unsupported": reason}
-
-    # Dataset Human files use non-ANSI declarations.
-    for match in re.finditer(r"(?:(?<=;)|^)\s*((?:input|output|inout|wire|reg|logic|bit)\b[^;]*);", text, re.M):
-        declaration(match[1])
-    # Handle simple ANSI port lists used by small diagnostic controls.
-    header = re.search(r"\bmodule\s+[A-Za-z_]\w*\s*\((.*?)\)\s*;", text, re.S)
-    if header:
-        current = None
-        for field in fields(header[1]):
-            field = field.strip()
-            if re.match(r"(?:input|output|inout)\b", field):
-                current = field
-                declaration(field)
-            elif current:
-                prefix = re.match(r"(.*?)([A-Za-z_]\w*)\s*$", current, re.S)
-                if prefix:
-                    declaration(prefix[1] + field)
-    return symbols, constants, constant_types
-
-
-def _pec_lower_comparison(candidate, reference, testbench):
-    """Expand unsigned packed inputs into scalars for the unchanged PEC engine.
-
-    This changes representation, not values: every declared input bit gets one
-    shared free scalar. A dynamic bit-select becomes a case-equality mux with
-    an X default, preserving unknown and out-of-range index results.
-    Unsupported types/index forms are rejected rather than guessed.
-    """
-    symbols, constants, constant_types = _pec_symbols(testbench)
-    numeric = r"(?:\d+)?'[sS]?[bBoOdDhH][0-9a-fA-F_xXzZ?]+|'[01xXzZ]|\d[\d_]*"
-    operators = r"\|->|\|=>|<<<|>>>|===|!==|&&&|##|&&|\|\||==|!=|<=|>=|<<|>>|\*\*|->|=>|~\^|\^~|~&|~\||\+:|-:"
-    lexer = re.compile(r"\s+|" + numeric + r"|\$?[A-Za-z_]\w*|" + operators + r"|.", re.S)
-    def tokens(expression):
-        return [m[0] for m in lexer.finditer(expression) if not m[0].isspace()]
-    all_tokens = tokens(candidate) + tokens(reference)
-    used_vectors = {word for word in all_tokens if word in symbols and symbols[word]["indices"] is not None}
-    bad_used = {word for word in all_tokens if word in symbols and symbols[word]["unsupported"]}
-    if bad_used:
-        raise _PecAdapterUnsupported("Unsupported declared input: " + ", ".join(sorted(bad_used)))
-    if not used_vectors:
-        return None
-    forbidden = {"$left", "$right", "$high", "$low", "$increment", "$dimensions", "$unpacked_dimensions"}
-    if forbidden.intersection(all_tokens) or "." in all_tokens or "\\" in all_tokens:
-        raise _PecAdapterUnsupported("Type queries, hierarchical names and escaped identifiers require an elaborated type parser.")
-    reserved = {"disable", "iff", "and", "or", "not", "intersect", "throughout", "within",
-                "until", "s_until", "until_with", "s_until_with", "strong", "weak", "first_match",
-                "eventually", "s_eventually", "always", "s_always", "nexttime", "s_nexttime",
-                "accept_on", "reject_on", "sync_accept_on", "sync_reject_on", "if", "else"}
-    scalars, layout = set(), {}
-    # Avoid collisions with any original identifier.
-    prefix = "__pec_bit_"
-    while any(word.startswith(prefix) for word in all_tokens if re.fullmatch(r"[A-Za-z_]\w*", word)):
-        prefix = "_" + prefix
-
-    def bit_name(name, index):
-        atom = f"{prefix}{name}_{index}"
-        scalars.add(atom)
-        layout.setdefault(name, {})[str(index)] = atom
-        return atom
-
-    def vector(name, selected=None):
-        indices = symbols[name]["indices"] if selected is None else selected
-        return "{" + ",".join(bit_name(name, i) for i in indices) + "}"
-
-    def lower(sequence):
-        result, position = [], 0
-        while position < len(sequence):
-            word = sequence[position]
-            position += 1
-            if word in symbols:
-                info = symbols[word]
-                indices = info["indices"]
-                if position < len(sequence) and sequence[position] == "[":
-                    if indices is None:
-                        raise _PecAdapterUnsupported(f"Cannot select a bit of scalar {word}.")
-                    start, depth = position + 1, 1
-                    position += 1
-                    while position < len(sequence) and depth:
-                        depth += (sequence[position] == "[") - (sequence[position] == "]")
-                        position += 1
-                    if depth:
-                        raise _PecAdapterUnsupported("Unbalanced bit-select.")
-                    selection = sequence[start:position - 1]
-                    if any(operator in selection for operator in {"+:", "-:"}):
-                        raise _PecAdapterUnsupported("Indexed part-selects require an elaborated type parser.")
-                    if position < len(sequence) and sequence[position] == "[":
-                        raise _PecAdapterUnsupported("Multiple selections are unsupported.")
-                    if ":" in selection:
-                        if selection.count(":") != 1 or "+" in selection or "-" in selection:
-                            raise _PecAdapterUnsupported("Only fixed part-selects are supported.")
-                        colon = selection.index(":")
-                        left = _pec_constant("".join(selection[:colon]), constants)
-                        right = _pec_constant("".join(selection[colon + 1:]), constants)
-                        if left != right and (left > right) != (indices[0] >= indices[-1]):
-                            raise _PecAdapterUnsupported("Part-select direction does not match the declaration.")
-                        chosen = list(range(left, right + (-1 if left >= right else 1), -1 if left >= right else 1))
-                        if any(i not in indices for i in chosen):
-                            raise _PecAdapterUnsupported("Out-of-range part-select requires an elaborated type parser.")
-                        result.append(vector(word, chosen))
-                    else:
-                        try:
-                            fixed = _pec_constant("".join(selection), constants)
-                        except _PecAdapterUnsupported:
-                            fixed = None
-                        if fixed is not None:
-                            result.append(bit_name(word, fixed) if fixed in indices else "1'bx")
-                        else:
-                            index = lower(selection)
-                            mux = "1'bx"
-                            for i in reversed(indices):
-                                mux = f"((({index}) === 32'd{i}) ? {bit_name(word, i)} : {mux})"
-                            result.append(mux)
-                elif indices is not None:
-                    result.append(vector(word))
-                else:
-                    scalars.add(word)
-                    result.append(word)
-            elif word in constants:
-                if not constant_types.get(word) or not 0 <= constants[word] < (1 << 31):
-                    raise _PecAdapterUnsupported(f"Property parameter {word} needs an elaborated type parser.")
-                result.append(f"32'sd{constants[word]}")
-            elif re.fullmatch(r"\$?[A-Za-z_]\w*", word):
-                if word.startswith("$") or word in reserved:
-                    result.append(word)
-                else:
-                    raise _PecAdapterUnsupported(f"No supported declaration for signal/operator {word}.")
-            else:
-                result.append(word)
-        # Keep complete operator tokens intact and keep adjacent distinct tokens
-        # separate: binary & followed by reduction & must never become &&.
-        return " ".join(result)
-
-    lowered_candidate, lowered_reference = lower(tokens(candidate)), lower(tokens(reference))
-    return {"candidate_expression": lowered_candidate, "reference_expression": lowered_reference,
-            "signal_list": ",".join(sorted(scalars)), "input_adapter": "unsigned_packed_scalar_expansion_v1",
-            "signal_layout": layout}
-
-
-def _prepare_formal_input(
-    generated_assertion: str,
-    reference_assertion: str,
-    testbench: str,
-    requirement: str,
-    destination: Path,
-    *,
-    dataset: str,
-) -> dict:
-    """Compile full assertions and select the original PEC expressions/signals."""
-    policy = get_evaluation_policy(dataset)
-    try:
-        candidate, candidate_expression, candidate_body, candidate_reset = (
-            _assertion_parts(generated_assertion)
-        )
-    except ValueError as error:
-        raise ValueError(f"Generated assertion: {error}") from error
-    try:
-        reference, reference_expression, reference_body, reference_reset = (
-            _assertion_parts(reference_assertion)
-        )
-    except ValueError as error:
-        raise ValueError(f"Reference assertion: {error}") from error
-
-    if not policy["include_reset"]:
-        candidate_expression = candidate_body
-        reference_expression = reference_body
-
-    # Follow the original evaluators' signal-list construction.
-    if dataset == "nl2sva_human":
-        signals = set(re.findall(r"'([^'\s]+)'", requirement))
-        parameters = re.findall(
-            r"\b(parameter|localparam)\s+(int\s+|real\s+|bit\s+|\[[^]]+\]\s*)?(\w+)",
-            testbench,
-        )
-        signals.update(match[2] for match in parameters)
-    else:
-        signals = set(re.findall(r"\bsig_\w+", reference_assertion))
-
-    clean_testbench = _without_comments(testbench)
-    modules = re.findall(r"\bmodule\s+([A-Za-z_]\w*)\b", clean_testbench)
-    endings = list(re.finditer(r"\bendmodule\b", clean_testbench))
-    if len(modules) != 1 or len(endings) != 1 or clean_testbench[endings[0].end():].strip():
-        raise ValueError("Expected a testbench with one module ending in endmodule.")
-    insertion = endings[0].start()
-    destination.write_text(
-        testbench[:insertion]
-        + "\nreference: " + reference
-        + "\nasrt: " + candidate + "\n"
-        + testbench[insertion:],
-        encoding="utf-8",
-    )
-    prepared = {
-        "candidate_expression": candidate_expression,
-        "reference_expression": reference_expression,
-        "signal_list": ",".join(sorted(signals)),
-        "generated_reset": candidate_reset,
-        "reference_reset": reference_reset,
-        # Textual information only. Equivalent aliases can differ here.
-        "reset_mismatch": candidate_reset != reference_reset,
-    }
-    # The upstream PEC interface reconstructs name-only scalar inputs. Expand
-    # supported Human vectors before passing the expressions to that engine.
-    if dataset == "nl2sva_human":
-        lowered = _pec_lower_comparison(candidate_expression, reference_expression, testbench)
-        if lowered:
-            prepared["original_comparison_inputs"] = {
-                name: prepared[name] for name in
-                ("candidate_expression", "reference_expression", "signal_list")
-            }
-            prepared.update(lowered)
-    return prepared
-
-
-
-def _parse_formal_result(output: str, returncode: int) -> dict:
-    """Map the supplied PEC helper's explicit verdict to the existing scores."""
-    lines = [
-        line for line in output.splitlines()
-        if not line.lstrip().startswith("#")
-        and not re.match(r"^\s*%\s*#", line)
-    ]
-    text = "\n".join(lines)
-    lower = text.lower()
-    infrastructure_markers = (
-        "failed to checkout license", "license checkout failed",
-        "failed to contact license server", "license server machine is down",
-        "no license available", "flexnet licensing error",
-        "license manager daemon", "lmc-",
-    )
-    if any(marker in lower for marker in infrastructure_markers):
-        return {"status": "TOOL_ERROR"}
-    if re.search(r"(?:^|[/\\])pec\.sve(?:\(|:)", text, re.MULTILINE | re.IGNORECASE) and re.search(
-        r"VERI-\d+|ignored due to previous errors", text, re.IGNORECASE,
-    ):
-        return {"status": "PEC_COMPILE_ERROR", "error_origin": "pec",
-                "syntax": None, "pec": None, "relax_pec": None}
-    if re.search(
-        r"\bERROR\s+\((?:VERI-[^)]+|ENL\d+)\)"
-        r"|\bsyntax error\b|ignored due to previous errors",
-        text, flags=re.IGNORECASE,
-    ):
-        return {
-            "status": "SYNTAX_ERROR",
-            "syntax": 0.0, "pec": 0.0, "relax_pec": 0.0,
-        }
-    if returncode != 0:
-        return {"status": "TOOL_ERROR"}
-
-    if re.search(r"^\s*Full equivalence between\b", text, re.MULTILINE):
-        return {
-            "status": "FULL_EQUIVALENCE",
-            "syntax": 1.0, "pec": 1.0, "relax_pec": 1.0,
-        }
-    if re.search(r"^\s*implies\s*$", text, re.MULTILINE):
-        return {"status": "IMPLIES", "syntax": 1.0, "pec": 0.0, "relax_pec": 1.0}
-    if re.search(
-        r"^\s*(?:No equivalence between\b|conflict with each other\b)",
-        text, re.MULTILINE,
-    ):
-        return {
-            "status": "NO_EQUIVALENCE",
-            "syntax": 1.0, "pec": 0.0, "relax_pec": 0.0,
-        }
-    return {"status": "INCONCLUSIVE"}
-
-
-def _finish_result(result: dict, output: str) -> dict:
-    """Keep the full log, but send a concise report to the diagnosis model."""
-    result["tool_output"] = output
-    Path(result["log_path"]).write_text(output, encoding="utf-8")
-    useful_lines = [
-        line for line in output.splitlines()
-        if not line.lstrip().startswith("#")
-        and not re.match(r"^\s*%\s*#", line)
-        and re.search(
-            r"ERROR|syntax error|equivalence|implies|conflict|"
-            r"TIMEOUT|license|not found|Expected|Missing",
-            line, flags=re.IGNORECASE,
-        )
-    ]
-    details = "\n".join(useful_lines) or output[-4000:]
-    result["feedback"] = (
-        f"Formal status: {result['status']}\n"
-        f"Syntax: {result['syntax']}; strict PEC: {result['pec']}; "
-        f"relaxed PEC: {result['relax_pec']}\n"
-        f"Generated reset: {result['generated_reset'] or '(none)'}\n"
-        f"Reference reset: {result['reference_reset'] or '(none)'}\n"
-        f"Reset text differs: {result['reset_mismatch']} (informational only)\n"
-        f"Comparison scope: {result['comparison_scope']}\n"
-        f"Tool details:\n{details[:6000]}"
-    )
+def apply_acceptance_policy(result: dict) -> dict:
+    """Apply FVRuleLearner's PEC-or-BLEU reporting rule; retain raw scores."""
+    raw = result.setdefault("raw_scores", {
+        name: result.get(name) for name in ("syntax", "pec", "relax_pec")
+    })
+    bleu_match = result.get("bleu") == 1.0
+    native_pass = raw.get("pec") == 1.0
+    result["accepted"] = native_pass or bleu_match
+    result["acceptance_reason"] = "pec" if native_pass else "bleu_match" if bleu_match else None
+    if bleu_match:
+        result["pec"] = result["relax_pec"] = 1.0
     return result
 
 
-def evaluate_assertion(
-    generated_assertion: str,
-    reference_assertion: str,
-    testbench: str,
-    requirement: str,
-    run_dir=None,
-    timeout_seconds: float = 300,
-    fveval_dir=None,
-    jg_executable: str = "jg",
-    task_id: str = "case",
-    dataset: str = "nl2sva_human",
-) -> dict:
-    """Invoke the original FVEval Tcl driver and its supplied PEC helper."""
+def get_evaluation_policy(dataset: str) -> dict:
+    if dataset not in {"nl2sva_human", "nl2sva_machine"}:
+        raise ValueError("DATASET must be 'nl2sva_human' or 'nl2sva_machine'.")
+    human = dataset == "nl2sva_human"
+    scope = (
+        "Use the native NL2SVA-Human evaluator. It compares the property text "
+        "after the literal tb_reset), excluding the standard clock and disable "
+        "iff wrapper. Use @(posedge clk) disable iff (tb_reset), as required by "
+        "this benchmark. Do not edit an excluded wrapper solely to fix a PEC "
+        "mismatch. Reset-related logic inside the body remains in scope."
+        if human else
+        "Use the native NL2SVA-Machine evaluator. It compares the expression "
+        "after the literal clk), excluding the clock event. Remaining disable "
+        "iff text is included. Use @(posedge clk); do not introduce reset "
+        "conditions absent from the requirement/testbench."
+    )
+    return {"scope": scope + " Keep the complete assertion syntactically valid. "
+            "Native per-round training writes the original dataset testbench; "
+            "it does not separately compile an inserted full generated assertion.",
+            "include_reset": not human, "tcl_file": f"run_jg_{dataset}.tcl"}
+
+
+def validate_backend() -> Path:
+    """Check this checkout's native files, without running a tool or importing ML."""
+    required = ("src/config.py", "src/saver.py", "src/utils.py",
+                "FVEval/fv_eval/evaluation.py", "FVEval/fv_eval/data.py",
+                "FVEval/fv_eval/utils.py", "FVEval/fv_eval/fv_tool_execution.py",
+                "FVEval/tool_scripts/pec/pec.tcle",
+                "FVEval/tool_scripts/run_jg_nl2sva_human.tcl",
+                "FVEval/tool_scripts/run_jg_nl2sva_machine.tcl")
+    missing = [name for name in required if not (REPO_ROOT / name).is_file()]
+    if missing:
+        raise FileNotFoundError(f"Incomplete evaluator in {REPO_ROOT}: {', '.join(missing)}")
+    return REPO_ROOT
+
+
+def _write_json(path: Path, value) -> None:
+    temporary = path.with_name(path.name + ".tmp")
+    temporary.write_text(json.dumps(value, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    temporary.replace(path)
+
+
+@contextmanager
+def _capture_native_console(path: Path):
+    """Keep native import/tool chatter in a file during serial evaluation."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as stream:
+        with redirect_stdout(stream), redirect_stderr(stream):
+            yield
+
+
+def initialize_evaluator(log_dir, dataset: str, timeout_seconds: float = 300):
+    """Initialize native evaluation quietly, preserving its console output."""
+    log_dir = Path(log_dir).resolve()
+    with _capture_native_console(log_dir / "native_console.log"):
+        return _initialize_evaluator(log_dir, dataset, timeout_seconds)
+
+
+def _initialize_evaluator(log_dir, dataset: str, timeout_seconds: float = 300):
+    """Initialize native modules/metrics once, before the first model request.
+
+    Our settings are new_agent.config. The original modules retain their normal
+    top-level imports of src/config.py, saver.py and utils.py. No fake modules,
+    function extraction, separate checkout, process, or environment are used.
+    """
+    global _SESSION
+    get_evaluation_policy(dataset)
+    repo = validate_backend()
+    if type(timeout_seconds) not in (int, float) or not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
+        raise ValueError("timeout_seconds must be finite and positive.")
+    started = perf_counter()
+    if _SESSION is None:
+        # Protect normal imports from stale legacy top-level config/utils modules.
+        for name in ("config", "utils", "saver"):
+            module = sys.modules.get(name)
+            if module is not None and Path(getattr(module, "__file__", "")).resolve() != repo / "src" / f"{name}.py":
+                raise RuntimeError(f"Top-level {name} came from another module. Start with python new_agent/main.py.")
+        src = repo / "src"
+        our_dir = Path(__file__).resolve().parent
+        sys.path[:] = [str(src), str(repo)] + [p for p in sys.path if p and
+            Path(p).resolve() not in {src, repo, our_dir}]
+        log_dir = Path(log_dir).resolve()
+        log_dir.mkdir(parents=True, exist_ok=True)
+        old_argv = sys.argv[:]
+        try:
+            # The original Saver parses argv at import. Give it only its own option.
+            sys.argv[:] = [str(src / "main.py"), "--logdir", str(log_dir)]
+            native_config = importlib.import_module("config")
+            flags = native_config.FLAGS
+            flags.global_task = "train"
+            flags.task = dataset
+            flags.tcl_eval_file_path = str(repo / "FVEval" / "tool_scripts" / f"run_jg_{dataset}.tcl")
+            flags.jg_timeout_seconds = timeout_seconds
+            flags.debug = False
+            evaluation = importlib.import_module("FVEval.fv_eval.evaluation")
+            data = importlib.import_module("FVEval.fv_eval.data")
+            execution = importlib.import_module("FVEval.fv_eval.fv_tool_execution")
+        finally:
+            sys.argv[:] = old_argv
+        if Path(evaluation.__file__).resolve() != repo / "FVEval" / "fv_eval" / "evaluation.py":
+            raise RuntimeError("Imported evaluation.py from the wrong checkout.")
+        source = {"repo_dir": str(repo), "commit": getattr(flags, "commit_sha", None),
+                  "python": sys.executable, "input_policy": "native_per_round_training",
+                  "sha256": {name: hashlib.sha256((repo / name).read_bytes()).hexdigest()
+                    for name in ("FVEval/fv_eval/evaluation.py", "FVEval/fv_eval/data.py",
+                                 "FVEval/fv_eval/fv_tool_execution.py", "FVEval/fv_eval/utils.py",
+                                 "FVEval/tool_scripts/run_jg_nl2sva_human.tcl",
+                                 "FVEval/tool_scripts/run_jg_nl2sva_machine.tcl",
+                                 "FVEval/tool_scripts/pec/pec.tcle")}}
+        _SESSION = SimpleNamespace(evaluation=evaluation, data=data, execution=execution,
+                                   flags=flags, evaluators={}, log_dir=log_dir, source=source)
+    session = _SESSION
+    session.flags.global_task = "train"
+    session.flags.task = dataset
+    session.flags.jg_timeout_seconds = timeout_seconds
+    session.flags.tcl_eval_file_path = str(repo / "FVEval" / "tool_scripts" / f"run_jg_{dataset}.tcl")
+    if dataset not in session.evaluators:
+        kwargs = {"llm_output_dir": "", "model_name": "experiment",
+                  "temp_dir": str(session.log_dir), "save_dir": str(session.log_dir),
+                  "parallel_jobs": 1, "cleanup_temp_files": False, "debug": False}
+        evaluator = (session.evaluation.NL2SVAHumanEvaluator(**kwargs) if dataset == "nl2sva_human"
+                     else session.evaluation.NL2SVAMachineEvaluator(task=dataset, **kwargs))
+        session.evaluators[dataset] = evaluator
+        session.source.setdefault("initialization_seconds", {})[dataset] = perf_counter() - started
+        _write_json(session.log_dir / "source.json", session.source)
+    return session.evaluators[dataset]
+
+
+def _execution_status(output: str) -> str:
+    """Label execution health; numerical scores still come only from evaluation.py."""
+    lines = [line for line in output.splitlines() if not re.match(r"^\s*(?:%\s*)?#", line)]
+    text = "\n".join(lines)
+    lower = text.lower()
+    if "jasper_timeout:" in lower or "timeout: jaspergold" in lower:
+        return "TIMEOUT"
+    if any(word in lower for word in ("license checkout failed", "failed to checkout license",
+                                      "failed to contact license server", "no license available",
+                                      "flexnet licensing error", "license server machine is down")):
+        return "TOOL_ERROR"
+    errors = [line for line in lines if re.match(r"^\s*\[?\s*(?:ERROR|FATAL)\b", line, re.I)]
+    if any(re.search(r"(?:^|[/\\])pec\.sve(?:\(|:)", line, re.I) for line in errors):
+        return "PEC_COMPILE_ERROR"
+    if any(re.search(r"VERI-|ENL\d+|syntax error|previous errors", line, re.I) for line in errors):
+        return "SYNTAX_ERROR"
+    if re.search(r"^\s*Full equivalence between\b", text, re.M):
+        verdict = "FULL_EQUIVALENCE"
+    elif re.search(r"^\s*implies\s*$", text, re.M):
+        verdict = "IMPLIES"
+    elif re.search(r"^\s*(?:No equivalence between\b|conflict with each other\b)", text, re.M):
+        verdict = "NO_EQUIVALENCE"
+    else:
+        verdict = "INCONCLUSIVE"
+    if errors:
+        codes = [re.search(r"\b(?:ERROR|FATAL)\s*\(([^)]+)\)", line, re.I) for line in errors]
+        if not (verdict == "NO_EQUIVALENCE" and all(m and m[1] in {"EAS001", "ERS035", "ERS055"} for m in codes)):
+            return "TOOL_ERROR"
+    if verdict == "INCONCLUSIVE" and re.search(r"\bsyntax error\b", text, re.I):
+        return "SYNTAX_ERROR"
+    return verdict
+
+
+def evaluate_assertion(generated_assertion: str, reference_assertion: str, testbench: str,
+                       requirement: str, run_dir=None, timeout_seconds: float = 300,
+                       task_id: str = "case", dataset: str = "nl2sva_human", *,
+                       model_name: str = "experiment") -> dict:
+    """Directly supply original strings to this checkout's native evaluator."""
+    started = perf_counter()
     policy = get_evaluation_policy(dataset)
-    if timeout_seconds <= 0:
-        raise ValueError("timeout_seconds must be positive.")
-    if not isinstance(task_id, str) or not task_id.strip():
-        raise ValueError("task_id must be a nonempty string.")
-    source_task_id = task_id
-    task_id = re.sub(r"[^A-Za-z0-9_-]+", "_", task_id).strip("_") or "case"
-    if run_dir is None:
-        root = Path(__file__).resolve().parent / "runs"
-        root.mkdir(parents=True, exist_ok=True)
-        directory = Path(tempfile.mkdtemp(prefix=f"{task_id}_", dir=root))
-    else:
-        directory = Path(run_dir).expanduser().resolve()
-        directory.mkdir(parents=True, exist_ok=True)
+    for name, value in (("generated_assertion", generated_assertion), ("reference_assertion", reference_assertion),
+                        ("testbench", testbench), ("requirement", requirement),
+                        ("task_id", task_id), ("model_name", model_name)):
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"{name} must be a nonempty string.")
+    directory = (Path(tempfile.mkdtemp(prefix="native_eval_")) if run_dir is None
+                 else Path(run_dir).expanduser().resolve())
+    directory.mkdir(parents=True, exist_ok=True)
     work = directory / "_work"
-    work.mkdir()
+    work.mkdir(exist_ok=False)
     (work / "checker_owned.marker").write_text(str(directory), encoding="utf-8")
-    sv_file = directory / "formal_input.sva"
-    result = {
-        "status": "INPUT_ERROR",
-        "syntax": None, "pec": None, "relax_pec": None,
-        "generated_reset": "", "reference_reset": "",
-        "reset_mismatch": None,
-        "comparison_scope": policy["scope"],
-        "run_dir": str(directory),
-        "work_dir": str(work),
-        "log_path": str(directory / "jasper.log"),
-        "input_path": str(sv_file),
-        "returncode": None,
-        "source_task_id": source_task_id,
-        "tool_task_id": task_id,
-    }
+    evaluator = initialize_evaluator(directory / "native_logs", dataset, timeout_seconds)
+    evaluator.temp_dir = evaluator.save_dir = str(work)
+    tool_id = "case_" + hashlib.sha256(task_id.encode()).hexdigest()[:16]
+    result = {"status": "TOOL_ERROR", "syntax": None, "pec": None, "relax_pec": None,
+              "bleu": None, "rouge": None, "exact_match": None,
+              "comparison_scope": policy["scope"], "returncode": None,
+              "source_task_id": task_id, "tool_task_id": tool_id,
+              "run_dir": str(directory), "work_dir": str(work),
+              "log_path": str(directory / "jasper.log"), "input_path": str(directory / "formal_input.sva"),
+              "backend": "same_repo_fvrulelearner", "native_source": _SESSION.source,
+              "native_metrics": {}, "native_similarity": {}, "native_timing": {}, "tool_output": ""}
+    similarity_started = perf_counter()
     try:
-        prepared = _prepare_formal_input(
-            generated_assertion, reference_assertion, testbench, requirement, sv_file,
-            dataset=dataset,
-        )
-    except _PecAdapterUnsupported as error:
-        result.update(status="UNSUPPORTED_PEC_INPUT", error_origin="input_adapter")
-        return _finish_result(result, str(error))
-    except ValueError as error:
-        message = str(error)
-        if message.startswith("Generated assertion:"):
-            result.update(error_origin="candidate", syntax=0.0, pec=0.0, relax_pec=0.0)
-        elif message.startswith("Reference assertion:"):
-            result["error_origin"] = "reference"
-        else:
-            result["error_origin"] = "testbench"
-        return _finish_result(result, message)
-    for key in ("generated_reset", "reference_reset", "reset_mismatch"):
-        result[key] = prepared[key]
+        with _capture_native_console(directory / "native_console.log"):
+            similarity = evaluator.calculate_similiarty_metric(generated_assertion, reference_assertion, original_setting=False)
+        result["native_similarity"] = similarity
+        for name in ("bleu", "rouge", "exact_match"):
+            value = similarity.get(name)
+            result[name] = float(value) if value is not None else None
+    except Exception as error:
+        result["similarity_error"] = f"{type(error).__name__}: {error}"
+    result["native_timing"]["similarity_seconds"] = perf_counter() - similarity_started
+    lm_result = _SESSION.data.LMResult(experiment_id=dataset, task_id=tool_id, model_name=model_name,
+        response=generated_assertion, ref_solution=reference_assertion,
+        user_prompt=requirement, output_tb=testbench, design_rtl="\n", cot_response="\n")
+    original_launcher = _SESSION.execution.launch_jg_custom_equiv_check
+    outputs = []
 
-    result["comparison_inputs"] = {
-        name: prepared[name]
-        for name in ("candidate_expression", "reference_expression", "signal_list")
-    }
-    if prepared.get("input_adapter"):
-        result["input_adapter"] = prepared["input_adapter"]
-        result["signal_layout"] = prepared["signal_layout"]
-        result["comparison_scope"] += " Unsigned packed inputs expanded into shared scalar bits."
-        (directory / "pec_inputs.json").write_text(
-            json.dumps({key: prepared[key] for key in (
-                "original_comparison_inputs", "candidate_expression", "reference_expression",
-                "signal_list", "input_adapter", "signal_layout",
-            )}, indent=2) + "\n", encoding="utf-8",
-        )
-    # FVEval's scripts resolve pec/pec.tcle relative to this working directory.
-    if fveval_dir is None:
-        fveval = next(
-            (parent / "FVEval" for parent in Path(__file__).resolve().parents
-             if (parent / "FVEval").is_dir()),
-            None,
-        )
-    else:
-        fveval = Path(fveval_dir).expanduser().resolve()
-    if fveval is None:
-        result["status"] = "TOOL_ERROR"
-        return _finish_result(
-            result,
-            "FVEval not found. Keep new_agent inside the repository or supply fveval_dir.",
-        )
-    tcl_file = fveval / "tool_scripts" / policy["tcl_file"]
-    for required in (tcl_file, fveval / "tool_scripts" / "pec" / "pec.tcle"):
-        if not required.is_file():
-            result["status"] = "TOOL_ERROR"
-            return _finish_result(result, f"Missing required file: {required}")
+    def observed_launcher(*args, **kwargs):
+        # Only record the actual call. The original launcher executes unchanged.
+        _write_json(directory / "native_pec_inputs.json", {"args": list(args), "kwargs": kwargs})
+        try:
+            output = original_launcher(*args, **kwargs)
+        except Exception as error:
+            outputs.append(str(error))
+            raise
+        outputs.append(output)
+        return output
 
-    shutil.copyfile(sv_file, work / f"{dataset}_{task_id}.sva")
-    project = work / "jg" / task_id
-    project.parent.mkdir()
-    command = [
-        str(jg_executable), "-fpv", "-batch", "-tcl", str(tcl_file),
-        "-define", "LM_ASSERT_TEXT", prepared["candidate_expression"],
-        "-define", "REF_ASSERT_TEXT", prepared["reference_expression"],
-        "-define", "SIGNAL_LIST", prepared["signal_list"],
-        "-define", "EXP_ID", dataset,
-        "-define", "TASK_ID", task_id,
-        "-define", "SV_DIR", str(work),
-        "-proj", str(project), "-allow_unsupported_OS",
-    ]
-    result["command"] = command
-    result["working_directory"] = str(fveval)
+    _SESSION.execution.launch_jg_custom_equiv_check = observed_launcher
+    jg_started = perf_counter()
     try:
-        completed = subprocess.run(
-            command, cwd=fveval, capture_output=True, text=True, timeout=timeout_seconds,
+        with _capture_native_console(directory / "native_console.log"):
+            native_results = evaluator.evaluate_jg([lm_result], with_rtl_design=True)
+        if len(native_results) != 1:
+            raise RuntimeError(f"Expected one native result, got {len(native_results)}")
+        scores = asdict(native_results[0])
+        result["native_metrics"] = scores
+        result["tool_output"] = "\n".join(outputs)
+        result["status"] = _execution_status(result["tool_output"])
+        if result["status"] in SEMANTIC_STATUSES | {"SYNTAX_ERROR", "PEC_COMPILE_ERROR"}:
+            for target, source in (("syntax", "syntax"), ("pec", "functionality"), ("relax_pec", "func_relaxed")):
+                result[target] = scores[source]
+    except Exception as error:
+        result["tool_output"] = "\n".join(outputs) or str(error)
+        observed = _execution_status(result["tool_output"])
+        result["status"] = observed if observed in {"TIMEOUT", "PEC_COMPILE_ERROR", "SYNTAX_ERROR"} else "TOOL_ERROR"
+        result["evaluation_error"] = f"{type(error).__name__}: {error}"
+        (directory / "evaluation_error.log").write_text(traceback.format_exc(), encoding="utf-8")
+    finally:
+        _SESSION.execution.launch_jg_custom_equiv_check = original_launcher
+        result["native_timing"]["jg_seconds"] = perf_counter() - jg_started
+        native_input = work / f"{dataset}_{tool_id}.sva"
+        if native_input.is_file():
+            shutil.copyfile(native_input, result["input_path"])
+        Path(result["log_path"]).write_text(result["tool_output"] + "\n", encoding="utf-8")
+    apply_acceptance_policy(result)
+    result["native_timing"]["total_seconds"] = perf_counter() - started
+    result["feedback"] = (f"Formal status: {result['status']}\nSyntax: {result['syntax']}; strict PEC: {result['pec']}; "
+                          f"relaxed PEC: {result['relax_pec']}\nNative BLEU: {result['bleu']}\n"
+                          f"Comparison scope: {policy['scope']}\nTool details:\n{result['tool_output'][-6000:]}")
+    if result["status"] == "PEC_COMPILE_ERROR":
+        result["feedback"] = (
+            "PEC compilation failed; no formal equivalence verdict was obtained. "
+            "Continue reference-based textual diagnosis and rule refinement. "
+            "Do not infer a candidate syntax or semantic defect from this tool failure. "
+            "Do not rewrite assertions to repair the PEC implementation.\n"
+            + result["feedback"]
         )
-    except subprocess.TimeoutExpired as error:
-        result["status"] = "TIMEOUT"
-        partial = []
-        for part in (error.stdout, error.stderr):
-            if isinstance(part, bytes):
-                part = part.decode(errors="replace")
-            if part:
-                partial.append(part)
-        output = "\n".join(partial)
-        output += f"\nJASPER_TIMEOUT: exceeded {timeout_seconds} seconds"
-        return _finish_result(result, output)
-    except OSError as error:
-        result["status"] = "TOOL_ERROR"
-        return _finish_result(result, str(error))
-
-    output = "\n".join(part for part in (completed.stdout, completed.stderr) if part)
-    result["returncode"] = completed.returncode
-    result.update(_parse_formal_result(output, completed.returncode))
-    return _finish_result(result, output)
+    _write_json(directory / "result.json", result)
+    return result
 
 
-def cleanup_work(
-    result: dict, keep_work: bool = False, *, preserve_unresolved: bool = True,
-) -> dict:
-    """Delete owned work; optionally retain unresolved checks for debugging."""
+def cleanup_work(result: dict, keep_work=False, *, preserve_unresolved=True) -> dict:
     work = Path(result["work_dir"])
-    if not work.exists() and not work.is_symlink():
+    if not work.exists():
         return {"retained": False, "reason": "No work directory remains."}
-    if keep_work:
-        return {"retained": True, "reason": "KEEP_WORK is enabled."}
-    if (result["status"] == "PEC_COMPILE_ERROR" or result.get("error_origin") in {"reference", "testbench"}):
-        return {"retained": True, "reason": "Retained checker/reference failure for inspection."}
-    if preserve_unresolved and result["status"] not in {
-        "FULL_EQUIVALENCE", "IMPLIES", "NO_EQUIVALENCE", "SYNTAX_ERROR",
-    }:
-        return {
-            "retained": True,
-            "reason": "Retained for an unresolved tool or input result.",
-        }
-
+    if keep_work or (preserve_unresolved and result["status"] not in SEMANTIC_STATUSES | {"SYNTAX_ERROR"}):
+        return {"retained": True, "reason": "Work retained for requested diagnostics."}
     directory = Path(result["run_dir"]).resolve()
-    try:
-        marker = work / "checker_owned.marker"
-        if (
-            work.is_symlink()
-            or work.name != "_work"
-            or work.resolve().parent != directory
-            or not marker.is_file()
-            or marker.read_text(encoding="utf-8") != str(directory)
-        ):
-            return {
-                "retained": True,
-                "reason": "Ownership check failed; no files were deleted.",
-            }
-        shutil.rmtree(work)
-    except OSError as error:
-        return {"retained": True, "reason": f"Cleanup failed: {error}"}
-    return {"retained": False, "reason": "Owned work files removed."}
-
-
+    marker = work / "checker_owned.marker"
+    if (work.is_symlink() or work.name != "_work" or work.resolve().parent != directory
+            or not marker.is_file() or marker.read_text(encoding="utf-8") != str(directory)):
+        return {"retained": True, "reason": "Ownership check failed; no files deleted."}
+    shutil.rmtree(work)
+    return {"retained": False, "reason": "Removed owned native evaluation work."}

@@ -2,7 +2,7 @@ import re
 
 from openai import OpenAI
 
-from formal_check import COMPARISON_SCOPE
+from new_agent.formal_check import COMPARISON_SCOPE
 
 
 SYSTEM_PROMPT = """You write SystemVerilog assertions from natural-language requirements.

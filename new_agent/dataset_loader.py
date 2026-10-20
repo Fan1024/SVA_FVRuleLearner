@@ -210,7 +210,9 @@ def load_inference_cases(dataset_path: str | Path, training_metadata: dict) -> l
 def main(argv=None) -> None:
     """Preview training inputs or a saved inference selection; make no model calls."""
     import argparse
-    import config
+    import sys
+    sys.path.insert(0, str(REPO_ROOT))
+    from new_agent import config
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--inference", action="store_true", help="Preview the saved inference cases.")

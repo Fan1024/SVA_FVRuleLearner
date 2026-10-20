@@ -3,7 +3,7 @@ from typing import Any, Optional
 
 from typesafe_sdk import Choice, Noul, TypeSafeClient
 
-from formal_check import COMPARISON_SCOPE
+from new_agent.formal_check import COMPARISON_SCOPE
 
 
 def diagnose_assertion_mismatches(
@@ -38,7 +38,7 @@ def diagnose_assertion_mismatches(
             "The generated assertion did not pass strict PEC. "
             "Diagnose it using the formal feedback and the supplied comparison_scope. "
             "The supplied comparison_scope determines which assertion parts PEC compares. "
-            "The complete assertion must compile, even when a wrapper is excluded from PEC. "
+            "Keep the complete assertion valid, but do not infer that PEC checked excluded wrappers. "
             "Use testbench definitions to recognize equivalent reset aliases. "
             "A textual reset difference alone does not require a correction. "
             "Identify the changes needed to fix it using the requirement and "

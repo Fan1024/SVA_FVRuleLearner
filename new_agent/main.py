@@ -4,17 +4,16 @@ from copy import deepcopy
 from math import isfinite
 from pathlib import Path
 from time import perf_counter
+import sys
+
+# Support both python new_agent/main.py and python -m new_agent.main.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from openai import OpenAI
 
-import assertion_generator
-import config
-import dataset_loader
-import formal_check
-import rule_generator
-import run_io
-from diagnosis_formatter import format_diagnosis
-from jev_assertion_diagnosis import diagnose_assertion_mismatches
+from new_agent import assertion_generator, config, dataset_loader, formal_check, rule_generator, run_io
+from new_agent.diagnosis_formatter import format_diagnosis
+from new_agent.jev_assertion_diagnosis import diagnose_assertion_mismatches
 
 
 def update_rule_registry(registry: dict, new_rules: dict, round_number: int) -> None:
@@ -64,6 +63,7 @@ def validate_config() -> None:
         raise ValueError("CONFIDENCE_THRESHOLD must be a number between 0 and 1.")
     if type(config.SAVE_DEBUG_TRACES) is not bool:
         raise ValueError("SAVE_DEBUG_TRACES must be True or False.")
+    formal_check.validate_backend()
 
 
 def _failed_round(directory, round_number, status, message, policy):
@@ -78,7 +78,7 @@ def _failed_round(directory, round_number, status, message, policy):
         "syntax": 0.0 if candidate_error else None,
         "pec": 0.0 if candidate_error else None,
         "relax_pec": 0.0 if candidate_error else None,
-        "generated_reset": "", "reference_reset": "", "reset_mismatch": None,
+        "bleu": None, "rouge": None, "exact_match": None,
         "comparison_scope": policy["scope"], "returncode": None,
         "source_task_id": "", "tool_task_id": f"round_{round_number:04d}",
         "run_dir": str(directory), "work_dir": str(directory / "_work"),
@@ -157,6 +157,7 @@ def run_pipeline(directory, record: dict) -> int:
                     testbench=inputs["testbench"], requirement=inputs["requirement"],
                     run_dir=check_dir, timeout_seconds=config.JASPER_TIMEOUT_SECONDS,
                     task_id=inputs["task_id"], dataset=inputs.get("dataset", config.DATASET),
+                    model_name=config.ASSERTION_MODEL,
                 )
         except Exception as error:
             _remember_round_error(directory, record, round_number, stage, error)
@@ -165,14 +166,15 @@ def run_pipeline(directory, record: dict) -> int:
                 check_dir, round_number, status, f"{stage}: {type(error).__name__}: {error}", policy,
             )
 
+        formal_check.apply_acceptance_policy(formal_result)
         run_io.record_formal_result(directory, record, attempt, formal_result)
         run_io.update_run(directory, record, stage="cleanup")
         run_io.cleanup_formal_work(directory, record, formal_check.cleanup_work)
         status = formal_result["status"]
-        pec_pass = formal_result.get("pec") == 1.0
-        bleu_pass = formal_result.get("bleu") == 1.0
-        passed = pec_pass or bleu_pass
-        print(f"Round {round_number}/{config.MAX_ROUNDS}: {status}", flush=True)
+        pec_pass = formal_result["acceptance_reason"] == "pec"
+        passed = formal_result["accepted"]
+        print(f"Round {round_number}/{config.MAX_ROUNDS}: {status} | "
+              f"PEC={formal_result.get('pec')} | BLEU={formal_result.get('bleu')}", flush=True)
         if passed:
             run_io.update_run(
                 directory, record, status="PASSED", passed=True, stage="finished",
@@ -181,7 +183,7 @@ def run_pipeline(directory, record: dict) -> int:
                     "The supplied PEC checker reported full equivalence."
                     if pec_pass else
                     "BLEU is 1.0; accepted under FVRuleLearner's PEC-or-BLEU policy. "
-                    "The raw PEC result is retained unchanged."
+                    "Reported PEC and relaxed PEC are 1.0; raw scores remain in raw_scores/native_metrics."
                 ),
             )
             return 0
@@ -196,7 +198,10 @@ def run_pipeline(directory, record: dict) -> int:
                 "with the label before assert and the whole property inside parentheses. "
                 "Enclose the statement in one systemverilog code block."
             )
-        elif status in {"PEC_COMPILE_ERROR", "TOOL_ERROR", "TIMEOUT", "INCONCLUSIVE", "GENERATION_ERROR"}:
+        elif status == "PEC_COMPILE_ERROR":
+            # The oracle comparison below can refine the assertion without a PEC verdict.
+            revision_feedback = None
+        elif status in {"TOOL_ERROR", "TIMEOUT", "INCONCLUSIVE", "GENERATION_ERROR"}:
             revision_feedback = (
                 "The preceding attempt did not obtain an equivalence verdict. "
                 "Re-derive a complete assertion from the requirement and testbench; "
@@ -208,7 +213,7 @@ def run_pipeline(directory, record: dict) -> int:
         if round_number == config.MAX_ROUNDS:
             run_io.update_run(directory, record, diagnosis_skipped_reason="Round budget exhausted.")
             continue
-        if status not in {"IMPLIES", "NO_EQUIVALENCE"}:
+        if status not in {"IMPLIES", "NO_EQUIVALENCE", "PEC_COMPILE_ERROR"}:
             run_io.update_run(
                 directory, record,
                 diagnosis_skipped_reason="No completed semantic comparison; retry without semantic rule learning.",
@@ -273,7 +278,7 @@ def run_pipeline(directory, record: dict) -> int:
 
     # No earlier pass is possible here. Keep the latest attempt and its scores.
     last = record["formal"]
-    resolved = last["status"] in {"IMPLIES", "NO_EQUIVALENCE", "SYNTAX_ERROR", "FORMAT_ERROR"} or (
+    resolved = last["status"] in {"IMPLIES", "NO_EQUIVALENCE", "SYNTAX_ERROR", "FORMAT_ERROR", "PEC_COMPILE_ERROR"} or (
         last["status"] == "INPUT_ERROR" and last.get("error_origin") == "candidate"
     )
     run_io.update_run(
@@ -299,7 +304,11 @@ def main() -> int:
     settings = {
         "dataset": config.DATASET,
         "dataset_path": str(dataset_path),
-        "checker": "fvrulelearner_pec",
+        "checker": "same_repo_fvrulelearner_evaluation",
+        "evaluator_repo_dir": str(formal_check.REPO_ROOT),
+        "evaluator_python": sys.executable,
+        "metric_source": "native evaluation.py; original_setting=False",
+        "checker_input_policy": "native_per_round_training",
         "comparison_scope": policy["scope"],
         "revision_rules": "previous_round_only",
         "round_policy": "pec_or_bleu_or_max_rounds",
@@ -334,6 +343,10 @@ def main() -> int:
     # 3. Run each selected case with its own revision loop and rule registry.
     exit_code = 0
     try:
+        # Import native dependencies and load metrics before making model calls.
+        formal_check.initialize_evaluator(
+            experiment_dir / "native_logs", config.DATASET, config.JASPER_TIMEOUT_SECONDS,
+        )
         for position, case in enumerate(cases, start=1):
             print(
                 f"\nRunning {position}/{len(cases)}: case {case['case_number']} | "

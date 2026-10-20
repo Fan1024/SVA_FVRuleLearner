@@ -13,18 +13,17 @@ import traceback
 from copy import deepcopy
 from contextlib import contextmanager
 from datetime import datetime, timezone
-from functools import lru_cache
 from pathlib import Path
 from time import perf_counter
 
 
 RUN_TIMEZONE = timezone.utc
-SCORE_FIELDS = ("syntax", "pec", "relax_pec", "bleu", "reset_mismatch")
+SCORE_FIELDS = ("syntax", "pec", "relax_pec", "bleu", "rouge", "exact_match")
 CSV_FIELDS = (
     "case_number", "design_name", "task_id",
     "rounds_used", "last_evaluated_round",
     "pipeline_status", "formal_status", "syntax", "pec", "relax_pec", "bleu",
-    "reset_mismatch", "passed", "stop_reason",
+    "rouge", "exact_match", "passed", "stop_reason",
     "generated_assertion", "reference_assertion",
 )
 
@@ -38,14 +37,6 @@ USAGE_METRIC_FIELDS = tuple(
     "other_seconds", "total_seconds",
 )
 USAGE_FIELDS = ("case_id", "round") + USAGE_METRIC_FIELDS + ("passed",)
-
-
-@lru_cache(maxsize=1)
-def load_bleu_metric():
-    """Load the same Hugging Face BLEU metric used by FVRuleLearner once."""
-    import evaluate
-
-    return evaluate.load("bleu")
 
 
 # Tokens and wall time. These records contain no model names or formal scores.
@@ -421,7 +412,9 @@ def final_record(record: dict) -> dict:
     saved["formal"] = None if formal is None else {
         name: formal[name]
         for name in SCORE_FIELDS + (
-            "status", "generated_reset", "reference_reset", "comparison_scope",
+            "status", "comparison_scope", "backend", "native_source", "native_metrics",
+            "raw_scores", "accepted", "acceptance_reason",
+            "native_similarity", "native_timing", "similarity_error", "evaluation_error",
             "returncode", "source_task_id", "tool_task_id", "log_path", "input_path", "cleanup",
         )
         if name in formal
@@ -508,12 +501,10 @@ def _debug_event_text(record: dict, event: str, data: dict) -> str:
         lines = ["\nFORMAL RESULT", f"Status: {formal['status']}"]
         for label, key in (
             ("Syntax", "syntax"), ("Strict PEC", "pec"), ("Relaxed PEC", "relax_pec"),
+            ("BLEU", "bleu"), ("ROUGE-L", "rouge"), ("Exact match", "exact_match"),
         ):
             value = formal.get(key)
             lines.append(f"{label}: {'unavailable' if value is None else value}")
-        mismatch = formal.get("reset_mismatch")
-        mismatch = "unavailable" if mismatch is None else mismatch
-        lines.append(f"Reset text differs: {mismatch} (informational only)")
         if formal["status"] not in {"FULL_EQUIVALENCE", "IMPLIES", "NO_EQUIVALENCE"}:
             feedback = formal.get("feedback", "")
             details = feedback.partition("Tool details:\n")[2] or feedback
@@ -544,7 +535,7 @@ def _debug_event_text(record: dict, event: str, data: dict) -> str:
         reason = data["stop_reason"]
         explanation = {
             "passed": "The supplied FVRuleLearner PEC checker reported full equivalence.",
-            "bleu_match": "BLEU is 1.0; accepted under FVRuleLearner's PEC-or-BLEU policy. Raw PEC scores remain unchanged.",
+            "bleu_match": "BLEU is 1.0; accepted under FVRuleLearner's PEC-or-BLEU policy. Reported PEC/relaxed PEC are 1.0; raw scores remain in the formal result.",
             "max_rounds": "Maximum assertion attempts reached.",
             "no_guidance": "Rule generator returned no rules.",
             "interrupted": "Execution was interrupted by the user.",
@@ -612,18 +603,8 @@ def start_attempt(
 
 def record_formal_result(run_dir, record: dict, attempt: dict, formal: dict) -> None:
     """Publish matching assertion/verdict fields and append compact round scores."""
-    # Score exactly the assertion associated with this formal result.
-    # BLEU is text similarity only; it never changes the formal verdict.
-    candidate = attempt["generation"].get("assertion")
-    formal["bleu"] = None
-    if candidate:
-        try:
-            formal["bleu"] = float(load_bleu_metric().compute(
-                predictions=[candidate], references=[record["inputs"]["reference_assertion"]],
-                max_order=4, smooth=False,
-            )["bleu"])
-        except Exception as error:
-            formal["bleu_error"] = f"{type(error).__name__}: {error}"
+    # Native similarity and policy-adjusted formal scores are supplied by the
+    # evaluation layer. Never recompute or overwrite them here.
     metric = {"round": attempt["round"], "status": formal["status"]}
     for name in SCORE_FIELDS:
         metric[name] = formal.get(name)  # Unavailable scores remain None.
@@ -894,7 +875,8 @@ def print_summary(run_dir, record: dict) -> None:
             f"Formal: {formal['status']} | Syntax: {formal['syntax']} | "
             f"Strict: {formal['pec']} | Relaxed: {formal['relax_pec']}"
         )
-        print(f"Reset text differs (informational): {formal['reset_mismatch']}")
+        print(f"Native BLEU: {formal.get('bleu')} | ROUGE-L: {formal.get('rouge')} | "
+              f"Exact match: {formal.get('exact_match')}")
         cleanup = formal.get("cleanup")
         if cleanup and cleanup["retained"]:
             print("Work retained:", cleanup["reason"])
