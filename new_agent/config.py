@@ -40,7 +40,7 @@ MAX_ROUNDS = 10
 JASPER_TIMEOUT_SECONDS = 300
 
 # Minimum diagnosis confidence for statements sent to the rule generator.
-CONFIDENCE_THRESHOLD = 0.4
+CONFIDENCE_THRESHOLD = 0.2
 
 # Every invocation creates a separate experiment directory here.
 RUNS_DIR = Path(__file__).resolve().parent / "runs"
