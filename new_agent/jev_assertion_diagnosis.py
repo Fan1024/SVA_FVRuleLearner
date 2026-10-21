@@ -35,7 +35,10 @@ def diagnose_assertion_mismatches(
 
     state = {
         "background": (
-            "The generated assertion did not pass strict PEC. "
+            "The generated assertion has not been accepted by the experiment. "
+            "PEC may have returned a mismatch, or its compilation may have failed "
+            "without an equivalence verdict. A checker compilation failure alone "
+            "does not establish any defect in the generated assertion. "
             "Diagnose it using the formal feedback and the supplied comparison_scope. "
             "The supplied comparison_scope determines which assertion parts PEC compares. "
             "Keep the complete assertion valid, but do not infer that PEC checked excluded wrappers. "
@@ -43,7 +46,7 @@ def diagnose_assertion_mismatches(
             "A textual reset difference alone does not require a correction. "
             "Identify the changes needed to fix it using the requirement and "
             "the known-correct reference assertion. Do not recheck whether the "
-            "whole assertion has an error. A failed assertion can still contain "
+            "whole assertion has an error. An unaccepted assertion can still contain "
             "correct operators; recommend only changes required by the behavior. "
             "Different syntax can express the same behavior. "
             "For each repair question, answer yes only when that change is needed. "

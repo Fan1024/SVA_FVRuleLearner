@@ -24,7 +24,11 @@ Preserve native disable iff behavior; it is not an antecedent guard.
 The reference is analysis evidence. The later assertion-generation call will
 receive the requirement, testbench, and your guidance, but no reference assertion.
 Your rules must guide that call without copying the reference implementation.
-This call follows a failed formal evaluation. Always return at least one labeled
+This call follows an unaccepted evaluation. PEC compilation may have failed
+without an equivalence verdict. Do not treat checker compilation errors as proof
+of a candidate defect or propose assertion edits solely to repair the checker.
+Use the requirement, testbench, and reference to assess any proposed correction.
+Always return at least one labeled
 rule. If the precise correction remains uncertain, give an actionable re-analysis
 instruction instead of returning an empty object or inventing a specific cause.
 """
@@ -177,6 +181,8 @@ def parse_rules(response_text: str) -> dict:
 
 def check_rule_groups(result: dict, statements: dict) -> None:
     """Check output structure and label format, not a fixed list of group names."""
+    if not result:
+        raise ValueError("Rule generation returned no rules; expected at least one labeled rule.")
     expected_names = {f"rule_{number}" for number in range(1, len(result) + 1)}
     if set(result) != expected_names:
         raise ValueError("Use consecutive names: rule_1, rule_2, and so on.")

@@ -2,6 +2,7 @@
 
 from copy import deepcopy
 from math import isfinite
+import os
 from pathlib import Path
 from time import perf_counter
 import sys
@@ -64,6 +65,17 @@ def validate_config() -> None:
     if type(config.SAVE_DEBUG_TRACES) is not bool:
         raise ValueError("SAVE_DEBUG_TRACES must be True or False.")
     formal_check.validate_backend()
+
+
+def validate_credentials() -> None:
+    """Reject absent credentials before paying for assertion-generation calls."""
+    required = ["OPENAI_API_KEY"]
+    if config.MAX_ROUNDS > 1:
+        required.append("TYPESAFE_API_KEY")
+    missing = [name for name in required if not os.environ.get(name, "").strip()]
+    if missing:
+        raise ValueError("Missing environment variables: " + ", ".join(missing)
+                         + ". Set them in this shell before starting training.")
 
 
 def _failed_round(directory, round_number, status, message, policy):
@@ -220,6 +232,13 @@ def run_pipeline(directory, record: dict) -> int:
             )
             continue
 
+        if status == "PEC_COMPILE_ERROR":
+            print(
+                f"Round {round_number}: PEC verdict unavailable; continuing "
+                "with reference-based diagnosis and rule generation.", flush=True,
+            )
+        else:
+            print(f"Round {round_number}: running Jev diagnosis.", flush=True)
         stage = "diagnosis"
         try:
             run_io.update_run(directory, record, stage=stage)
@@ -242,6 +261,7 @@ def run_pipeline(directory, record: dict) -> int:
             run_io.update_run(directory, record, statements=statements)
             run_io.save_debug_event(directory, record, "statements", statements=statements)
             stage = "rule_generation"
+            print(f"Round {round_number}: running rule generation.", flush=True)
             run_io.update_run(directory, record, stage=stage)
             rule_prompt = rule_generator.build_rule_prompt(
                 requirement=inputs["requirement"], generated_assertion=generated_assertion,
@@ -294,6 +314,7 @@ def main() -> int:
     experiment_started = perf_counter()
     # 1. Validate the configuration, CSV, and complete selection before any API call.
     validate_config()
+    validate_credentials()
     policy = formal_check.get_evaluation_policy(config.DATASET)
     cases, dataset_split = dataset_loader.load_training_cases(
         config.DATASET_PATH, config.CASE_IDS,
@@ -312,6 +333,7 @@ def main() -> int:
         "comparison_scope": policy["scope"],
         "revision_rules": "previous_round_only",
         "round_policy": "pec_or_bleu_or_max_rounds",
+        "pec_compile_error_policy": "continue_reference_diagnosis_and_rule_generation",
         "case_ids": list(config.CASE_IDS),
         "dataset_split": dataset_split,
         "max_rounds": config.MAX_ROUNDS,

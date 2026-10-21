@@ -530,7 +530,7 @@ def _debug_event_text(record: dict, event: str, data: dict) -> str:
         except ValueError:
             return raw  # Preserve malformed output before parsing reports the error.
     if event == "rule_update":
-        return "\nDECISION\nContinue: strict PEC failed; correction guidance is available."
+        return "\nDECISION\nContinue: candidate not accepted; guidance is available for the next round."
     if event == "case_finished":
         reason = data["stop_reason"]
         explanation = {
@@ -885,6 +885,8 @@ def print_summary(run_dir, record: dict) -> None:
         print(f"Error at {error['stage']}: {error['type']}: {error['message']}")
     if record["trace_error"]:
         print("Trace save error:", record["trace_error"])
+    if record.get("round_failures"):
+        print(f"Round-stage errors: {len(record['round_failures'])}; see result.json round_failures.")
     if record["summary_error"]:
         print("Summary save error:", record["summary_error"])
     print("Result:", Path(run_dir) / "result.json")
