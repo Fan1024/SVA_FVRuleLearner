@@ -1,47 +1,28 @@
-"""Prepare training cases, then generate/check/revise each case independently."""
+"""Run training or inference using the settings in new_agent/config.py."""
 
-from copy import deepcopy
+from functools import partial
 from math import isfinite
 import os
 from pathlib import Path
-from time import perf_counter
 import sys
+from time import perf_counter
 
 # Support both python new_agent/main.py and python -m new_agent.main.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from openai import OpenAI
-
-from new_agent import assertion_generator, config, dataset_loader, formal_check, rule_generator, run_io
-from new_agent.diagnosis_formatter import format_diagnosis
-from new_agent.jev_assertion_diagnosis import diagnose_assertion_mismatches
-
-
-def update_rule_registry(registry: dict, new_rules: dict, round_number: int) -> None:
-    """Replace exact groups; retain different groups, including overlaps."""
-    keys = [tuple(sorted(set(entry["group"]))) for entry in new_rules.values()]
-    if len(keys) != len(set(keys)):
-        raise ValueError("Rule output contains duplicate canonical groups.")
-
-    for key, entry in zip(keys, new_rules.values()):
-        earlier = registry.get(key)
-        registry[key] = {
-            "group": list(key),
-            "rule": entry["rule"].strip(),
-            "first_learned_round": (
-                earlier["first_learned_round"] if earlier else round_number
-            ),
-            "updated_round": round_number,
-        }
-
-
-def retained_rules(registry: dict) -> list[dict]:
-    """Copy retained rules so later updates cannot change an earlier snapshot."""
-    return deepcopy([registry[key] for key in sorted(registry)])
+from new_agent import config, dataset_loader, formal_check, run_io
+from new_agent.pipeline import run_pipeline
 
 
 def validate_config() -> None:
     """Check active settings once, before creating a run or making API calls."""
+    if config.MODE not in {"train", "inference"}:
+        raise ValueError('MODE must be "train" or "inference".')
+    if config.MODE == "inference":
+        if type(config.TOP_K_CASES) is not int or config.TOP_K_CASES < 1:
+            raise ValueError("TOP_K_CASES must be a positive integer.")
+        if not isinstance(config.EMBEDDING_MODEL, str) or not config.EMBEDDING_MODEL.strip():
+            raise ValueError("EMBEDDING_MODEL must be a nonempty model name.")
     if not isinstance(config.DATASET, str) or not config.DATASET.strip():
         raise ValueError("DATASET must be a nonempty dataset name.")
     if config.DATASET not in {"nl2sva_human", "nl2sva_machine"}:
@@ -75,266 +56,54 @@ def validate_credentials() -> None:
     missing = [name for name in required if not os.environ.get(name, "").strip()]
     if missing:
         raise ValueError("Missing environment variables: " + ", ".join(missing)
-                         + ". Set them in this shell before starting training.")
-
-
-def _failed_round(directory, round_number, status, message, policy):
-    """Represent an unsuccessful attempt without inventing formal scores."""
-    directory = Path(directory)
-    directory.mkdir(parents=True, exist_ok=True)
-    log_path = directory / "jasper.log"
-    log_path.write_text(message + "\n", encoding="utf-8")
-    candidate_error = status in {"FORMAT_ERROR", "INPUT_ERROR"}
-    return {
-        "status": status,
-        "syntax": 0.0 if candidate_error else None,
-        "pec": 0.0 if candidate_error else None,
-        "relax_pec": 0.0 if candidate_error else None,
-        "bleu": None, "rouge": None, "exact_match": None,
-        "comparison_scope": policy["scope"], "returncode": None,
-        "source_task_id": "", "tool_task_id": f"round_{round_number:04d}",
-        "run_dir": str(directory), "work_dir": str(directory / "_work"),
-        "log_path": str(log_path), "input_path": str(directory / "formal_input.sva"),
-        "tool_output": message, "feedback": message,
-    }
-
-
-def _remember_round_error(directory, record, number, stage, error):
-    failures = record.setdefault("round_failures", [])
-    failures.append({
-        "round": number, "stage": stage,
-        "type": type(error).__name__, "message": str(error),
-    })
-    run_io.update_run(directory, record, round_failures=failures)
-    print(f"Round {number}: {stage}: {type(error).__name__}: {error}; continuing.", flush=True)
-
-
-def run_pipeline(directory, record: dict) -> int:
-    """Stop on PEC/BLEU success or exhaustion of the configured attempt budget.
-
-    Ordinary generation, extraction, checker, diagnosis and rule-output errors
-    are round outcomes. KeyboardInterrupt/SystemExit are deliberately not caught.
-    File-system failures can still prevent reliable recording and must propagate.
-    """
-    inputs = record["inputs"]
-    policy = formal_check.get_evaluation_policy(inputs.get("dataset", config.DATASET))
-    comparison_scope = policy["scope"]
-    registry = {}
-    previous_assertion = None
-    revision_feedback = None
-    client = None
-
-    for round_number in range(1, config.MAX_ROUNDS + 1):
-        run_io.start_usage_round(record, round_number)
-        selected_rules = [r for r in retained_rules(registry)
-                          if r["updated_round"] == round_number - 1]
-        # A failed call before extraction must never associate old text with new scores.
-        attempt = run_io.start_attempt(
-            directory, record, round_number,
-            system_prompt=assertion_generator.SYSTEM_PROMPT,
-            user_prompt="", rules=selected_rules,
-        )
-        check_dir = Path(directory) / "formal_rounds" / f"round_{round_number:04d}"
-        check_dir.mkdir(parents=True, exist_ok=False)
-        generated_assertion = None
-        stage = "generation"
-        try:
-            user_prompt = assertion_generator.build_generation_prompt(
-                requirement=inputs["requirement"], testbench=inputs["testbench"],
-                previous_assertion=previous_assertion, rules=selected_rules,
-                comparison_scope=comparison_scope, revision_feedback=revision_feedback,
-            )
-            attempt["prompts"]["user"] = user_prompt
-            run_io.update_run(directory, record, stage=stage)
-            if client is None:
-                client = OpenAI()
-            with run_io.measure_stage(record, "assertion") as capture_usage:
-                response_text = assertion_generator.generate_assertion(
-                    client=client, model=config.ASSERTION_MODEL, user_prompt=user_prompt,
-                    usage_callback=capture_usage,
-                )
-            attempt["generation"]["raw_response"] = response_text
-            run_io.save_debug_event(directory, record, "assertion_response", raw_response=response_text)
-            stage = "extraction"
-            run_io.update_run(directory, record, stage=stage)
-            generated_assertion = assertion_generator.extract_assertion(response_text)
-            attempt["generation"]["assertion"] = generated_assertion
-            previous_assertion = generated_assertion
-            stage = "formal_check"
-            run_io.update_run(directory, record, stage=stage)
-            with run_io.measure_stage(record, "tool"):
-                formal_result = formal_check.evaluate_assertion(
-                    generated_assertion=generated_assertion,
-                    reference_assertion=inputs["reference_assertion"],
-                    testbench=inputs["testbench"], requirement=inputs["requirement"],
-                    run_dir=check_dir, timeout_seconds=config.JASPER_TIMEOUT_SECONDS,
-                    task_id=inputs["task_id"], dataset=inputs.get("dataset", config.DATASET),
-                    model_name=config.ASSERTION_MODEL,
-                )
-        except Exception as error:
-            _remember_round_error(directory, record, round_number, stage, error)
-            status = {"generation": "GENERATION_ERROR", "extraction": "FORMAT_ERROR"}.get(stage, "TOOL_ERROR")
-            formal_result = _failed_round(
-                check_dir, round_number, status, f"{stage}: {type(error).__name__}: {error}", policy,
-            )
-
-        formal_check.apply_acceptance_policy(formal_result)
-        run_io.record_formal_result(directory, record, attempt, formal_result)
-        run_io.update_run(directory, record, stage="cleanup")
-        run_io.cleanup_formal_work(directory, record, formal_check.cleanup_work)
-        status = formal_result["status"]
-        pec_pass = formal_result["acceptance_reason"] == "pec"
-        passed = formal_result["accepted"]
-        print(f"Round {round_number}/{config.MAX_ROUNDS}: {status} | "
-              f"PEC={formal_result.get('pec')} | BLEU={formal_result.get('bleu')}", flush=True)
-        if passed:
-            run_io.update_run(
-                directory, record, status="PASSED", passed=True, stage="finished",
-                stop_reason="passed" if pec_pass else "bleu_match",
-                diagnosis_skipped_reason=(
-                    "The supplied PEC checker reported full equivalence."
-                    if pec_pass else
-                    "BLEU is 1.0; accepted under FVRuleLearner's PEC-or-BLEU policy. "
-                    "Reported PEC and relaxed PEC are 1.0; raw scores remain in raw_scores/native_metrics."
-                ),
-            )
-            return 0
-
-        # Feedback for generation never includes the reference or PEC's expressions.
-        if status == "INPUT_ERROR" and formal_result.get("error_origin") == "candidate":
-            revision_feedback = formal_result["tool_output"]
-        elif status in {"FORMAT_ERROR", "INPUT_ERROR", "SYNTAX_ERROR"}:
-            revision_feedback = (
-                "The previous candidate could not be accepted as a complete SVA assertion. "
-                "Use asrt: assert property (@(posedge clk) [optional disable iff (...)] BODY); "
-                "with the label before assert and the whole property inside parentheses. "
-                "Enclose the statement in one systemverilog code block."
-            )
-        elif status == "PEC_COMPILE_ERROR":
-            # The oracle comparison below can refine the assertion without a PEC verdict.
-            revision_feedback = None
-        elif status in {"TOOL_ERROR", "TIMEOUT", "INCONCLUSIVE", "GENERATION_ERROR"}:
-            revision_feedback = (
-                "The preceding attempt did not obtain an equivalence verdict. "
-                "Re-derive a complete assertion from the requirement and testbench; "
-                "preserve the declared signal types, widths and valid bit selections."
-            )
-        else:
-            revision_feedback = None
-
-        if round_number == config.MAX_ROUNDS:
-            run_io.update_run(directory, record, diagnosis_skipped_reason="Round budget exhausted.")
-            continue
-        if status not in {"IMPLIES", "NO_EQUIVALENCE", "PEC_COMPILE_ERROR"}:
-            run_io.update_run(
-                directory, record,
-                diagnosis_skipped_reason="No completed semantic comparison; retry without semantic rule learning.",
-            )
-            continue
-
-        if status == "PEC_COMPILE_ERROR":
-            print(
-                f"Round {round_number}: PEC verdict unavailable; continuing "
-                "with reference-based diagnosis and rule generation.", flush=True,
-            )
-        else:
-            print(f"Round {round_number}: running Jev diagnosis.", flush=True)
-        stage = "diagnosis"
-        try:
-            run_io.update_run(directory, record, stage=stage)
-            with run_io.measure_stage(record, "diagnosis") as capture_usage:
-                diagnosis = diagnose_assertion_mismatches(
-                    requirement=inputs["requirement"], generated_assertion=generated_assertion,
-                    reference_assertion=inputs["reference_assertion"],
-                    design_context=inputs["testbench"], formal_feedback=formal_result["feedback"],
-                    comparison_scope=comparison_scope, usage_callback=capture_usage,
-                )
-            stage = "formatting"
-            run_io.update_run(directory, record, stage=stage, diagnosis=diagnosis,
-                              diagnosis_model=diagnosis.get("model"))
-            run_io.save_diagnosis_model(record, diagnosis.get("model"))
-            statements = None
-            try:
-                statements = format_diagnosis(diagnosis["answers"], confidence_threshold=config.CONFIDENCE_THRESHOLD)
-            finally:
-                run_io.save_debug_event(directory, record, "diagnosis", diagnosis=diagnosis, statements=statements)
-            run_io.update_run(directory, record, statements=statements)
-            run_io.save_debug_event(directory, record, "statements", statements=statements)
-            stage = "rule_generation"
-            print(f"Round {round_number}: running rule generation.", flush=True)
-            run_io.update_run(directory, record, stage=stage)
-            rule_prompt = rule_generator.build_rule_prompt(
-                requirement=inputs["requirement"], generated_assertion=generated_assertion,
-                reference_assertion=inputs["reference_assertion"], statements=statements,
-                testbench=inputs["testbench"], comparison_scope=comparison_scope,
-                formal_feedback=formal_result["feedback"],
-            )
-            rule_attempt = {"round": round_number, "model": config.RULE_MODEL,
-                            "raw_response": None, "rules": None}
-            run_io.update_run(directory, record, last_rule_generation=rule_attempt)
-            run_io.save_debug_event(directory, record, "rule_request")
-            with run_io.measure_stage(record, "rule") as capture_usage:
-                rule_response = rule_generator.generate_rules(
-                    client=client, model=config.RULE_MODEL, user_prompt=rule_prompt,
-                    usage_callback=capture_usage,
-                )
-            rule_attempt["raw_response"] = rule_response
-            run_io.save_debug_event(directory, record, "rule_response", raw_response=rule_response)
-            stage = "rule_validation"
-            run_io.update_run(directory, record, stage=stage)
-            new_rules = rule_generator.parse_rules(rule_response)
-            rule_attempt["rules"] = new_rules
-            rule_generator.check_rule_groups(new_rules, statements)
-            # Commit only a completely validated update; never leave a partial registry.
-            replacement = deepcopy(registry)
-            update_rule_registry(replacement, new_rules, round_number)
-            registry = replacement
-            run_io.update_run(directory, record, rule_registry=retained_rules(registry))
-            if new_rules:
-                run_io.save_debug_event(directory, record, "rule_update", rule_registry=record["rule_registry"])
-        except Exception as error:
-            _remember_round_error(directory, record, round_number, stage, error)
-            run_io.update_run(directory, record, diagnosis_skipped_reason=f"{stage} failed; continuing next round.")
-
-    # No earlier pass is possible here. Keep the latest attempt and its scores.
-    last = record["formal"]
-    resolved = last["status"] in {"IMPLIES", "NO_EQUIVALENCE", "SYNTAX_ERROR", "FORMAT_ERROR", "PEC_COMPILE_ERROR"} or (
-        last["status"] == "INPUT_ERROR" and last.get("error_origin") == "candidate"
-    )
-    run_io.update_run(
-        directory, record, status="COMPLETED" if resolved else "CHECKER_UNRESOLVED",
-        passed=False, stage="finished", stop_reason="max_rounds",
-    )
-    return 0 if resolved else 1
-
+                         + ". Set them in this shell before starting the experiment.")
 
 
 def main() -> int:
-    """Load cases once; use the existing round workflow separately for each."""
+    """Resolve the source/selection once, then run independent case loops."""
     experiment_started = perf_counter()
     # 1. Validate the configuration, CSV, and complete selection before any API call.
     validate_config()
     validate_credentials()
     policy = formal_check.get_evaluation_policy(config.DATASET)
-    cases, dataset_split = dataset_loader.load_training_cases(
-        config.DATASET_PATH, config.CASE_IDS,
-        train_fraction=config.TRAIN_FRACTION, split_seed=config.SPLIT_SEED,
-    )
+    phase = "infer" if config.MODE == "inference" else "train"
+    source_dir = source_metadata = retriever = None
+    dataset_split = None
+    if phase == "train":
+        cases, dataset_split = dataset_loader.load_training_cases(
+            config.DATASET_PATH, config.TRAIN_CASE_IDS,
+            train_fraction=config.TRAIN_FRACTION, split_seed=config.SPLIT_SEED,
+        )
+    else:
+        dataset_path = dataset_loader.resolve_dataset_path(config.DATASET_PATH)
+        source_dir, source_metadata = run_io.select_training_run(
+            dataset=config.DATASET, dataset_path=dataset_path,
+            runs_root=config.RUNS_DIR, training_run_dir=config.TRAINING_RUN_DIR,
+        )
+        cases = dataset_loader.load_inference_cases(
+            dataset_path, source_metadata, config.INFER_CASE_IDS,
+        )
+        from new_agent.infer_retrieval import RuleRetriever
+        retriever = RuleRetriever(
+            source_dir, training_case_ids={c["case_number"] for c in source_metadata["selected_cases"]},
+            top_k=config.TOP_K_CASES, model_name=config.EMBEDDING_MODEL,
+        )
     dataset_path = Path(cases[0]["dataset_path"])
     models = {"assertion": config.ASSERTION_MODEL, "rule": config.RULE_MODEL}
     settings = {
+        "phase": phase,
         "dataset": config.DATASET,
         "dataset_path": str(dataset_path),
         "checker": "same_repo_fvrulelearner_evaluation",
         "evaluator_repo_dir": str(formal_check.REPO_ROOT),
         "evaluator_python": sys.executable,
         "metric_source": "native evaluation.py; original_setting=False",
-        "checker_input_policy": "native_per_round_training",
+        "checker_input_policy": "native_per_round",
         "comparison_scope": policy["scope"],
         "revision_rules": "previous_round_only",
         "round_policy": "pec_or_bleu_or_max_rounds",
-        "pec_compile_error_policy": "continue_reference_diagnosis_and_rule_generation",
-        "case_ids": list(config.CASE_IDS),
+        "pec_compile_error_policy": "continue_requirement_diagnosis_and_guidance" if phase == "infer" else "continue_reference_diagnosis_and_rule_generation",
+        "case_ids": list(config.INFER_CASE_IDS if phase == "infer" else config.TRAIN_CASE_IDS),
         "dataset_split": dataset_split,
         "max_rounds": config.MAX_ROUNDS,
         "timeout_seconds": config.JASPER_TIMEOUT_SECONDS,
@@ -343,15 +112,28 @@ def main() -> int:
         "save_debug_traces": config.SAVE_DEBUG_TRACES,
     }
 
+    if phase == "infer":
+        settings.update(
+            source_training_run=str(source_dir),
+            training_case_ids=[c["case_number"] for c in source_metadata["selected_cases"]],
+            retrieval_top_k=config.TOP_K_CASES, embedding_model=config.EMBEDDING_MODEL,
+            retrieval_eligible_cases=len(retriever.cases),
+            source_rules_sha256=retriever.sha256,
+        )
+
     # 2. Create one experiment containing shared summaries and separate case folders.
     experiment_dir = run_io.create_experiment(
         dataset=config.DATASET, dataset_path=dataset_path, cases=cases,
         models=models, settings=settings, runs_root=config.RUNS_DIR,
-        phase="train",
+        phase=phase, source_training_run=source_dir,
     )
     print("Dataset:", dataset_path)
     print("Evaluation scope:", policy["scope"])
-    if dataset_split is not None:
+    if phase == "infer":
+        print("Training source:", source_dir)
+        print("Training cases excluded:", settings["training_case_ids"])
+        print("Retrieval cases with rules:", len(retriever.cases))
+    elif dataset_split is not None:
         print(
             f"Random split: {len(cases)} training | "
             f"{len(dataset_split['inference_case_ids'])} reserved for inference | "
@@ -375,7 +157,7 @@ def main() -> int:
                 f"{case['design_name']} / {case['task_id']}"
             )
             case_exit = run_io.run_experiment(
-                workflow=run_pipeline,
+                workflow=partial(run_pipeline, retriever=retriever),
                 cleanup_work=formal_check.cleanup_work,
                 case_id=case["task_id"],
                 case_dir=experiment_dir / "cases" / f"case_{case['case_number']:04d}",
@@ -406,6 +188,7 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
 
 
 

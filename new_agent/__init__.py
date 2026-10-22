@@ -1,1 +1,1 @@
-"""Jev experiment; settings live in new_agent.config, separate from src/config.py."""
+"""Training and inference experiments with one shared native evaluator."""

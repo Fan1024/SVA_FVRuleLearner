@@ -312,22 +312,3 @@ def format_diagnosis(answers: dict, confidence_threshold: float = 0.4) -> dict[s
         statements[question_name] = options[decision]
 
     return statements
-
-
-if __name__ == "__main__":
-    # A small local example; running this file makes no API calls.
-    answers = {
-        "implication_presence": {"answer": "generated_only", "confidence": 1.0},
-        "implication_replace_operator": {"answer": False, "confidence": 0.0},
-        "logical_scope": {"answer": True, "confidence": 0.8},
-        "comparison_four_state_equality": {"answer": False, "confidence": 0.9},
-        "temporal_past_offset": {"answer": True, "confidence": 0.7},
-        "parentheses_grouping": {"answer": True, "confidence": 0.85},
-        "global_operator_category_error_count": {"answer": "two_or_three", "confidence": 0.8},
-        "global_operator_occurrence_edit_count": {"answer": "more_than_three", "confidence": 0.9},
-    }
-
-    output = format_diagnosis(answers)
-
-    for question_name, statement in output.items():
-        print(f"{question_name}: {statement}")

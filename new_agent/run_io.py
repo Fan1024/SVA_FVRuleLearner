@@ -1,6 +1,6 @@
 """Save case records, usage, and experiment summaries.
 
-Experiment decisions belong in main.py. This module manages records and files.
+Experiment decisions belong in main.py and pipeline.py. This module manages records and files.
 Case records contain only final outcomes. Round evidence is optional and separate.
 """
 
@@ -249,7 +249,7 @@ def create_experiment(
 
 
 def _read_training_metadata(directory: Path, dataset: str, dataset_sha256: str) -> dict:
-    """Check whether an experiment can supply a saved split and learning evidence."""
+    """Check whether an experiment can supply its selection and learning evidence."""
     metadata = json.loads((directory / "run_metadata.json").read_text(encoding="utf-8"))
     if not isinstance(metadata, dict):
         raise ValueError("run_metadata.json must contain an object.")
@@ -257,14 +257,9 @@ def _read_training_metadata(directory: Path, dataset: str, dataset_sha256: str) 
         raise ValueError("The source must be a COMPLETED training experiment.")
     if metadata.get("dataset") != dataset or metadata.get("dataset_sha256") != dataset_sha256:
         raise ValueError("The training dataset name or CSV contents do not match the current dataset.")
-    settings = metadata.get("settings")
-    split = settings.get("dataset_split") if isinstance(settings, dict) else None
-    if (
-        not isinstance(split, dict)
-        or not split.get("training_case_ids")
-        or not split.get("inference_case_ids")
-    ):
-        raise ValueError("The training experiment has no saved train/inference split.")
+    selected = metadata.get("selected_cases")
+    if not isinstance(selected, list) or not selected or any(not isinstance(c, dict) for c in selected):
+        raise ValueError("The training experiment has no valid selected_cases list.")
     finished_at = metadata.get("finished_at")
     if not isinstance(finished_at, str) or datetime.fromisoformat(finished_at).tzinfo is None:
         raise ValueError("The training experiment has no valid completion timestamp.")
@@ -281,7 +276,7 @@ def select_training_run(
 
     Relative explicit paths are resolved from runs_root. Invalid explicit paths
     fail without falling back. Automatic selection ignores incomplete,
-    incompatible, and older-format experiments without phase/split metadata.
+    incompatible, and older-format experiments without selection metadata.
     """
     root = Path(runs_root).expanduser().resolve()
     dataset_sha256 = hashlib.sha256(Path(dataset_path).read_bytes()).hexdigest()
@@ -305,8 +300,8 @@ def select_training_run(
         candidates.append((directory, metadata))
     if not candidates:
         raise ValueError(
-            f"No completed training experiment with a saved split matches {dataset!r} "
-            f"and the current CSV in {root}. Train with CASE_IDS = [] first, "
+            f"No completed training experiment matches {dataset!r} "
+            f"and the current CSV in {root}. Complete a training run first, "
             "or set TRAINING_RUN_DIR to a compatible experiment."
         )
     return max(candidates, key=lambda item: (
@@ -402,6 +397,8 @@ def final_record(record: dict) -> dict:
     }
     saved["round_failures"] = record.get("round_failures", [])
     saved["round_metrics"] = record.get("round_metrics", [])
+    saved["phase"] = record["settings"].get("phase", "train")
+    saved["retrieved_cases"] = record.get("retrieved_cases", [])
     saved["inputs"] = {
         name: record["inputs"][name]
         for name in ("case_number", "design_name", "requirement", "reference_assertion")
@@ -521,6 +518,8 @@ def _debug_event_text(record: dict, event: str, data: dict) -> str:
             "\n".join(lines) if lines else
             "None. Rule generation may explore potential issues using the background."
         )
+    if event == "retrieval":
+        return "\nRETRIEVED TRAINING CASES\n" + json.dumps(data["cases"], indent=2)
     if event == "rule_request":
         return "\nRULE GENERATOR OUTPUT"
     if event == "rule_response":
@@ -627,12 +626,6 @@ def record_formal_result(run_dir, record: dict, attempt: dict, formal: dict) -> 
 
 
 # Formal-tool artifacts and cleanup.
-
-def prepare_formal_check(run_dir) -> None:
-    """Remove previous input/log so an unsupported new input cannot inherit them."""
-    for name in ("formal_input.sva", "jasper.log"):
-        (Path(run_dir) / name).unlink(missing_ok=True)
-
 
 def cleanup_formal_work(run_dir, record: dict, cleanup_work, *, keep_work=False):
     """Use the checker's owned cleanup once and record unexpected exceptions."""
@@ -890,5 +883,6 @@ def print_summary(run_dir, record: dict) -> None:
     if record["summary_error"]:
         print("Summary save error:", record["summary_error"])
     print("Result:", Path(run_dir) / "result.json")
+
 
 

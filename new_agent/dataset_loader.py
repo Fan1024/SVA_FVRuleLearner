@@ -1,7 +1,5 @@
 """Read, select, and split NL2SVA examples without running experiments.
 
-Run this file directly to preview the training selection from config.py.
-Use --inference to preview held-out cases from a saved training experiment.
 The loader uses only the Python standard library and imports no model/tool code.
 """
 
@@ -170,95 +168,48 @@ def load_training_cases(
     return training, split
 
 
-def load_inference_cases(dataset_path: str | Path, training_metadata: dict) -> list[dict]:
-    """Load saved held-out IDs after select_training_run checks the dataset hash.
+def load_inference_cases(
+    dataset_path: str | Path, training_metadata: dict, case_ids: list[int] | None = None,
+) -> list[dict]:
+    """Use the selected run's saved split, or exclude its entire explicit selection.
 
-    Validate complete, disjoint membership against the current parsed examples.
-    Failed or unfinished training cases never move into the inference group.
+    Exclusion includes cases that passed immediately and cases without rules.
+    Inference never derives the training population from the filtered rule bank.
+    select_training_run verifies CSV identity before this function is called.
     """
-    cases = read_dataset(dataset_path)
-    split = training_metadata["settings"]["dataset_split"]
-    training_ids = split.get("training_case_ids")
-    inference_ids = split.get("inference_case_ids")
-    for name, numbers in (
-        ("training_case_ids", training_ids),
-        ("inference_case_ids", inference_ids),
-    ):
-        if (
-            not isinstance(numbers, list) or not numbers
-            or any(type(number) is not int for number in numbers)
-            or len(numbers) != len(set(numbers))
-        ):
-            raise ValueError(f"Saved {name} must be a nonempty list of unique integer IDs.")
-    training_set, inference_set = set(training_ids), set(inference_ids)
-    if training_set & inference_set:
-        raise ValueError("Saved training and inference case IDs overlap.")
-    if training_set | inference_set != {case["case_number"] for case in cases}:
-        raise ValueError("The saved split must cover the current dataset exactly.")
-    selected_cases = training_metadata.get("selected_cases", [])
-    if (
-        not isinstance(selected_cases, list)
-        or any(not isinstance(case, dict) for case in selected_cases)
-    ):
-        raise ValueError("Training metadata has an invalid selected_cases list.")
-    if [case.get("case_number") for case in selected_cases] != training_ids:
-        raise ValueError("The recorded training selection does not match the saved split.")
-    case_map = {case["case_number"]: case for case in cases}
-    return [case_map[number] for number in inference_ids]
-
-
-def main(argv=None) -> None:
-    """Preview training inputs or a saved inference selection; make no model calls."""
-    import argparse
-    import sys
-    sys.path.insert(0, str(REPO_ROOT))
-    from new_agent import config
-
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--inference", action="store_true", help="Preview the saved inference cases.")
-    args = parser.parse_args(argv)
-    if args.inference:
-        import run_io
-
-        directory, metadata = run_io.select_training_run(
-            dataset=config.DATASET, dataset_path=resolve_dataset_path(config.DATASET_PATH),
-            runs_root=config.RUNS_DIR, training_run_dir=config.TRAINING_RUN_DIR,
-        )
-        cases = load_inference_cases(config.DATASET_PATH, metadata)
-        split = None
-        print(f"Training source: {directory}")
-        print(f"Saved inference case IDs: {[case['case_number'] for case in cases]}")
+    cases = load_cases(dataset_path, case_ids)
+    all_cases = cases if not case_ids else read_dataset(dataset_path)
+    case_map = {case["case_number"]: case for case in all_cases}
+    selected = training_metadata.get("selected_cases")
+    if not isinstance(selected, list) or not selected or any(not isinstance(c, dict) for c in selected):
+        raise ValueError("Training metadata needs a nonempty selected_cases list.")
+    training_ids = [case.get("case_number") for case in selected]
+    if (any(type(number) is not int or number not in case_map for number in training_ids)
+            or len(training_ids) != len(set(training_ids))):
+        raise ValueError("Training selected_cases contains invalid or duplicate case IDs.")
+    for saved in selected:
+        current = case_map[saved["case_number"]]
+        if any(saved.get(key) != current[key] for key in ("design_name", "task_id")):
+            raise ValueError("Training case identities do not match the current CSV.")
+    training_set = set(training_ids)
+    split = training_metadata.get("settings", {}).get("dataset_split")
+    if split is None:
+        inference_ids = [n for n in case_map if n not in training_set]
     else:
-        cases, split = load_training_cases(
-            config.DATASET_PATH, config.CASE_IDS,
-            train_fraction=config.TRAIN_FRACTION, split_seed=config.SPLIT_SEED,
-        )
-    print(f"Dataset: {cases[0]['dataset_path']}")
-    if split is not None:
-        print(f"Random split: training fraction {split['train_fraction']}; seed {split['seed']}")
-        print(f"Training case IDs ({len(cases)}): {split['training_case_ids']}")
-        print(
-            f"Reserved inference case IDs ({len(split['inference_case_ids'])}): "
-            f"{split['inference_case_ids']}"
-        )
-    elif not args.inference:
-        print("Explicit case selection: random splitting is not applied.")
-    print(f"Selected {len(cases)} example(s).")
-    for case in cases:
-        print(
-            f"Case {case['case_number']}: "
-            f"{case['design_name']} / {case['task_id']}"
-        )
-        print(f"  Requirement: {case['requirement']}")
-        print(
-            f"  Reference: {len(case['reference_assertion'])} characters; "
-            f"testbench: {len(case['testbench'])} characters"
-        )
-    print("Dataset inspection complete. No model or formal-tool calls were made.")
-
-
-if __name__ == "__main__":
-    try:
-        main()
-    except (OSError, UnicodeError, csv.Error, ValueError) as error:
-        raise SystemExit(f"Dataset validation failed: {error}")
+        if not isinstance(split, dict) or split.get("training_case_ids") != training_ids:
+            raise ValueError("The recorded training selection does not match the saved split.")
+        inference_ids = split.get("inference_case_ids")
+        if (not isinstance(inference_ids, list) or
+            any(type(n) is not int for n in inference_ids) or
+            len(inference_ids) != len(set(inference_ids))):
+            raise ValueError("Saved inference IDs must be unique integers.")
+        if training_set & set(inference_ids) or training_set | set(inference_ids) != set(case_map):
+            raise ValueError("The saved split must be disjoint and cover the current CSV exactly.")
+    if not inference_ids:
+        raise ValueError("The selected training run leaves no held-out inference cases.")
+    if case_ids:
+        invalid = [n for n in case_ids if n not in set(inference_ids)]
+        if invalid:
+            raise ValueError(f"INFER_CASE_IDS includes training cases: {invalid}.")
+        return cases
+    return [case_map[n] for n in inference_ids]

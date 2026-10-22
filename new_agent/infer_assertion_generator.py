@@ -1,12 +1,10 @@
-import re
-
-from openai import OpenAI
-
 from new_agent.formal_check import COMPARISON_SCOPE
 
 
 SYSTEM_PROMPT = """You write SystemVerilog assertions from natural-language requirements.
-Use the provided testbench as the context for your translation.
+Use the requirement and testbench as your only specification.
+For revisions, assess the supplied inference guidance against those inputs;
+diagnosis and retrieved guidance are hypotheses, not proof of a defect.
 """
 
 
@@ -36,7 +34,7 @@ def build_generation_prompt(
             "condition, trigger, response, signal relationships, and timing."
         )
         revision = (
-            "\nRevise the previous assertion using the correction guidance below.\n"
+            "\nRevise the previous assertion using the requirement-based guidance below.\n"
             "Consider every supplied rule as guidance for this revision.\n"
             "Resolve its applicability using the requirement and testbench.\n"
             "If guidance is uncertain or calls for re-analysis, re-derive the behavior.\n"
@@ -73,39 +71,3 @@ Only output the code snippet and do NOT output anything else.
 Answer:"""
 
 
-def generate_assertion(
-    client: OpenAI, model: str, user_prompt: str, *, usage_callback=None,
-) -> str:
-    """Send one generation request and return the response text unchanged."""
-    response = client.responses.create(
-        model=model,
-        instructions=SYSTEM_PROMPT,
-        input=user_prompt,
-    )
-    if usage_callback is not None:
-        usage_callback(getattr(response, "usage", None))
-
-    if response.status != "completed":
-        raise RuntimeError(f"Generation did not complete: {response.status}")
-
-    if not response.output_text.strip():
-        raise RuntimeError("The model returned no assertion text.")
-
-    return response.output_text
-
-
-def extract_assertion(response_text: str) -> str:
-    """Extract the SVA from one systemverilog Markdown code block."""
-    match = re.fullmatch(
-        r"\s*```systemverilog\s*(.*?)\s*```\s*",
-        response_text,
-        flags=re.DOTALL,
-    )
-    if match is None:
-        raise ValueError("Expected one systemverilog Markdown code block.")
-
-    assertion = match.group(1).strip()
-    if not assertion or "```" in assertion:
-        raise ValueError("Expected one nonempty assertion code block.")
-
-    return assertion

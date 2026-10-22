@@ -1,4 +1,3 @@
-import json
 from typing import Any, Optional
 
 from typesafe_sdk import Choice, Noul, TypeSafeClient
@@ -405,17 +404,3 @@ def diagnose_assertion_mismatches(
         "raw_answers": raw_answers,
         "model": response.model,
     }
-
-
-if __name__ == "__main__":
-    # Running this example makes one live Jev API call.
-    diagnosis = diagnose_assertion_mismatches(
-        requirement="Whenever a is high, b must be high on the next clock cycle.",
-        generated_assertion="assert property (@(posedge clk) a |-> b);",
-        reference_assertion="assert property (@(posedge clk) a |=> b);",
-        design_context="a and b are single-bit signals sampled on posedge clk.",
-    )
-    print(json.dumps(diagnosis, indent=2, ensure_ascii=False))
-
-
-

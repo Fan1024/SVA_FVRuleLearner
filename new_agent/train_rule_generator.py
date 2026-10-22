@@ -1,10 +1,6 @@
 """Build rule-generation requests and validate the returned correction groups."""
 
 import json
-import re
-
-from openai import OpenAI
-
 from new_agent.formal_check import COMPARISON_SCOPE
 
 
@@ -149,61 +145,5 @@ def build_rule_prompt(
         + "\nOUTPUT LAYOUT\n" + json.dumps(OUTPUT_LAYOUT, indent=2)
         + "\nINPUT DATA\n" + json.dumps(inputs, indent=2, ensure_ascii=False)
     )
-
-
-def generate_rules(
-    client: OpenAI, model: str, user_prompt: str, *, usage_callback=None,
-) -> str:
-    """Make one request and return text so the caller can save it before parsing."""
-    response = client.responses.create(
-        model=model,
-        instructions=SYSTEM_PROMPT,
-        input=user_prompt,
-        text={"format": {"type": "json_object"}},
-    )
-    if usage_callback is not None:
-        usage_callback(getattr(response, "usage", None))
-    if response.status != "completed":
-        raise RuntimeError(f"Rule generation did not complete: {response.status}")
-    if not response.output_text.strip():
-        raise RuntimeError("The model returned no rule-generation output.")
-
-    return response.output_text
-
-
-def parse_rules(response_text: str) -> dict:
-    """Decode a saved response; JSON validity does not prove rule correctness."""
-    result = json.loads(response_text)
-    if not isinstance(result, dict):
-        raise ValueError("Expected a JSON object for the rule-generation result.")
-    return result
-
-
-def check_rule_groups(result: dict, statements: dict) -> None:
-    """Check output structure and label format, not a fixed list of group names."""
-    if not result:
-        raise ValueError("Rule generation returned no rules; expected at least one labeled rule.")
-    expected_names = {f"rule_{number}" for number in range(1, len(result) + 1)}
-    if set(result) != expected_names:
-        raise ValueError("Use consecutive names: rule_1, rule_2, and so on.")
-    for name, entry in result.items():
-        if not isinstance(entry, dict) or set(entry) != {"group", "rule"}:
-            raise ValueError(f"{name} must contain only group and rule.")
-        group = entry["group"]
-        if (
-            not isinstance(group, list) or not group
-            or any(
-                not isinstance(item, str)
-                or not re.fullmatch(r"[a-z][a-z0-9_]*", item)
-                for item in group
-            )
-        ):
-            raise ValueError(
-                f"{name}.group must contain nonempty lowercase snake_case labels."
-            )
-        if len(group) != len(set(group)):
-            raise ValueError(f"{name}.group contains a repeated label.")
-        if not isinstance(entry["rule"], str) or not entry["rule"].strip():
-            raise ValueError(f"{name}.rule must contain an editing instruction.")
 
 
