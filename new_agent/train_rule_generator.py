@@ -1,123 +1,56 @@
-"""Build rule-generation requests and validate the returned correction groups."""
+"""Build training requests for reusable assertion-correction rules."""
 
 import json
 from new_agent.formal_check import COMPARISON_SCOPE
 
 
-SYSTEM_PROMPT = """You analyze SystemVerilog assertion mismatches and generate
-reusable natural-language correction rules. Diagnosis statements are hypotheses, not facts.
-They are supporting evidence, not an exhaustive list of potential issues.
-You may explore potential issues beyond the supplied statements using the requirement,
-testbench, generated assertion, and reference as background. Check whether a proposed
-correction is supported before turning it into a rule.
-Return one JSON object containing only groups and their correction rules.
-Follow the supplied dataset-specific comparison_scope. Human and Machine use
-different native extraction policies; excluded clock/reset wrappers are not
-evidence of a PEC mismatch. Do not assume the full assertion was compared.
-Use testbench definitions to recognize equivalent reset expressions and aliases.
-Do not recommend a reset change just because its text differs from the reference.
-Preserve native disable iff behavior; it is not an antecedent guard.
-The reference is analysis evidence. The later assertion-generation call will
-receive the requirement, testbench, and your guidance, but no reference assertion.
-Your rules must guide that call without copying the reference implementation.
-This call follows an unaccepted evaluation. PEC compilation may have failed
-without an equivalence verdict. Do not treat checker compilation errors as proof
-of a candidate defect or propose assertion edits solely to repair the checker.
-Use the requirement, testbench, and reference to assess any proposed correction.
-Always return at least one labeled
-rule. If the precise correction remains uncertain, give an actionable re-analysis
-instruction instead of returning an empty object or inventing a specific cause.
+SYSTEM_PROMPT = """Generate reusable assertion-correction rules during training.
+
+The current assertion has not passed evaluation. You receive the requirement,
+testbench, generated assertion, reference assertion, diagnosis and formal feedback.
+Use the reference behavior as the benchmark target, including when the prose
+requirement conflicts with it. The next assertion generator receives your rules
+but no reference assertion, so explain the correction without copying its code.
+Connect the required behavior, the generated assertion's issue, and its correction
+so the rule can later be selected for another case with the same kind of issue.
 """
 
 
-TASK_INSTRUCTIONS = """Identify potential correction issues using the supplied
-background, formal feedback, and diagnosis statements. Generate exactly ONE rule
-for EACH group and at least ONE rule overall. Do not return an empty object.
-
-HOW TO GROUP STATEMENTS
-- Check the statements against the requirement, generated assertion, reference,
-  and testbench. Presence observations are evidence, not automatic edit commands.
-- You may explore potential issues not identified by diagnosis. Empty or weak
-  statements do not establish equivalence and do not prevent this exploration.
-- Identify the correction groups yourself and choose their descriptive labels
-  from your analysis. No group name or prefix is prescribed. Use lowercase
-  snake_case labels: start with a letter, then use letters, digits, and underscores.
-  Describe the behavioral issue rather than this case's signal names. Reuse a
-  label when the same issue recurs. You may also include original statement IDs
-  when they support the rule and make its diagnostic evidence traceable.
-- Exclude factually incorrect observations from the output groups. For example,
-  a claim that a category occurs only in the reference is incorrect if the
-  generated assertion also contains that category. Do not treat it as support.
-- Group statements that concern the SAME behavioral issue and edit location.
-  Related statements from different operator categories may belong together.
-- Use the smallest coherent correction principle. Sharing the same assertion
-  body or contributing to one large replacement is NOT enough to form a group.
-  Ask whether the corrections need different semantic justifications or can be
-  applied independently. If so, separate them. For example, changing the handling
-  of X/Z in a comparison is usually independent of restructuring an implication
-  into a Boolean violation check, even when both affect the same property body.
-- Investigate: Are these competing corrections for the same occurrence, or are
-  they corrections to different occurrences? Are they parts of one expression rewrite?
-- When removal and replacement are competing proposals for the same occurrence,
-  consider them together and choose the correction supported by the assertions.
-- When edits are complementary parts of one rewrite, put them in one group.
-  For example, implication removal and logical insertion may form one correction.
-- Keep independent issues separate, even if their statements share a category.
-  A supported issue described by only one statement can form a group by itself.
-- Do not force every statement into a group or attach an observed label that
-  does not support the rule. Exclude unsupported correction claims. If no
-  specific edit is established, use the re-analysis rule described below.
-- A statement ID may appear in more than one group if it supports distinct issues.
-
-HOW TO GENERATE THE RULE FOR EACH GROUP
-- Write one concise NATURAL-LANGUAGE instruction describing the correction
-  principle for that group, including the behavioral condition under which it applies.
-- Explicitly say WHAT construct changes to WHAT construct and WHERE in the
-  property structure, using 'Replace', 'Remove', 'Insert', or 'Modify'.
-  Operators such as |=>, |->, &&, ||, ==, and === may be named in short form.
-- Describe signals and parameters by their semantic roles, such as the previous
-  sampled value, upper bound, lower bound, trigger, response, and reset guard.
-  Avoid copying this example\'s signal names, parameter names, or literal expressions.
-- Do not provide a complete assertion, property body, before/after code pair,
-  or instruction to replace the generated body with the reference body.
-  Derive the reusable correction principle from that difference instead.
-- Guidance example from a DIFFERENT task: 'When the response must be checked
-  in the trigger\'s sampled cycle, replace non-overlapping implication (|=>)
-  with overlapping implication (|->) between the trigger and response.'
-  This demonstrates rule style only; do not assume this correction fits the input.
-- If a group requires several coordinated edits, combine them into one rule.
-- Resolve competing proposals rather than issuing incompatible commands.
-- Avoid vague instructions such as 'fix the timing' or 'match the reference'.
-- Different syntax can be behaviorally equivalent. Do not invent a specific
-  correction to satisfy the nonempty-output requirement. Use formal feedback
-  and the reference to investigate what remains unresolved.
-- If no specific correction is established, return an actionable instruction
-  to re-derive the assertion from the requirement and testbench and reconsider
-  its clock, disable condition, trigger, response, signal relations, and timing.
-  Choose a descriptive label yourself for the issue or uncertainty you actually
-  identified. Explain the uncertainty in the rule; do not present a hypothesis
-  as an observed fact. No generic fallback group name is prescribed.
-- Keep the output limited to groups and rules, without assessment sections
-  or a complete rewritten assertion.
+TASK_INSTRUCTIONS = """TASK
+1. Compare the generated assertion with the reference within comparison_scope.
+   Analyze their behavior using the requirement, testbench and formal feedback.
+   Use relevant diagnosis statements, discard incorrect ones, and investigate
+   differences beyond the diagnosis when needed.
+2. Connect three elements in every rule: the required behavior that makes the
+   rule applicable; what the generated assertion does differently and why that
+   matters; and the concrete edit that restores the required behavior.
+   Use this pattern: "When [behavior is required], [the generated construct]
+   instead [incorrect behavior]; Replace/Remove/Insert/Modify [construct at its
+   location] to [correction], so [the required behavior is obtained]."
+   Name the actual behavioral difference, not just an operator category.
+   If the requirement conflicts with the reference, state that conflict rather
+   than attributing the reference's behavior to the requirement.
+   Do not return rules such as "keep the assertion unchanged", "retain the
+   current assertion", "Modify no assertion construct yet", or "re-analyze
+   before editing". Do not defer a correction until the requirement is clarified.
+3. Group corrections addressing the same issue and edit location. Keep independent
+   issues separate and resolve conflicting proposals. Use descriptive lowercase
+   snake_case group labels and supporting diagnosis question IDs where relevant.
+4. Write reusable natural-language rules. Describe signals and parameters by their
+   roles. Operator names are allowed; complete assertions, copied property bodies
+   and instructions to copy the reference are not.
+5. Respect the dataset's comparison_scope, actual widths and parameter values.
+   Excluded wrappers and equivalent reset aliases do not require correction.
+   Do not change assertion semantics solely to repair PEC compilation problems.
 
 OUTPUT
 Return only a JSON object with consecutive keys rule_1, rule_2, and so on.
-Each entry must contain exactly TWO fields:
-- group: a list of descriptive labels you choose and/or supporting statement IDs.
-- rule: the reusable natural-language editing instruction for that group.
-The layout below illustrates one entry, not a limit of one rule. Return at least
-one entry. You must identify and name its group from the supplied evidence.
-The label in the output layout is a placeholder, not a prescribed group name.
-Never return {}.
+Each entry must contain exactly:
+- group: a nonempty list of labels and/or supporting diagnosis question IDs.
+- rule: one concise natural-language rule connecting required behavior, issue
+  and concrete correction, including the condition under which it applies.
+Return at least one rule and one rule per group. No assertions or extra fields.
 """
-
-
-OUTPUT_LAYOUT = {
-    "rule_1": {
-        "group": ["your_descriptive_issue_label"],
-        "rule": "When a behavioral condition applies, replace/remove/insert/modify the relevant construct as specified by this correction principle.",
-    },
-}
 
 
 def build_rule_prompt(
@@ -142,7 +75,6 @@ def build_rule_prompt(
     }
     return (
         TASK_INSTRUCTIONS
-        + "\nOUTPUT LAYOUT\n" + json.dumps(OUTPUT_LAYOUT, indent=2)
         + "\nINPUT DATA\n" + json.dumps(inputs, indent=2, ensure_ascii=False)
     )
 

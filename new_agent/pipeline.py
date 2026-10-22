@@ -134,6 +134,7 @@ def run_pipeline(directory, record: dict, *, retriever=None) -> int:
                 run_io.update_run(directory, record, stage=stage)
                 generated_assertion = model_io.extract_assertion(response_text)
                 attempt["generation"]["assertion"] = generated_assertion
+                record["round_evidence"][-1]["generated_assertion"] = generated_assertion
                 previous_assertion = generated_assertion
                 stage = "formal_check"
                 run_io.update_run(directory, record, stage=stage)
@@ -268,7 +269,7 @@ def run_pipeline(directory, record: dict, *, retriever=None) -> int:
                                      "task_id": c.get("task_id"), "similarity": c["similarity"]}
                                     for c in retrieved_cases]
                         run_io.update_run(directory, record, retrieved_cases=evidence)
-                        run_io.save_debug_event(directory, record, "retrieval", cases=evidence)
+                        run_io.save_debug_event(directory, record, "retrieval", cases=retrieved_cases)
                         print("Retrieved case IDs:", [c["case_number"] for c in retrieved_cases], flush=True)
                     rule_inputs["retrieved_cases"] = retrieved_cases
                 else:
@@ -297,6 +298,7 @@ def run_pipeline(directory, record: dict, *, retriever=None) -> int:
                 replacement = deepcopy(registry)
                 update_rule_registry(replacement, new_rules, round_number)
                 registry = replacement
+                record["round_evidence"][-1]["rules_generated"] = deepcopy(new_rules)
                 run_io.update_run(directory, record, rule_registry=retained_rules(registry))
                 if new_rules:
                     run_io.save_debug_event(directory, record, "rule_update", rule_registry=record["rule_registry"])

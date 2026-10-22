@@ -367,6 +367,7 @@ def create_record(case_id: str, models: dict, inputs: dict, prompts: dict, setti
         "rounds_used": 0,
         "last_evaluated_round": None,
         "round_metrics": [],
+        "round_evidence": [],
         "usage_rounds": [],
         "passed": False,
         "stop_reason": None,
@@ -593,6 +594,11 @@ def start_attempt(
         "generation": {"raw_response": None, "assertion": None},
         "rules_used": deepcopy(rules),
     }
+    # Structured learning evidence is retained even when readable tracing is off.
+    record["round_evidence"].append({
+        "round": round_number, "generated_assertion": None, "evaluation": None,
+        "rules_used": deepcopy(rules), "rules_generated": {},
+    })
     update_run(
         run_dir, record, stage="generation",
         rounds_used=round_number, pending_attempt=attempt,
@@ -610,6 +616,12 @@ def record_formal_result(run_dir, record: dict, attempt: dict, formal: dict) -> 
     metric = {"round": attempt["round"], "status": formal["status"]}
     for name in SCORE_FIELDS:
         metric[name] = formal.get(name)  # Unavailable scores remain None.
+    record["round_evidence"][-1]["evaluation"] = {
+        **metric,
+        "raw_scores": deepcopy(formal.get("raw_scores", {})),
+        "accepted": formal.get("accepted", False),
+        "acceptance_reason": formal.get("acceptance_reason"),
+    }
     if record.get("usage_rounds"):
         record["usage_rounds"][-1]["passed"] = (
             formal.get("pec") == 1.0 or formal.get("bleu") == 1.0
@@ -730,18 +742,23 @@ def save_summaries(summary_dir, record: dict) -> None:
     # establish that every individual rule caused the successful revision.
     rule_groups = {}
     rules = {}
+    rule_rounds = {}
     for number, entry in enumerate(record["rule_registry"], start=1):
         rule_id = f"rule_{number}"
         rule_groups[rule_id] = entry["group"]
         rules[rule_id] = entry["rule"]
+        rule_rounds[rule_id] = entry["updated_round"]
 
     learning = {
         "case_number": row["case_number"], "design_name": row["design_name"],
         "task_id": row["task_id"],
         "requirement": record["inputs"]["requirement"],
+        "reference_assertion": record["inputs"]["reference_assertion"],
         "passed": record["passed"],
         "rule_groups": rule_groups,
         "rules": rules,
+        "rule_rounds": rule_rounds,
+        "round_evidence": record["round_evidence"],
     }
     _update_case_collection(directory / "learned_rules.jsonl", learning)
 

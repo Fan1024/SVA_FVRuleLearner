@@ -38,12 +38,36 @@ class RuleRetriever:
             if not isinstance(groups, dict):
                 raise ValueError(f"Invalid rule_groups for case {number}.")
             # Only these fields can later enter inference prompts. References,
-            # saved assertions, formal logs, and arbitrary JSON fields are excluded.
+            # assertions and scores below belong only to selected TRAINING cases.
+            # Tool logs, runtime prompts and arbitrary JSON fields stay excluded.
+            round_evidence = []
+            for evidence in case.get("round_evidence", []):
+                evaluation = evidence.get("evaluation")
+                round_evidence.append({
+                    "round": evidence["round"],
+                    "generated_assertion": evidence.get("generated_assertion"),
+                    "evaluation": None if evaluation is None else {
+                        key: evaluation.get(key) for key in (
+                            "status", "syntax", "pec", "relax_pec", "bleu", "rouge",
+                            "exact_match", "accepted", "acceptance_reason",
+                        )
+                    },
+                    "rules_used": [{key: rule.get(key) for key in (
+                        "group", "rule", "updated_round",
+                    )} for rule in evidence.get("rules_used", [])],
+                    "rules_generated": {
+                        rule_id: {"group": rule["group"], "rule": rule["rule"]}
+                        for rule_id, rule in evidence.get("rules_generated", {}).items()
+                    },
+                })
             self.cases.append({
                 "case_number": number, "design_name": case.get("design_name"),
                 "task_id": case.get("task_id"), "requirement": requirement.strip(),
                 "passed": case.get("passed"), "rules": rules,
                 "rule_groups": {key: groups.get(key, []) for key in rules},
+                "reference_assertion": case.get("reference_assertion"),
+                "rule_rounds": {key: case.get("rule_rounds", {}).get(key) for key in rules},
+                "round_evidence": round_evidence,
             })
         if not self.cases:
             raise ValueError(f"No cases with nonempty requirements and rules in {path}.")

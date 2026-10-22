@@ -1,49 +1,42 @@
-"""Build reference-free guidance requests from diagnosis and retrieved rules."""
+"""Build guidance without the current target's reference; training examples are allowed."""
 
 import json
 
-SYSTEM_PROMPT = """You generate reusable natural-language guidance for revising a
-SystemVerilog assertion during inference. Your evidence is the requirement,
-design context, current generated assertion, diagnosis statements, and rules
-retrieved from historical training cases. No reference assertion is provided.
-Do not invent a hidden reference or assume the current assertion is incorrect.
+SYSTEM_PROMPT = """Generate correction rules for the next SystemVerilog assertion attempt.
 
-Diagnosis statements and retrieved rules are hypotheses, not verified facts.
-Check their applicability using the current requirement, assertion and context.
-Presence observations do not by themselves require an edit. Global edit-count
-statements are estimates, not equivalence proofs. A high requirement-similarity
-score does not establish that a historical correction applies to this case.
-Even a passed historical case does not prove each of its rules caused success.
+BACKGROUND
+The current assertion has not passed evaluation. You receive its requirement,
+design context, diagnosis statements, and retrieved training cases.
+Retrieved rules were learned for their own cases; decide which apply here.
+Historical references belong to those training cases. The current case's
+reference assertion is not provided.
 
-Select, adapt or combine the relevant retrieved rules. Ignore unrelated,
-unsupported or conflicting guidance. You may identify a supported issue beyond
-the diagnosis statements. Preserve behavior that already meets the requirement.
-Account for sampling, delays, vacuity, signal widths, X/Z behavior, reset aliases
-and disable iff semantics where the supplied inputs establish them. Do not
-recommend a reset change solely because two equivalent aliases differ in text.
+TASK
+1. Analyze the current requirement, design context, assertion and diagnosis.
+2. Review each retrieved case's requirement, reference, generated assertions,
+   rules and evaluation results to understand the original correction.
+   A rule generated in round r analyzes that round's assertion; rules_used
+   identifies later assertions generated with that rule.
+3. Select only relevant rules. Do not apply every retrieved rule. Ignore
+   unrelated or conflicting corrections. If none applies, derive corrections
+   directly from the current requirement, context and diagnosis.
+4. Generate concrete editing instructions using Replace, Remove, Insert or
+   Modify. State what changes, where, and why it matches the requirement.
+   Do not return "Modify no assertion construct yet", "keep the assertion
+   unchanged", or instructions that only request further analysis.
+5. Group corrections addressing the same issue; keep independent issues separate.
+   Use descriptive lowercase snake_case labels and supporting diagnosis question
+   IDs where relevant. Describe signals by their roles instead of copying
+   historical names, constants or complete assertions.
+6. Respect comparison_scope, actual parameter values and the single-assertion
+   interface. Do not recommend surrounding generate loops or helper declarations.
 
-Group corrections about the same behavioral issue and edit location. Keep
-independent corrections in separate groups, even if they share an operator
-category. Resolve competing edits instead of returning contradictory commands.
-For each group, write one concise editing principle saying what should change,
-where, and under what behavioral condition. Use Replace, Remove, Insert or Modify
-when an edit is supported. Describe signals by their roles rather than copying
-historical signal names, parameters, literal expressions or complete assertions.
-
-Choose descriptive lowercase snake_case group labels. Reuse a retrieved label
-only when its meaning applies. Include diagnosis question IDs in the group when
-their statements actually support the guidance; they are not mandatory labels.
-Do not attach unsupported statements merely to obtain a matching label.
-
-Return a nonempty JSON object with consecutive keys rule_1, rule_2, and so on.
-Each entry must contain exactly these two fields:
-- group: a nonempty list of descriptive labels and/or supporting question IDs.
-- rule: one nonempty natural-language guidance string.
-Return one rule per distinct group. Do not output an assertion or additional
-assessment fields. If no specific edit is established, return an actionable
-re-analysis instruction that states the uncertainty, checks the relevant
-requirement/context, and preserves already-supported behavior. Do not invent
-a specific defect to satisfy the nonempty-output requirement.
+OUTPUT
+Return only a nonempty JSON object with consecutive keys rule_1, rule_2, etc.
+Each entry must contain exactly:
+- group: a nonempty list of labels and/or supporting diagnosis question IDs.
+- rule: one concise natural-language editing instruction.
+Return one rule per group. Do not output an assertion or extra fields.
 """
 
 
@@ -51,7 +44,7 @@ def build_rule_prompt(
     requirement: str, generated_assertion: str, statements: dict,
     retrieved_cases: list[dict], testbench: str, *, comparison_scope: str,
 ) -> str:
-    """Whitelist historical evidence; accept neither reference nor raw PEC output."""
+    """Whitelist training evidence; accept no target reference or raw PEC output."""
     historical_cases = []
     for case in retrieved_cases:
         # Explicit fields prevent extra saved fields from entering the prompt.
@@ -62,9 +55,12 @@ def build_rule_prompt(
             "requirement": case["requirement"],
             "similarity": case.get("similarity"),
             "passed": case.get("passed"),
+            "historical_reference_assertion": case.get("reference_assertion"),
+            "round_evidence": case.get("round_evidence", []),
             "rules": [
                 {
                     "source_rule_id": rule_id,
+                    "generated_round": case.get("rule_rounds", {}).get(rule_id),
                     "group": case.get("rule_groups", {}).get(rule_id, []),
                     "rule": text,
                 }

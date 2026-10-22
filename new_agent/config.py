@@ -10,7 +10,7 @@ MODE = "train"
 
 
 # Supported datasets: nl2sva_human, nl2sva_machine, nl2sva_opencore.
-DATASET = "nl2sva_human"
+DATASET = "nl2sva_machine"
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DATASET_PATH = (
     REPO_ROOT / "FVEval" / "data_1k" / "module_sva_nl_manual_editing.csv"
@@ -23,7 +23,7 @@ DATASET_PATH = (
 # These numbers are not physical CSV line numbers or source task_id values.
 # Start with the FIFO example from the failing trace. Change this selection
 # after confirming diagnosis/rule output, or use [] for the training split.
-TRAIN_CASE_IDS = [69]
+TRAIN_CASE_IDS = []
 
 # Used only when TRAIN_CASE_IDS = []. The remainder is reserved for inference.
 # Training count = int(total cases * TRAIN_FRACTION); both parts must be nonempty.
@@ -37,7 +37,7 @@ ASSERTION_MODEL = "gpt-5.6-terra"
 RULE_MODEL = "gpt-5.6-terra"
 
 # Total assertion attempts: 10 = initial generation + at most nine revisions.
-MAX_ROUNDS = 10
+MAX_ROUNDS = 5
 
 # Requested Jasper timeout for native launchers that expose a timeout setting.
 # An unmodified launcher's fixed limit (e.g. 60 s) remains authoritative.
