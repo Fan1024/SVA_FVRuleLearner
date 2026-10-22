@@ -48,19 +48,24 @@ def read_dataset(dataset_path: str | Path) -> list[dict]:
             raise ValueError(f"Dataset is empty: {path}")
         if len(columns) != len(set(columns)):
             raise ValueError("CSV header contains duplicate column names.")
-        missing = [name for name in REQUIRED_COLUMNS if name not in columns]
+        opencore = "module_interface" in columns and "testbench" not in columns
+        required = ("design_name", "prompt", "ref_solution", "module_interface") if opencore else REQUIRED_COLUMNS
+        missing = [name for name in required if name not in columns]
         if missing:
             raise ValueError(f"CSV is missing required columns: {', '.join(missing)}")
 
         for number, row in enumerate(reader, start=1):
             if None in row:
                 raise ValueError(f"Example {number} has more values than the CSV header.")
-            empty = [name for name in REQUIRED_COLUMNS if not (row[name] or "").strip()]
+            empty = [name for name in required if not (row[name] or "").strip()]
             if empty:
                 raise ValueError(
                     f"Example {number} has missing or empty fields: {', '.join(empty)}"
                 )
-            identity = (row["design_name"].strip(), row["task_id"].strip())
+            # OpenCore repeats designs and has no task_id; the CSV row is its
+            # stable case identity. No source dataset is rewritten.
+            identity = (row["design_name"].strip(),
+                        f"opencore_{number:04d}" if opencore else row["task_id"].strip())
             if identity in identities:
                 raise ValueError(f"Duplicate design/task identity at example {number}: {identity}")
             identities.add(identity)
@@ -70,8 +75,10 @@ def read_dataset(dataset_path: str | Path) -> list[dict]:
                 "design_name": identity[0],
                 "task_id": identity[1],
                 "requirement": row["prompt"].strip(),
-                "reference_assertion": row["ref_solution"].strip(),
-                "testbench": row["testbench"].strip(),
+                # Match NL2SVALauncher's OpenCore reference wrapping exactly.
+                "reference_assertion": (f"assert property({row['ref_solution'].strip()});"
+                                        if opencore else row["ref_solution"].strip()),
+                "testbench": row["module_interface" if opencore else "testbench"].strip(),
             })
 
     if not cases:
@@ -169,17 +176,17 @@ def load_training_cases(
 
 
 def load_inference_cases(
-    dataset_path: str | Path, training_metadata: dict, case_ids: list[int] | None = None,
+    dataset_path: str | Path, training_metadata: dict,
 ) -> list[dict]:
-    """Use the selected run's saved split, or exclude its entire explicit selection.
+    """Select every CSV case outside the chosen training run's full selection.
 
-    Exclusion includes cases that passed immediately and cases without rules.
-    Inference never derives the training population from the filtered rule bank.
-    select_training_run verifies CSV identity before this function is called.
+    selected_cases is authoritative, even when a selected case produced no
+    rules or did not pass. Saved split settings and current training settings
+    do not choose or restrict inference cases. The caller verifies CSV identity
+    through select_training_run before loading this selection.
     """
-    cases = load_cases(dataset_path, case_ids)
-    all_cases = cases if not case_ids else read_dataset(dataset_path)
-    case_map = {case["case_number"]: case for case in all_cases}
+    cases = read_dataset(dataset_path)
+    case_map = {case["case_number"]: case for case in cases}
     selected = training_metadata.get("selected_cases")
     if not isinstance(selected, list) or not selected or any(not isinstance(c, dict) for c in selected):
         raise ValueError("Training metadata needs a nonempty selected_cases list.")
@@ -192,24 +199,7 @@ def load_inference_cases(
         if any(saved.get(key) != current[key] for key in ("design_name", "task_id")):
             raise ValueError("Training case identities do not match the current CSV.")
     training_set = set(training_ids)
-    split = training_metadata.get("settings", {}).get("dataset_split")
-    if split is None:
-        inference_ids = [n for n in case_map if n not in training_set]
-    else:
-        if not isinstance(split, dict) or split.get("training_case_ids") != training_ids:
-            raise ValueError("The recorded training selection does not match the saved split.")
-        inference_ids = split.get("inference_case_ids")
-        if (not isinstance(inference_ids, list) or
-            any(type(n) is not int for n in inference_ids) or
-            len(inference_ids) != len(set(inference_ids))):
-            raise ValueError("Saved inference IDs must be unique integers.")
-        if training_set & set(inference_ids) or training_set | set(inference_ids) != set(case_map):
-            raise ValueError("The saved split must be disjoint and cover the current CSV exactly.")
-    if not inference_ids:
+    inference = [case for case in cases if case["case_number"] not in training_set]
+    if not inference:
         raise ValueError("The selected training run leaves no held-out inference cases.")
-    if case_ids:
-        invalid = [n for n in case_ids if n not in set(inference_ids)]
-        if invalid:
-            raise ValueError(f"INFER_CASE_IDS includes training cases: {invalid}.")
-        return cases
-    return [case_map[n] for n in inference_ids]
+    return inference

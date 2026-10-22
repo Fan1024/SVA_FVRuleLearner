@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import sys
 from time import perf_counter
+from tempfile import TemporaryDirectory
 
 # Support both python new_agent/main.py and python -m new_agent.main.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -16,8 +17,8 @@ from new_agent.pipeline import run_pipeline
 
 def validate_config() -> None:
     """Check active settings once, before creating a run or making API calls."""
-    if config.MODE not in {"train", "inference"}:
-        raise ValueError('MODE must be "train" or "inference".')
+    if config.MODE not in {"train", "inference", "inference_only"}:
+        raise ValueError('MODE must be "train", "inference", or "inference_only".')
     if config.MODE == "inference":
         if type(config.TOP_K_CASES) is not int or config.TOP_K_CASES < 1:
             raise ValueError("TOP_K_CASES must be a positive integer.")
@@ -25,8 +26,8 @@ def validate_config() -> None:
             raise ValueError("EMBEDDING_MODEL must be a nonempty model name.")
     if not isinstance(config.DATASET, str) or not config.DATASET.strip():
         raise ValueError("DATASET must be a nonempty dataset name.")
-    if config.DATASET not in {"nl2sva_human", "nl2sva_machine"}:
-        raise ValueError("DATASET must be 'nl2sva_human' or 'nl2sva_machine'.")
+    if config.DATASET not in {"nl2sva_human", "nl2sva_machine", "nl2sva_opencore"}:
+        raise ValueError("DATASET must be 'nl2sva_human', 'nl2sva_machine', or 'nl2sva_opencore'.")
     if type(config.MAX_ROUNDS) is not int or config.MAX_ROUNDS < 1:
         raise ValueError("MAX_ROUNDS must be a positive integer.")
     for name in ("ASSERTION_MODEL", "RULE_MODEL"):
@@ -66,7 +67,7 @@ def main() -> int:
     validate_config()
     validate_credentials()
     policy = formal_check.get_evaluation_policy(config.DATASET)
-    phase = "infer" if config.MODE == "inference" else "train"
+    phase = "train" if config.MODE == "train" else "infer"
     source_dir = source_metadata = retriever = None
     dataset_split = None
     if phase == "train":
@@ -74,6 +75,11 @@ def main() -> int:
             config.DATASET_PATH, config.TRAIN_CASE_IDS,
             train_fraction=config.TRAIN_FRACTION, split_seed=config.SPLIT_SEED,
         )
+    elif config.MODE == "inference_only":
+        cases = dataset_loader.read_dataset(config.DATASET_PATH)
+        print("Inference-only baseline: all dataset cases; no training source or retrieval.", flush=True)
+        print(f"Automatically selected inference case IDs ({len(cases)}):",
+              [case["case_number"] for case in cases], flush=True)
     else:
         dataset_path = dataset_loader.resolve_dataset_path(config.DATASET_PATH)
         source_dir, source_metadata = run_io.select_training_run(
@@ -81,8 +87,13 @@ def main() -> int:
             runs_root=config.RUNS_DIR, training_run_dir=config.TRAINING_RUN_DIR,
         )
         cases = dataset_loader.load_inference_cases(
-            dataset_path, source_metadata, config.INFER_CASE_IDS,
+            dataset_path, source_metadata,
         )
+        print("Training source:", source_dir, flush=True)
+        print("Inference selection: all dataset cases excluding the source training selection.", flush=True)
+        print("Training case IDs excluded:", [c["case_number"] for c in source_metadata["selected_cases"]], flush=True)
+        print(f"Automatically selected inference case IDs ({len(cases)}):",
+              [case["case_number"] for case in cases], flush=True)
         from new_agent.infer_retrieval import RuleRetriever
         retriever = RuleRetriever(
             source_dir, training_case_ids={c["case_number"] for c in source_metadata["selected_cases"]},
@@ -92,6 +103,7 @@ def main() -> int:
     models = {"assertion": config.ASSERTION_MODEL, "rule": config.RULE_MODEL}
     settings = {
         "phase": phase,
+        "mode": config.MODE,
         "dataset": config.DATASET,
         "dataset_path": str(dataset_path),
         "checker": "same_repo_fvrulelearner_evaluation",
@@ -103,7 +115,8 @@ def main() -> int:
         "revision_rules": "previous_round_only",
         "round_policy": "pec_or_bleu_or_max_rounds",
         "pec_compile_error_policy": "continue_requirement_diagnosis_and_guidance" if phase == "infer" else "continue_reference_diagnosis_and_rule_generation",
-        "case_ids": list(config.INFER_CASE_IDS if phase == "infer" else config.TRAIN_CASE_IDS),
+        "case_ids": ([case["case_number"] for case in cases]
+                     if phase == "infer" else list(config.TRAIN_CASE_IDS)),
         "dataset_split": dataset_split,
         "max_rounds": config.MAX_ROUNDS,
         "timeout_seconds": config.JASPER_TIMEOUT_SECONDS,
@@ -112,9 +125,16 @@ def main() -> int:
         "save_debug_traces": config.SAVE_DEBUG_TRACES,
     }
 
-    if phase == "infer":
+    if config.MODE == "inference_only":
+        settings.update(
+            source_training_run=None,
+            inference_case_selection="all_dataset_cases",
+            training_case_ids=[], retrieval_top_k=0, retrieval_eligible_cases=0,
+        )
+    elif phase == "infer":
         settings.update(
             source_training_run=str(source_dir),
+            inference_case_selection="all_dataset_cases_minus_source_selected_cases",
             training_case_ids=[c["case_number"] for c in source_metadata["selected_cases"]],
             retrieval_top_k=config.TOP_K_CASES, embedding_model=config.EMBEDDING_MODEL,
             retrieval_eligible_cases=len(retriever.cases),
@@ -130,9 +150,7 @@ def main() -> int:
     print("Dataset:", dataset_path)
     print("Evaluation scope:", policy["scope"])
     if phase == "infer":
-        print("Training source:", source_dir)
-        print("Training cases excluded:", settings["training_case_ids"])
-        print("Retrieval cases with rules:", len(retriever.cases))
+        print("Retrieval cases with rules:", len(retriever.cases) if retriever is not None else 0)
     elif dataset_split is not None:
         print(
             f"Random split: {len(cases)} training | "
@@ -141,47 +159,55 @@ def main() -> int:
         )
     else:
         print("Explicit case selection: random splitting is not applied.")
-    print("Selected case IDs:", [case["case_number"] for case in cases])
+    if phase == "train":
+        print("Selected case IDs:", [case["case_number"] for case in cases])
     print("Experiment:", experiment_dir)
 
     # 3. Run each selected case with its own revision loop and rule registry.
-    exit_code = 0
-    try:
-        # Import native dependencies and load metrics before making model calls.
-        formal_check.initialize_evaluator(
-            experiment_dir / "native_logs", config.DATASET, config.JASPER_TIMEOUT_SECONDS,
-        )
-        for position, case in enumerate(cases, start=1):
-            print(
-                f"\nRunning {position}/{len(cases)}: case {case['case_number']} | "
-                f"{case['design_name']} / {case['task_id']}"
+    # Native Saver/metrics initialization requires a writable directory at
+    # runtime. Keep it outside the experiment and discard it after this batch.
+    # To restore persistent native_logs, import nullcontext from contextlib and
+    # replace TemporaryDirectory with nullcontext(str(experiment_dir / "native_logs")).
+    with TemporaryDirectory(prefix="fv_native_logs_", ignore_cleanup_errors=True) as native_log_dir:
+        exit_code = 0
+        try:
+            # Import native dependencies and load metrics before making model calls.
+            # Persistent initializer diagnostics disabled:
+            # formal_check.initialize_evaluator(experiment_dir / "native_logs", config.DATASET, config.JASPER_TIMEOUT_SECONDS)
+            formal_check.initialize_evaluator(
+                Path(native_log_dir), config.DATASET, config.JASPER_TIMEOUT_SECONDS,
             )
-            case_exit = run_io.run_experiment(
-                workflow=partial(run_pipeline, retriever=retriever),
-                cleanup_work=formal_check.cleanup_work,
-                case_id=case["task_id"],
-                case_dir=experiment_dir / "cases" / f"case_{case['case_number']:04d}",
-                summary_dir=experiment_dir,
-                models=models,
-                inputs={**case, "dataset": config.DATASET},
-                prompts={},
-                settings=settings,
+            for position, case in enumerate(cases, start=1):
+                print(
+                    f"\nRunning {position}/{len(cases)}: case {case['case_number']} | "
+                    f"{case['design_name']} / {case['task_id']}"
+                )
+                case_exit = run_io.run_experiment(
+                    workflow=partial(run_pipeline, retriever=retriever),
+                    cleanup_work=formal_check.cleanup_work,
+                    case_id=case["task_id"],
+                    case_dir=experiment_dir / "cases" / f"case_{case['case_number']:04d}",
+                    summary_dir=experiment_dir,
+                    models=models,
+                    inputs={**case, "dataset": config.DATASET},
+                    prompts={},
+                    settings=settings,
+                )
+                if case_exit == 130:
+                    exit_code = 130
+                    break
+                if case_exit != 0:
+                    exit_code = 1  # Record the case error; continue to the next selected case.
+        except KeyboardInterrupt:
+            exit_code = 130
+        except Exception:
+            exit_code = 1
+            raise
+        finally:
+            exit_code = run_io.finish_experiment(
+                experiment_dir, exit_code,
+                elapsed_seconds=perf_counter() - experiment_started,
             )
-            if case_exit == 130:
-                exit_code = 130
-                break
-            if case_exit != 0:
-                exit_code = 1  # Record the case error; continue to the next selected case.
-    except KeyboardInterrupt:
-        exit_code = 130
-    except Exception:
-        exit_code = 1
-        raise
-    finally:
-        exit_code = run_io.finish_experiment(
-            experiment_dir, exit_code,
-            elapsed_seconds=perf_counter() - experiment_started,
-        )
 
     return exit_code
 

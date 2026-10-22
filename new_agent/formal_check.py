@@ -46,8 +46,27 @@ def apply_acceptance_policy(result: dict) -> dict:
 
 
 def get_evaluation_policy(dataset: str) -> dict:
-    if dataset not in {"nl2sva_human", "nl2sva_machine"}:
-        raise ValueError("DATASET must be 'nl2sva_human' or 'nl2sva_machine'.")
+    if dataset not in {"nl2sva_human", "nl2sva_machine", "nl2sva_opencore"}:
+        raise ValueError("DATASET must be 'nl2sva_human', 'nl2sva_machine', or 'nl2sva_opencore'.")
+    if dataset == "nl2sva_opencore":
+        return {
+            "scope": (
+                "Use the native NL2SVA-OpenCore evaluator and run_jg_nl2sva_opencore.tcl. "
+                "The provided context is a module interface, not a complete testbench. "
+                "Use the actual clock signal and edge required by the requirement/interface; "
+                "do not invent a signal named clk or tb_reset. Replace EDGE and CLOCK_SIGNAL "
+                "in the statement template with the required edge and actual clock. "
+                "The native extract_assertion_formula removes the clock event from a wrapped "
+                "assertion; remaining reset/disable iff logic stays in the formula. "
+                "Do not add reset disabling absent from the requirement. "
+                "The native Tcl checks candidate against itself, then candidate against reference; "
+                "the native OpenCore scorer requires two full-equivalence reports. "
+                "Do not edit an assertion solely to repair PEC declaration/compilation issues."
+            ),
+            "include_reset": True,
+            "tcl_file": "run_jg_nl2sva_opencore.tcl",
+            "assertion_template": "asrt: assert property (@(EDGE CLOCK_SIGNAL) BODY);",
+        }
     human = dataset == "nl2sva_human"
     scope = (
         "Use the native NL2SVA-Human evaluator. It compares the property text "
@@ -113,6 +132,9 @@ def _initialize_evaluator(log_dir, dataset: str, timeout_seconds: float = 300):
     global _SESSION
     get_evaluation_policy(dataset)
     repo = validate_backend()
+    active_tcl = "FVEval/tool_scripts/" + get_evaluation_policy(dataset)["tcl_file"]
+    if not (repo / active_tcl).is_file():
+        raise FileNotFoundError(f"Missing native evaluator script: {repo / active_tcl}")
     if type(timeout_seconds) not in (int, float) or not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
         raise ValueError("timeout_seconds must be finite and positive.")
     started = perf_counter()
@@ -157,6 +179,7 @@ def _initialize_evaluator(log_dir, dataset: str, timeout_seconds: float = 300):
         _SESSION = SimpleNamespace(evaluation=evaluation, data=data, execution=execution,
                                    flags=flags, evaluators={}, log_dir=log_dir, source=source)
     session = _SESSION
+    session.source["sha256"][active_tcl] = hashlib.sha256((repo / active_tcl).read_bytes()).hexdigest()
     session.flags.global_task = "train"
     session.flags.task = dataset
     session.flags.jg_timeout_seconds = timeout_seconds
@@ -248,7 +271,8 @@ def evaluate_assertion(generated_assertion: str, reference_assertion: str, testb
     result["native_timing"]["similarity_seconds"] = perf_counter() - similarity_started
     lm_result = _SESSION.data.LMResult(experiment_id=dataset, task_id=tool_id, model_name=model_name,
         response=generated_assertion, ref_solution=reference_assertion,
-        user_prompt=requirement, output_tb=testbench, design_rtl="\n", cot_response="\n")
+        user_prompt=requirement, output_tb="\n" if dataset == "nl2sva_opencore" else testbench,
+        design_rtl="\n", cot_response="\n")
     original_launcher = _SESSION.execution.launch_jg_custom_equiv_check
     outputs = []
 
@@ -277,6 +301,11 @@ def evaluate_assertion(generated_assertion: str, reference_assertion: str, testb
         if result["status"] in SEMANTIC_STATUSES | {"SYNTAX_ERROR", "PEC_COMPILE_ERROR"}:
             for target, source in (("syntax", "syntax"), ("pec", "functionality"), ("relax_pec", "func_relaxed")):
                 result[target] = scores[source]
+            if dataset == "nl2sva_opencore" and result["status"] in SEMANTIC_STATUSES:
+                # One of OpenCore's two checks may say Full equivalence. The
+                # supplied native scorer, not that first message, is authoritative.
+                result["status"] = ("FULL_EQUIVALENCE" if scores["functionality"] == 1.0 else
+                                    "IMPLIES" if scores["func_relaxed"] == 1.0 else "NO_EQUIVALENCE")
     except Exception as error:
         result["tool_output"] = "\n".join(outputs) or str(error)
         observed = _execution_status(result["tool_output"])
@@ -287,6 +316,9 @@ def evaluate_assertion(generated_assertion: str, reference_assertion: str, testb
         _SESSION.execution.launch_jg_custom_equiv_check = original_launcher
         result["native_timing"]["jg_seconds"] = perf_counter() - jg_started
         native_input = work / f"{dataset}_{tool_id}.sva"
+        if dataset == "nl2sva_opencore":
+            # Native OpenCore Tcl does not compile/package a dataset testbench.
+            result["input_path"] = str(directory / "native_pec_inputs.json")
         if native_input.is_file():
             shutil.copyfile(native_input, result["input_path"])
         Path(result["log_path"]).write_text(result["tool_output"] + "\n", encoding="utf-8")

@@ -80,5 +80,8 @@ def build_rule_prompt(
         "retrieved_cases": historical_cases,
         "comparison_scope": comparison_scope,
     }
-    return ("Generate grouped guidance for the next assertion attempt. Return a JSON object.\n"
-            + json.dumps(inputs, indent=2, ensure_ascii=False))
+    task = "Generate grouped guidance for the next assertion attempt. Return a JSON object.\n"
+    if not historical_cases:
+        task += ("No historical training cases or rules are provided. Derive guidance only "
+                 "from the current requirement, testbench, candidate and diagnosis statements.\n")
+    return task + json.dumps(inputs, indent=2, ensure_ascii=False)

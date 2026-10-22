@@ -2,19 +2,20 @@
 
 from pathlib import Path
 
-# "train" or "inference"; launch both with python main.py.
+# "train": learn rules on selected training cases.
+# "inference": exclude source training cases and retrieve learned rules.
+# "inference_only": baseline on ALL cases, without a training source or retrieval.
+# Launch every mode with python main.py.
 MODE = "train"
 
 
-# Supported CSV stems: "nl2sva_human" or "nl2sva_machine".
-# Each dataset uses its native FVRuleLearner evaluator and comparison scope.
+# Supported datasets: nl2sva_human, nl2sva_machine, nl2sva_opencore.
 DATASET = "nl2sva_human"
+REPO_ROOT = Path(__file__).resolve().parent.parent
 DATASET_PATH = (
-    Path(__file__).resolve().parent.parent
-    / "FVEval"
-    / "data_nl2sva"
-    / "data"
-    / f"{DATASET}.csv"
+    REPO_ROOT / "FVEval" / "data_1k" / "module_sva_nl_manual_editing.csv"
+    if DATASET == "nl2sva_opencore" else
+    REPO_ROOT / "FVEval" / "data_nl2sva" / "data" / f"{DATASET}.csv"
 )
 
 # [] = split the full dataset and train only on the training portion.
@@ -48,13 +49,14 @@ CONFIDENCE_THRESHOLD = 0.2
 # Every invocation creates a separate experiment directory here.
 RUNS_DIR = Path(__file__).resolve().parent / "runs"
 
+# Used only by MODE = "inference". Ignored by train and inference_only.
 # None selects the most recently completed compatible Train run.
 # An absolute path or a directory name relative to RUNS_DIR selects one run.
 # This SAME run determines the excluded training cases and the retrieval bank.
 TRAINING_RUN_DIR = None
 
-# [] = every held-out case. Nonempty IDs must be outside the selected training run.
-INFER_CASE_IDS = []
+# Inference always runs every dataset case outside the selected training run.
+# Case IDs are determined automatically; there is no inference ID override.
 
 # Retrieve up to this many cases WITH rules, ranked by requirement similarity.
 TOP_K_CASES = 5

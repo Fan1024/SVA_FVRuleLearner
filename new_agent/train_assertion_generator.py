@@ -14,6 +14,7 @@ def build_generation_prompt(
     *,
     comparison_scope: str = COMPARISON_SCOPE,
     revision_feedback: str | None = None,
+    assertion_template: str = "asrt: assert property (@(posedge clk) BODY);",
 ) -> str:
     """Build a fresh initial or revision prompt; never accept a reference."""
     revision = ""
@@ -50,14 +51,15 @@ def build_generation_prompt(
         if comparison_scope else ""
     )
     retry_guidance = ("\nPREVIOUS ATTEMPT FEEDBACK\n" + revision_feedback + "\n") if revision_feedback else ""
-    return f"""Here is the testbench to perform your translation:
+    context_name = "module interface" if "CLOCK_SIGNAL" in assertion_template else "testbench"
+    return f"""Here is the {context_name} to perform your translation:
 
 {testbench}
 
 Question: Create a SVA assertion checks {requirement}
 {scope_guidance}{revision}{retry_guidance}
 Generate exactly one assertion using this statement structure:
-asrt: assert property (@(posedge clk) BODY);
+{assertion_template}
 If the testbench/task requires reset disabling, put disable iff (RESET) after
 the clock event, inside the same outer parentheses.
 The label is asrt: BEFORE assert property. Do not write assert property asrt.

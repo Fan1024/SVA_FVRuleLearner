@@ -213,13 +213,15 @@ def create_experiment(
     """Create one batch directory and save its resolved inputs/selection once."""
     if phase not in ("train", "infer"):
         raise ValueError("phase must be 'train' or 'infer'.")
-    if (phase == "infer") != (source_training_run is not None):
-        raise ValueError("Only inference experiments require source_training_run.")
+    requires_source = phase == "infer" and settings.get("mode") != "inference_only"
+    if requires_source != (source_training_run is not None):
+        raise ValueError("Only retrieval-backed inference requires source_training_run.")
     directory_label = re.sub(r"[^A-Za-z0-9_-]+", "_", dataset).strip("_") or "dataset"
     directory = create_run(directory_label, runs_root=runs_root, phase=phase)
     metadata = {
         "output_format_version": 4,
         "phase": phase,
+        "mode": settings.get("mode", "inference" if phase == "infer" else "train"),
         "dataset": dataset,
         "dataset_path": str(dataset_path),
         "dataset_sha256": hashlib.sha256(Path(dataset_path).read_bytes()).hexdigest(),
@@ -398,6 +400,7 @@ def final_record(record: dict) -> dict:
     saved["round_failures"] = record.get("round_failures", [])
     saved["round_metrics"] = record.get("round_metrics", [])
     saved["phase"] = record["settings"].get("phase", "train")
+    saved["mode"] = record["settings"].get("mode", "inference" if saved["phase"] == "infer" else "train")
     saved["retrieved_cases"] = record.get("retrieved_cases", [])
     saved["inputs"] = {
         name: record["inputs"][name]
