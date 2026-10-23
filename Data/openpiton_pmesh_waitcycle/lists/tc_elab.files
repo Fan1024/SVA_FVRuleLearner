@@ -1,0 +1,55 @@
+// Analyzed file list for openpiton_pmesh_waitcycle. Paths are relative to the
+// PACKAGE ROOT: the elaboration recipe is sourced with the package root as cwd
+// and `slang` is run from there too, so one spelling serves both.
+//
+// The round appends one `../submission/<worker>.sv` line per worker to the end
+// of this file (v5/round.py), which resolves to <run_root>/submission from the
+// same cwd. Do not add a trailing `-y`/library directive after the file list --
+// an appended source line has to stay a source line.
+//
+// One `analyze -sv12` covers the whole list. The OpenPiton dynamic-node RTL is
+// Verilog-2001 and its upstream flow analyzes it `-v2k`, but it declares no
+// identifier that SystemVerilog-2012 reserves, so a single language mode is
+// enough and keeps one appendable list.
++incdir+rtl/openpiton_dn
+
+// pmesh_top defaults to 2x2 when these are absent. The formal topology is 3x3.
+// PMESH_-prefixed, NOT PITON_X_TILES -- define.tmp.vh sets PITON_X_TILES=8.
++define+PMESH_X_TILES=3
++define+PMESH_Y_TILES=3
+
+// --- OpenPiton dynamic-node router, byte-identical upstream RTL -------------
+// define.tmp.vh is NOT listed: it is reached by `include through +incdir+ only,
+// exactly as the upstream flow reaches it.
+rtl/openpiton_dn/bus_compare_equal.v
+rtl/openpiton_dn/dmbr_define.v
+rtl/openpiton_dn/dynamic_input_control.v
+rtl/openpiton_dn/dynamic_input_route_request_calc.v
+rtl/openpiton_dn/dynamic_input_top_16.v
+rtl/openpiton_dn/dynamic_input_top_4.v
+rtl/openpiton_dn/dynamic_node_top.v
+rtl/openpiton_dn/dynamic_node_top_wrap.v
+rtl/openpiton_dn/dynamic_output_control.v
+rtl/openpiton_dn/dynamic_output_datapath.v
+rtl/openpiton_dn/dynamic_output_top.v
+rtl/openpiton_dn/flip_bus.v
+rtl/openpiton_dn/net_dff.v
+rtl/openpiton_dn/network_define.v
+rtl/openpiton_dn/network_input_blk_multi_out.v
+rtl/openpiton_dn/one_of_eight.v
+rtl/openpiton_dn/one_of_five.v
+rtl/openpiton_dn/one_of_n.v
+rtl/openpiton_dn/one_of_n_plus_3.v
+rtl/openpiton_dn/space_avail_top.v
+
+// --- the 3x3 mesh, the wait-graph checker, and the formal top ---------------
+// The checker and the formal top keep the SOURCE's file names --
+// `..._deadlock_checker.sv`, `..._deadlock_ft.sv` -- and so do the modules they
+// declare. This package was derived from the deadlock task upstream and the
+// names came with it. Renaming the files would leave them disagreeing with the
+// modules inside, which is worse. The TARGET here is T_WAIT_GRAPH_ACYCLIC.
+rtl/pmesh_top.v
+sva/openpiton_pmesh_deadlock_checker.sv
+ft/openpiton_pmesh_deadlock_ft.sv
+// ---- phase-1 candidate targets ----------------------------------------
+sva/targets_openpiton_pmesh_waitcycle.sv

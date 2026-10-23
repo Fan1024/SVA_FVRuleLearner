@@ -1,0 +1,49 @@
+{
+  "note": "Ported 2026-08-26 from the 0826 hard-target corpus. PROVE only: the phase-1 screen already ran and `target_labels` is its hard subset -- the candidates that came back UNDETERMINED at the screen budget from real reset. cex and proven are excluded: one is wrong, the other is too easy to be a target.",
+  "top": "corundum_tx_rx_datapath_ft",
+  "mount": [
+    "rtl",
+    "sva",
+    "ft",
+    "lists"
+  ],
+  "slang": {
+    "command_file": "lists/tc_elab.files"
+  },
+  "elab_tcl": "tc_elab.tcl",
+  "diag": "diag_corundum_tx_rx_datapath",
+  "placement": "Your file is a standalone compilation unit added to the design sources. Write full hierarchical names, exactly as the design map shows them.",
+  "scope_note": "",
+  "target_labels": [
+    "T_ALLOC_TXCPL_TAG_MARKED",
+    "T_BOUNDRSP_FETCH_STATUS_WITHIN_N",
+    "T_BOUNDRSP_PKT_TO_HOST_WITHIN_N",
+    "T_BOUND_DESC_FETCH_INFLIGHT",
+    "T_CONSERV_CPL_HOST_LE_CPL_DMA",
+    "T_CONSERV_DESC_STREAM_LE_FETCH_OK",
+    "T_CONSERV_IFRX_LE_IFTX",
+    "T_CONSERV_RXHOST_PKT_LE_IFRX",
+    "T_DATA_CPL_ADDR_IS_NEXT_RING_SLOT",
+    "T_DATA_CPL_LEN_IS_A_PACKET_LEN",
+    "T_DATA_DESC_MATCHES_HOST",
+    "T_DATA_IFRX_WORD_SELF_CONSISTENT",
+    "T_DATA_IFTX_WORD_ADDR_STEPS_8",
+    "T_DATA_IFTX_WORD_SELF_CONSISTENT",
+    "T_DATA_MAC0_HALFWORD_PAIR",
+    "T_DATA_RXDMA_ADDR_MATCHES_DESC",
+    "T_DATA_RXHOST_WORD_ADDR_STEPS_8",
+    "T_DATA_RXHOST_WORD_SELF_CONSISTENT",
+    "T_DATA_TXDMA_ADDR_MATCHES_DESC",
+    "T_DEADLOCK_DF_TABLE_DRAINS_WITHIN_N",
+    "T_DEADLOCK_GLOBAL_PROGRESS_WITHIN_N",
+    "T_FAIR_RX_DESC_REQ_ADMITTED_WITHIN_N",
+    "T_FAIR_TX_DESC_REQ_ADMITTED_WITHIN_N",
+    "T_ORDER_DESC_STREAM_IS_OLDEST_FETCH",
+    "T_ORDER_PKT_PORT0_FIFO"
+  ],
+  "design_keep": [
+    "corundum_txrx_targets\\.",
+    "\\.env_[a-z0-9_]+\\.",
+    "ftenv_"
+  ]
+}

@@ -1,0 +1,66 @@
+// Analyzed file list for tasks/nyuzi_l2_ring_coherence.
+//
+// Read by two consumers, which is why one list holds every source:
+//   * lists/tc_elab.tcl:  analyze -sv12 -f lists/tc_elab.files
+//   * taskdefs.slang_args, which filters it into tc_elab.files.slang for the
+//     design map and for v6_dataset/elab_local.py.
+// v5/round.py appends one `../submission/<web>.sv` line per worker at the end,
+// so ORDER MATTERS: the leaf cells first, then the L1 blocks, then the L2, then
+// the formal top, then the target file, and a worker's file last so it can
+// reference anything above it.
+//
+// Paths are relative to the package root -- the drivers `cd $task_root` before
+// sourcing tc_elab.tcl.
+//
+// `rtl/nyuzi/defines.svh` is both the `defines` package and the file that
+// declares `axi4_interface`, and it `include`s `config.svh` from the same
+// directory. Every RTL file opens with `include "defines.svh"`, so the one
+// +incdir+ below is the whole include story for this package.
+
++incdir+rtl/nyuzi
+
+// No VENDOR_ALTERA / VENDOR_XILINX / MEMORY_COMPILER is defined, so every
+// sram_* and the sync_fifo take their behavioural branch, which is the only
+// branch this package ships a body for. No SIMULATION either: that guard only
+// adds Nyuzi's own $display/$finish debug checks.
+
+// ---- leaf cells ------------------------------------------------------
+rtl/nyuzi/idx_to_oh.sv
+rtl/nyuzi/oh_to_idx.sv
+rtl/nyuzi/rr_arbiter.sv
+rtl/nyuzi/cam.sv
+rtl/nyuzi/sram_1r1w.sv
+rtl/nyuzi/sram_2r1w.sv
+rtl/nyuzi/sync_fifo.sv
+rtl/nyuzi/cache_lru.sv
+rtl/nyuzi/tlb.sv
+
+// ---- L1 side, one instance of each per core --------------------------
+rtl/nyuzi/ifetch_tag_stage.sv
+rtl/nyuzi/ifetch_data_stage.sv
+rtl/nyuzi/dcache_tag_stage.sv
+rtl/nyuzi/dcache_data_stage.sv
+rtl/nyuzi/l1_load_miss_queue.sv
+rtl/nyuzi/l1_store_queue.sv
+rtl/nyuzi/l1_l2_interface.sv
+
+// ---- L2 side, one instance shared by both cores ----------------------
+rtl/nyuzi/l2_cache_arb_stage.sv
+rtl/nyuzi/l2_cache_tag_stage.sv
+rtl/nyuzi/l2_cache_read_stage.sv
+rtl/nyuzi/l2_cache_update_stage.sv
+rtl/nyuzi/l2_cache_pending_miss_cam.sv
+rtl/nyuzi/l2_axi_bus_interface.sv
+rtl/nyuzi/l2_cache.sv
+
+// ---- formal top ------------------------------------------------------
+ft/nyuzi_l1_agent.sv
+ft/nyuzi_axi_mem.sv
+ft/nyuzi_l2_ring_coherence_ft.sv
+
+// ---- reachability covers (NOT targets; COVER_DEPTH reads these) ------
+sva/covers_nyuzi_l2_ring_coherence.sv
+
+// ---- phase-1 candidate targets --------------------------------------
+// LAST, because a `bind` must be analyzed after the module it binds into.
+sva/targets_nyuzi_l2_ring_coherence.sv

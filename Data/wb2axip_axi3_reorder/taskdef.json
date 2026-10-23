@@ -1,0 +1,31 @@
+{
+  "note": "Ported 2026-08-26 from the 0826 hard-target corpus. PROVE only: the phase-1 screen already ran and `target_labels` is its hard subset -- the candidates that came back UNDETERMINED at the screen budget from real reset. cex and proven are excluded: one is wrong, the other is too easy to be a target. `design_keep` carries the source package's own list plus `axi3_reorder_targets\\.`, the bound target oracle's instance: this harness has no derived `oracle_keep()`, and an uncut oracle is what keeps the counting targets from being false at cycle 0.",
+  "top": "testbench",
+  "mount": [
+    "rtl",
+    "sva",
+    "ft",
+    "lists"
+  ],
+  "slang": {
+    "command_file": "lists/tc_elab.files"
+  },
+  "elab_tcl": "tc_elab.tcl",
+  "diag": "diag_wb2axip_axi3_reorder",
+  "placement": "Your file is a standalone compilation unit added to the design sources. Write full hierarchical names, exactly as the design map shows them.",
+  "scope_note": "",
+  "target_labels": [
+    "T_BOUND_PER_ID_LIVE_LE_SEVENTEEN",
+    "T_BOUNDRSP_HEAD_PACKET_BEAT_WITHIN_N",
+    "T_CONSERV_PER_ID_LIVE_SUMS_TO_INFLIGHT",
+    "T_DEADLOCK_AW_PORT_UNBLOCKED_WITHIN_N",
+    "T_DEADLOCK_SOME_BOUNDARY_MOVES_WITHIN_N",
+    "T_ORDER_OUT_LAST_ON_FOURTH_BEAT",
+    "T_REQRSP_PACKETS_COMPLETED_LE_AW_ACCEPTED",
+    "T_UNIQ_OUT_COUNT_LE_IN_COUNT"
+  ],
+  "design_keep": [
+    "(aw|w)_(wptr|rptr|count)",
+    "axi3_reorder_targets\\."
+  ]
+}

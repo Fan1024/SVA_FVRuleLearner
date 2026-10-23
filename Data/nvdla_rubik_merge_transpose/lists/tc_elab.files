@@ -1,0 +1,39 @@
+// Analyzed file list for nvdla_rubik_merge_transpose. Paths are relative to the
+// PACKAGE ROOT: the elaboration recipe is sourced with the package root as cwd
+// and `slang` is run from there too, so one spelling serves both.
+//
+// The round appends one `../submission/<worker>.sv` line per worker to the end
+// of this file (v5/round.py), which resolves to <run_root>/submission from the
+// same cwd. Do not add a trailing `-y`/library directive after the file list --
+// an appended source line has to stay a source line.
+//
+// One `analyze -sv12` covers the whole list, which is what the upstream task
+// did too: the generated RUBIK RTL is Verilog-2001 but declares no identifier
+// that SystemVerilog-2012 reserves.
+//
+// No `+incdir+`: unlike the other four nvdla packages this one ships no
+// `include/` directory. `simulate_x_tick.vh` is not reached from the RUBIK
+// core, and the upstream task's analyze line carries no include path either.
+
+// `SYNTHESIS` selects the synthesizable branch of the generated RTL. The
+// upstream task passes no `VLIB_BYPASS_POWER_CG` here because this package
+// ships no clock gate: the RUBIK core's only instantiated cell is the RAM.
++define+SYNTHESIS
+
+// --- the RAM model ----------------------------------------------------------
+// nv_ram_rws_32x16_functional.sv is the task's functional replacement for the
+// nv_ram_rws_32x16 foundry/DFT wrapper. The module it declares is
+// `nv_ram_rws_32x16`, which is the name the RUBIK core instantiates 32 times.
+rtl/nv_ram_rws_32x16_functional.sv
+
+// --- the RUBIK register-file core, byte-identical upstream RTL --------------
+rtl/NV_NVDLA_RUBIK_rf_core.v
+
+// --- the oracle and the formal top ------------------------------------------
+sva/nvdla_rubik_merge_transpose_checker.sv
+ft/nvdla_rubik_merge_transpose_ft.sv
+
+// ---- phase-1 candidate targets ----------------------------------------
+// LAST, because it is a `bind` into nvdla_rubik_merge_transpose_ft and a bind
+// must be analyzed after the module it binds into.
+sva/targets_nvdla_rubik_merge_transpose.sv

@@ -1,0 +1,60 @@
+// Analyzed file list for tasks/serv_rvfi_insn_ori.
+//
+// Paths are relative to the PACKAGE ROOT: the drivers `cd $task_root` before
+// sourcing lists/tc_elab.tcl, and `taskdefs.slang_args` runs slang from the
+// same place, so one spelling serves both.
+//
+// Two consumers read this one list:
+//   * lists/tc_elab.tcl:  analyze -sv12 -f lists/tc_elab.files
+//   * taskdefs.slang_args, which filters it into tc_elab.files.slang for the
+//     design map.
+// v5/round.py appends one `../submission/<worker>.sv` line per worker at the
+// END, so the file must end with a newline and must not close with a `-y` or
+// other non-source directive -- an appended source line has to stay a source
+// line.
+//
+// ORDER MATTERS, and this is the whole subtlety of the SERV packages.
+// `ft/defines.sv` is a HEADER, not a module, and it is listed first on
+// purpose. The source flow (engine/ric3.toml) names it under `include_files`;
+// here it is the first analyzed file so that its `RISCV_FORMAL` and the
+// `rvfi_macros.vh` it pulls in are defined before anything else compiles.
+// The SERV RTL does NOT include it -- serv_top.v:25, serv_rf_top.v:46 and
+// serv_debug.v:16 guard the whole rvfi port list behind `ifdef RISCV_FORMAL,
+// so with the header anywhere later the core would elaborate WITHOUT its rvfi
+// outputs and ft/wrapper.sv's `RVFI_CONN would name ports that do not exist.
+// It carries its own `ifndef DEFINES_SV guard, so the `include "defines.sv"
+// that sva/ and ft/ each do is then inert.
+
++incdir+ft
+
+// --- riscv-formal configuration header, first: see above --------------------
+ft/defines.sv
+
+// --- SERV RISC-V core, byte-identical upstream RTL --------------------------
+rtl/serv_bufreg.v
+rtl/serv_bufreg2.v
+rtl/serv_alu.v
+rtl/serv_csr.v
+rtl/serv_ctrl.v
+rtl/serv_decode.v
+rtl/serv_immdec.v
+rtl/serv_mem_if.v
+rtl/serv_rf_if.v
+rtl/serv_rf_ram.v
+rtl/serv_rf_ram_if.v
+rtl/serv_state.v
+rtl/serv_debug.v
+rtl/serv_top.v
+rtl/serv_rf_top.v
+
+// --- the riscv-formal instruction model and the check that reads it ---------
+sva/insn_ori.v
+sva/rvfi_insn_check.sv
+
+// --- the rvfi wrapper around the core, and the formal top -------------------
+ft/wrapper.sv
+ft/tb.sv
+
+// --- phase-1 candidate targets. LAST, because the bind at the
+// --- end of the file must be analyzed after `testbench` exists.
+sva/targets_serv_rvfi_insn_ori.sv

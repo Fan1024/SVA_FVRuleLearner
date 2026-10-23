@@ -1,0 +1,104 @@
+// Analyzed file list for opentitan_spi_device_fifo. Paths are relative to the
+// PACKAGE ROOT: the elaboration recipe is sourced with the package root as cwd
+// and `slang` is run from there too, so one spelling serves both.
+//
+// The round appends one `../submission/<worker>.sv` line per worker to the end
+// of this file (v5/round.py), which resolves to <run_root>/submission from the
+// same cwd. Do not add a trailing `-y`/library directive after the file list --
+// an appended source line has to stay a source line.
+//
+// ORDER MATTERS for the packages: OpenTitan declares struct types in `_pkg`
+// files and uses them in PORT declarations, so a package has to be analyzed
+// before the module whose ports it types. The package block below is in
+// dependency order and should stay that way.
+//
+// `ft/opentitan_spi_device_fifo_ft.sv` closes with `default_nettype wire`, so
+// an appended worker file is compiled under the default net type and not under
+// the `none` that the formal top sets for itself.
+
+// OpenTitan's own configuration switch, and it is LOAD-BEARING. `prim_assert.sv`
+// takes the DUMMY macro set under SYNTHESIS, which turns every `ASSERT/`ASSUME
+// embedded in the upstream RTL into nothing. Without it spid_upload's three
+// `ASSUME`s (CmdFifoNeverFull_M, AddrFifoNeverFull_M, PayloadNeverFull_M) and
+// prim_fifo_async_sram_adapter's RSramRvalidOneCycle_M become live constraints
+// on the proof, which is a DIFFERENT task from the one this package states --
+// two of them assume away exactly the overflow the occupancy targets are about.
++define+SYNTHESIS
+
+// The `include path for prim_assert.sv, prim_assert_dummy_macros.svh,
+// prim_assert_sec_cm.svh, prim_flop_macros.sv, prim_macros.svh,
+// prim_fifo_assert.svh and prim_util_memload.svh. Those seven are NOT listed
+// below: they are macro files reached by `include only, exactly as the upstream
+// flow reaches them.
++incdir+rtl
+
+// --- packages, in dependency order, byte-identical upstream OpenTitan --------
+rtl/prim_util_pkg.sv
+rtl/prim_mubi_pkg.sv
+rtl/prim_count_pkg.sv
+rtl/prim_ram_2p_pkg.sv
+rtl/prim_ram_1r1w_pkg.sv
+rtl/spi_device_reg_pkg.sv
+rtl/spi_device_pkg.sv
+
+// --- prim cells, byte-identical upstream OpenTitan ---------------------------
+// prim_buf / prim_flop / prim_flop_en / prim_flop_2sync / prim_clock_mux2 /
+// prim_ram_1r1w / prim_ram_2p are the GENERIC technology variants
+// (hw/ip/prim_generic/rtl), which is what the upstream simulation and FPV flows
+// pick up. The xilinx and asap7 trees carry same-named modules that instantiate
+// vendor cells.
+rtl/prim_buf.sv
+rtl/prim_flop.sv
+rtl/prim_flop_en.sv
+rtl/prim_cdc_rand_delay.sv
+rtl/prim_flop_2sync.sv
+rtl/prim_sec_anchor_buf.sv
+rtl/prim_clock_mux2.sv
+rtl/prim_count.sv
+rtl/prim_pulse_sync.sv
+rtl/prim_sync_reqack.sv
+rtl/prim_sync_reqack_data.sv
+rtl/prim_leading_one_ppc.sv
+rtl/prim_arbiter_ppc.sv
+rtl/prim_arbiter_tree.sv
+rtl/prim_fifo_sync_cnt.sv
+rtl/prim_fifo_sync.sv
+
+// The two asynchronous FIFOs. `prim_fifo_async` is the classic gray-pointer
+// FIFO with its own storage; `prim_fifo_async_sram_adapter` is the same
+// pointer machinery with the storage moved into the dual-port SRAM. Both are
+// what this package is about.
+rtl/prim_fifo_async.sv
+rtl/prim_fifo_async_sram_adapter.sv
+
+rtl/prim_sram_arbiter.sv
+
+// The SECDED encoders/decoders are reached through `prim_ram_*_async_adv`'s
+// ECC generate arms. This package runs with EnableECC 0 and EnableParity 1, but
+// the other arms still elaborate and have to be on the list.
+rtl/prim_secded_inv_39_32_enc.sv
+rtl/prim_secded_inv_39_32_dec.sv
+rtl/prim_secded_inv_hamming_39_32_enc.sv
+rtl/prim_secded_inv_hamming_39_32_dec.sv
+
+rtl/prim_ram_1r1w.sv
+rtl/prim_ram_1r1w_async_adv.sv
+rtl/prim_ram_2p.sv
+rtl/prim_ram_2p_async_adv.sv
+
+// --- spi_device, byte-identical upstream OpenTitan ---------------------------
+rtl/spid_csb_sync.sv
+rtl/spid_fifo2sram_adapter.sv
+rtl/spid_addr_4b.sv
+rtl/spi_s2p.sv
+rtl/spi_p2s.sv
+rtl/spi_cmdparse.sv
+rtl/spid_status.sv
+rtl/spid_jedec.sv
+rtl/spid_upload.sv
+rtl/spid_dpram.sv
+
+// --- the oracle and its targets, the covers, and the formal top --------------
+sva/targets_opentitan_spi_device_fifo.sv
+sva/covers_opentitan_spi_device_fifo.sv
+ft/opentitan_spi_device_fifo_ft.sv

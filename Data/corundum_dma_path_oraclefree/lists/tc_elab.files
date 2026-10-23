@@ -1,0 +1,38 @@
+// Analyzed file list for tasks/corundum_dma_path.
+//
+// Read by two consumers, which is why one list holds every source:
+//   * lists/tc_elab.tcl:  analyze -sv12 -f lists/tc_elab.files
+//   * taskdefs.slang_args, which filters it into tc_elab.files.slang for the
+//     local Slang gate and the design map.
+//
+// v5/round.py appends one `../submission/<worker>.sv` line per worker at the
+// end, so ORDER MATTERS and the file must end with a newline: the upstream RTL
+// comes first, then the formal top that instantiates it, then the candidate
+// targets that bind into the formal top, and a worker's file must come last so
+// it can reference anything above it.
+//
+// Paths are relative to the package root -- the drivers `cd $task_root` before
+// sourcing tc_elab.tcl, and `slang` is run from there too.
+//
+// No `+incdir+` and no `+define+`. Corundum's RTL is self-contained Verilog
+// 2001: not one of the six files below has an `include or reads a macro that
+// is not defined in the same file.
+
+// ---- upstream Corundum RTL, byte-identical ------------------------------
+//      github.com/corundum/corundum @ 1ca0151b (2023-12-02)
+//      fpga/lib/pcie/rtl/
+rtl/corundum/priority_encoder.v
+rtl/corundum/dma_psdpram.v
+rtl/corundum/dma_client_axis_source.v
+//      fpga/common/rtl/
+rtl/corundum/queue_manager.v
+rtl/corundum/cpl_queue_manager.v
+rtl/corundum/desc_fetch.v
+rtl/corundum/cpl_write.v
+
+// ---- task-authored formal top: the chain, the driver, the two bounded
+//      host-memory responders and the descriptor engine ------------------
+ft/corundum_dma_path_ft.sv
+
+// ---- task-authored oracle, candidate targets and covers -----------------
+sva/targets_corundum_dma_path.sv

@@ -1,0 +1,44 @@
+// Analyzed file list for nvdla_mcif_order. Paths are relative to the PACKAGE
+// ROOT: the elaboration recipe is sourced with the package root as cwd and
+// `slang` is run from there too, so one spelling serves both.
+//
+// The round appends one `../submission/<worker>.sv` line per worker to the end
+// of this file (v5/round.py), which resolves to <run_root>/submission from the
+// same cwd. Do not add a trailing `-y`/library directive after the file list --
+// an appended source line has to stay a source line.
+//
+// One `analyze -sv12` covers the whole list, which is what the upstream task
+// did too: the generated NVDLA RTL is Verilog-2001 but declares no identifier
+// that SystemVerilog-2012 reserves.
++incdir+include
+
+// `SYNTHESIS` selects the synthesizable branch of the generated RTL and drops
+// the `simulate_x_tick.vh` X-injection tasks; `VLIB_BYPASS_POWER_CG` makes
+// NV_CLK_gate_power a wire-through instead of a latch-based gate. Both come
+// from the upstream task's own analyze line.
++define+SYNTHESIS
++define+VLIB_BYPASS_POWER_CG
+
+// --- RAM models and library cells -------------------------------------------
+// nvdla_formal_ram_models.sv is the task's functional replacement for the two
+// CQ foundry/DFT SRAM wrappers; the rest is upstream vlib.
+rtl/nvdla_formal_ram_models.sv
+rtl/NV_BLKBOX_SINK.v
+rtl/NV_CLK_gate_power.v
+rtl/NV_NVDLA_XXIF_libs.v
+
+// --- the generated MCIF read path, byte-identical upstream RTL --------------
+rtl/NV_NVDLA_MCIF_READ_IG_bpt.v
+rtl/NV_NVDLA_MCIF_READ_IG_arb.v
+rtl/NV_NVDLA_MCIF_READ_IG_spt.v
+rtl/NV_NVDLA_MCIF_READ_IG_cvt.v
+rtl/NV_NVDLA_MCIF_READ_ig.v
+rtl/NV_NVDLA_MCIF_READ_cq.v
+rtl/NV_NVDLA_MCIF_READ_eg.v
+rtl/NV_NVDLA_MCIF_read.v
+
+// --- the oracle and the formal top ------------------------------------------
+sva/nvdla_mcif_order_checker.sv
+ft/nvdla_mcif_order_ft.sv
+// ---- phase-1 candidate targets ----------------------------------------
+sva/targets_nvdla_mcif_order.sv

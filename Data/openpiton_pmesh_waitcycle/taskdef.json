@@ -1,0 +1,37 @@
+{
+  "note": "Ported 2026-08-26 from the 0826 hard-target corpus. PROVE only: the phase-1 screen already ran and `target_labels` is its hard subset -- the candidates that came back UNDETERMINED at the screen budget from real reset. cex and proven are excluded: one is wrong, the other is too easy to be a target. `design_keep` carries the source package's own list plus `u_targets_openpiton_pmesh_waitcycle\\.`, the bound target oracle's instance: this harness has no derived `oracle_keep()`, and an uncut oracle is what keeps the counting targets from being false at cycle 0.",
+  "top": "openpiton_pmesh_deadlock_ft",
+  "mount": [
+    "rtl",
+    "sva",
+    "ft",
+    "lists"
+  ],
+  "slang": {
+    "command_file": "lists/tc_elab.files"
+  },
+  "elab_tcl": "tc_elab.tcl",
+  "diag": "diag_pmesh_waitcycle",
+  "placement": "Your file is a standalone compilation unit added to the design sources. Write full hierarchical names from the top, exactly as the design map shows them.",
+  "scope_note": "",
+  "target_labels": [
+    "T_BOUND_INFLIGHT_TOTAL",
+    "T_CONSERVE_INFLIGHT_EQUALS_BUFFERED",
+    "T_CONSERVE_SINK_ACCOUNT",
+    "T_DEADLOCK_GLOBAL_PROGRESS",
+    "T_DEADLOCK_NO_STALLED_ENDPOINT_BUFFER",
+    "T_DEADLOCK_NO_STALLED_MESH_BUFFER",
+    "T_FAIR_T5_SOUTH_NORTH_INPUT",
+    "T_FAIR_T5_SOUTH_PROC_INPUT",
+    "T_FAIR_T5_SOUTH_WEST_INPUT",
+    "T_ORDER_ALL_FLOWS_FIFO",
+    "T_ORDER_FLOW0_FIFO",
+    "T_ORDER_FLOW2_FIFO",
+    "T_RESPONSE_DST_GRANT_LATENCY",
+    "T_RESPONSE_SOURCE_CREDIT_RETURN",
+    "T_UNIQ_NO_DELIVERY_WITHOUT_QUEUED"
+  ],
+  "design_keep": [
+    "u_targets_openpiton_pmesh_waitcycle\\."
+  ]
+}

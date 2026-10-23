@@ -1,0 +1,58 @@
+// Analyzed file list for pulp_stream_xbar_order. Paths are relative to the
+// PACKAGE ROOT: the elaboration recipe is sourced with the package root as cwd
+// and `slang` is run from there too, so one spelling serves both.
+//
+// The round appends one `../submission/<worker>.sv` line per worker to the end
+// of this file (v5/round.py), which resolves to <run_root>/submission from the
+// same cwd. Do not add a trailing `-y`/library directive after the file list --
+// an appended source line has to stay a source line.
+//
+// ONE analyzed file. The nine common-cells RTL files are NOT listed: `ft/tb.sv`
+// pulls them in with `include at file scope, in dependency order and with
+// `COMMON_CELLS_ASSERTS_OFF` already defined, exactly as the upstream task's
+// `tcl/setup.tcl` does. Listing them as well would declare every module twice,
+// and would also compile `cc_pkg.sv` outside the order the rest depends on.
+
+// --- one Slang-only switch, and why it is here rather than in the source ----
+// `ft/tb.sv` writes three variables from two processes:
+//
+//   past_valid   `initial past_valid = 1'b0;` (line 171) and the `always_ff`
+//                (line 174). This is the ordinary formal idiom for a
+//                past-valid flag and every FPV tool takes it.
+//   s, d         the loop counters, declared once as `integer` and reused by
+//                BOTH the `always_comb` that computes `target_ok` and the
+//                `always_ff` that maintains the reference rings. Each block
+//                assigns them before reading them, so neither can see the
+//                other's value.
+//
+// Slang promotes `multiple-always-assigns` to an ERROR and will not elaborate
+// the package without this line, which fails the `v6_dataset/elab_local.py`
+// gate. Jasper takes all three.
+//
+// It lives here because this list is the only channel to Slang:
+// `taskdefs.slang_args` copies every non-comment line into
+// `lists/tc_elab.files.slang` and passes that with `-f`. Jasper's `analyze -f`
+// does not understand `-W`, so `lists/tc_elab.tcl` reads this list itself and
+// drops any line starting with `-` before calling `analyze`. That is one place
+// deciding it, and it is documented at both ends.
+//
+// The alternative was editing `ft/tb.sv` to give the two blocks their own loop
+// counters. It was rejected: the reference model IS the task's statement of
+// what it is checking, and a package whose checker is not the upstream checker
+// is a different experiment.
+-Wno-multiple-always-assigns
+
+// `+incdir+rtl` does double duty: it resolves the nine includes above AND the
+// `common_cells/assertions.svh`, `common_cells/registers.svh` and
+// `common_cells/deprecated/registers.svh` headers the RTL includes by that
+// exact prefixed path.
++incdir+rtl
+
+// --- the buffered 4x4 crossbar, the 16 reference rings, the target ----------
+ft/tb.sv
+
+// --- phase-1 candidate targets, bound into the formal top -------------------
+// LAST, because a `bind` has to be analyzed after the module it binds into.
+// `pulp_analyze_arguments` in lists/tc_elab.tcl drops the two comment lines
+// above and passes this one through to `analyze` as a source, in this order.
+sva/targets_pulp_stream_xbar_order.sv

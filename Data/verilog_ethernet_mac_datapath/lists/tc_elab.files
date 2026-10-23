@@ -1,0 +1,54 @@
+// Analyzed file list for tasks/verilog_ethernet_mac_datapath.
+//
+// Read by two consumers, which is why one list holds every source:
+//   * lists/tc_elab.tcl:  analyze -sv12 -f lists/tc_elab.files
+//   * taskdefs.slang_args, which filters it into tc_elab.files.slang for the
+//     local Slang gate and the design map.
+//
+// v5/round.py appends one `../submission/<worker>.sv` line per worker at the
+// end, so ORDER MATTERS and the file must end with a newline: the upstream RTL
+// comes first, then the formal top that instantiates it, then the candidate
+// targets that bind into the formal top, and a worker's file must come last so
+// it can reference anything above it.
+//
+// Paths are relative to the package root -- the drivers `cd $task_root` before
+// sourcing tc_elab.tcl, and `slang` is run from there too.
+//
+// No `+incdir+` and no `+define+`. verilog-ethernet's RTL is self-contained
+// Verilog 2001: not one of the eighteen files below has an `include or reads a
+// macro it does not define itself.  Every file carries its own
+// ``default_nettype none`` / ``resetall`` pair, so the single-unit compile
+// order below cannot leak a directive from one file into the next.
+
+// ---- upstream verilog-ethernet, byte-identical --------------------------
+//      github.com/alexforencich/verilog-ethernet @ 77320a94 (2025-02-27)
+//
+//      lib/axis/rtl/ -- the AXI-Stream library, leaves first
+rtl/axis/priority_encoder.v
+rtl/axis/arbiter.v
+rtl/axis/sync_reset.v
+rtl/axis/axis_register.v
+rtl/axis/axis_pipeline_register.v
+rtl/axis/axis_adapter.v
+rtl/axis/axis_fifo.v
+rtl/axis/axis_async_fifo.v
+rtl/axis/axis_async_fifo_adapter.v
+//      rtl/ -- the MAC and the Ethernet frame layer
+rtl/verilog_ethernet/lfsr.v
+rtl/verilog_ethernet/axis_gmii_rx.v
+rtl/verilog_ethernet/axis_gmii_tx.v
+rtl/verilog_ethernet/eth_mac_1g.v
+rtl/verilog_ethernet/eth_mac_1g_fifo.v
+rtl/verilog_ethernet/eth_axis_rx.v
+rtl/verilog_ethernet/eth_axis_tx.v
+rtl/verilog_ethernet/eth_demux.v
+rtl/verilog_ethernet/eth_arb_mux.v
+
+// ---- task-authored formal top: the frame source, the bounded link stalls,
+//      the whole rx -> split -> demux -> fifos -> arb -> rejoin -> tx chain
+//      and the monitor receiver on the transmitted link -------------------
+ft/verilog_ethernet_mac_datapath_ft.sv
+
+// ---- task-authored oracle, candidate targets and covers.  LAST: a `bind`
+//      must be analyzed after the module it binds into ---------------------
+sva/targets_verilog_ethernet_mac_datapath.sv

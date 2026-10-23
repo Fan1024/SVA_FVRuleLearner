@@ -1,0 +1,51 @@
+{
+  "note": "Pilot task, ported 2026-08-26. PROVE only: the phase-1 screen already ran and `target_labels` is its hard subset -- the candidates that came back UNDETERMINED at the screen budget from real reset. cex and proven are excluded: one is wrong, the other is too easy to be a target.",
+  "top": "openpiton_pmesh_order_scaled_ft",
+  "mount": [
+    "rtl",
+    "sva",
+    "ft",
+    "lists"
+  ],
+  "slang": {
+    "command_file": "lists/tc_elab.files"
+  },
+  "elab_tcl": "tc_elab.tcl",
+  "diag": "diag_pmesh_order",
+  "placement": "Your file is a standalone compilation unit added to the design sources. Write full hierarchical names from the top, exactly as the design map shows them.",
+  "scope_note": "",
+  "target_labels": [
+    "T_BOUND_INFLIGHT_PER_FLOW",
+    "T_BOUND_INFLIGHT_TOTAL",
+    "T_CONSERVE_INFLIGHT_EQUALS_BUFFERED",
+    "T_CONSERVE_NO_STRAY_EGRESS",
+    "T_CONSERVE_NO_TRAFFIC_OFF_PATH",
+    "T_DEADLOCK_GLOBAL_PROGRESS",
+    "T_DEADLOCK_NO_STALLED_BUFFER",
+    "T_FAIR_T2_SOUTH_PROC_INPUT",
+    "T_FAIR_T2_SOUTH_WEST_INPUT",
+    "T_FAIR_T5_SOUTH_NORTH_INPUT",
+    "T_FAIR_T5_SOUTH_PROC_INPUT",
+    "T_INTEGRITY_EGRESS_FULL_FLIT",
+    "T_INTEGRITY_EGRESS_HEADER",
+    "T_INTEGRITY_PATH_HEAD_HEADER",
+    "T_MUTEX_THANKS_ONEHOT_MESH",
+    "T_ORDERING_FLOW0_FIFO",
+    "T_ORDERING_FLOW1_FIFO",
+    "T_ORDERING_FLOW2_FIFO",
+    "T_ORDERING_FLOW3_FIFO",
+    "T_ORDERING_LASTHOP_HEAD",
+    "T_PROTO_EGRESS_HAS_SOURCE_DATA",
+    "T_PROTO_NO_MISROUTED_GRANT",
+    "T_REQRSP_CREDIT_LE_INJECTION",
+    "T_REQRSP_NO_UNSOLICITED_FLOW",
+    "T_RESPONSE_DST_GRANT_LATENCY",
+    "T_RESPONSE_EGRESS_DRAIN",
+    "T_RESPONSE_SOURCE_CREDIT_RETURN",
+    "T_UNIQUE_NO_POP_OF_EMPTY_QUEUE",
+    "T_UNIQUE_PERFLOW_DELIVERY_LE_INJECTION"
+  ],
+  "design_keep": [
+    "u_checker\\.ref_(wr_ptr|rd_ptr|count)"
+  ]
+}

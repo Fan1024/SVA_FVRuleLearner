@@ -1,0 +1,29 @@
+{
+  "note": "Pilot task, ported 2026-08-26. PROVE only: the phase-1 screen already ran and `target_labels` is its hard subset -- the candidates that came back UNDETERMINED at the screen budget from real reset. cex and proven are excluded: one is wrong, the other is too easy to be a target.",
+  "top": "testbench",
+  "mount": [
+    "rtl",
+    "sva",
+    "ft",
+    "lists"
+  ],
+  "slang": {
+    "command_file": "lists/tc_elab.files"
+  },
+  "elab_tcl": "tc_elab.tcl",
+  "diag": "diag_tlul_socket_order",
+  "placement": "Your file is a standalone compilation unit added to the design sources. Write full hierarchical names, exactly as the design map shows them.",
+  "scope_note": "",
+  "target_labels": [
+    "T_BOUND_SEGMENT_NOT_YET_FORWARDED",
+    "T_DATA_DEVICE_REQUEST_PAYLOAD_IS_RING_ENTRY",
+    "T_DATA_DEVICE_RESPONSE_WORD_IS_RING_ENTRY",
+    "T_DATA_HOST_RESPONSE_WORD_IS_RING_HEAD",
+    "T_ORDER_DEVICE_REQUEST_IS_RING_ENTRY",
+    "T_ORDER_DEVICE_RESPONSE_IS_RING_ENTRY",
+    "T_ORDER_HOST_RESPONSE_SOURCE_IS_RING_HEAD"
+  ],
+  "design_keep": [
+    "ref_(write_pointer|read_pointer|count)"
+  ]
+}

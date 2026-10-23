@@ -1,0 +1,38 @@
+{
+  "note": "Pilot task, ported 2026-08-26. PROVE only: the phase-1 screen already ran and `target_labels` is its hard subset -- the candidates that came back UNDETERMINED at the screen budget from real reset. cex and proven are excluded: one is wrong, the other is too easy to be a target.",
+  "top": "verilog_ethernet_mac_datapath_ft",
+  "mount": [
+    "rtl",
+    "sva",
+    "ft",
+    "lists"
+  ],
+  "slang": {
+    "command_file": "lists/tc_elab.files"
+  },
+  "elab_tcl": "tc_elab.tcl",
+  "diag": "diag_verilog_ethernet_mac_datapath",
+  "placement": "Your file is a standalone compilation unit added to the design sources. Write full hierarchical names, exactly as the design map shows them.",
+  "scope_note": "",
+  "target_labels": [
+    "T_ALLOC_ARB_GRANT_BACKED",
+    "T_BOUNDRSP_MACTX_STALL_BOUNDED",
+    "T_BOUND_HDRFIFO0_INFLIGHT",
+    "T_BOUND_PAYFIFO0_INFLIGHT",
+    "T_CONSERV_HDRPAY_LOCKSTEP_IN_FLOW0",
+    "T_CONSERV_HDRPAY_LOCKSTEP_OUT_FLOW0",
+    "T_CONSERV_MON_LE_INJECTED",
+    "T_CONSERV_RXAXIS_LE_RXGOOD",
+    "T_CONSERV_RX_FRAME_ACCOUNT",
+    "T_LIFECYCLE_DEMUX_ROUTES_WHOLE_FRAME",
+    "T_UNIQ_HDRFIFO0_OUT_LE_IN",
+    "T_UNIQ_MON_FRAMES_LE_RXAXIS",
+    "T_UNIQ_PAYFIFO0_OUT_LE_IN"
+  ],
+  "design_keep": [
+    "veth_mac_targets\\.",
+    "env_src\\.",
+    "u_[rt]x_stall\\.",
+    "ftenv_"
+  ]
+}

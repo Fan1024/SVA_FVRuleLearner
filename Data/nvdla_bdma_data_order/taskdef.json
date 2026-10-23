@@ -1,0 +1,37 @@
+{
+  "note": "Pilot task, ported 2026-08-26. PROVE only: the phase-1 screen already ran and `target_labels` is its hard subset -- the candidates that came back UNDETERMINED at the screen budget from real reset. cex and proven are excluded: one is wrong, the other is too easy to be a target.",
+  "top": "nvdla_bdma_data_order_ft",
+  "mount": [
+    "rtl",
+    "sva",
+    "ft",
+    "include",
+    "lists"
+  ],
+  "slang": {
+    "command_file": "lists/tc_elab.files"
+  },
+  "elab_tcl": "tc_elab.tcl",
+  "diag": "diag_bdma_data_order",
+  "placement": "Your file is a standalone compilation unit added to the design sources. Write full hierarchical names, exactly as the design map shows them.",
+  "scope_note": "",
+  "target_labels": [
+    "T_BOUNDRSP_STORE_DRAINS_WITHIN_N",
+    "T_BOUND_STORE_BEAT_INDEX",
+    "T_BOUND_WRITE_COMMANDS_OWED",
+    "T_BOUND_WRITE_DATA_BEATS_OWED",
+    "T_DATA_BOTH_ADDRESSES_ARE_LINE_ALIGNED",
+    "T_DATA_WRITE_COMMAND_SIZE_IS_ONE_LINE",
+    "T_DATA_WRITE_MASK_IS_FULL",
+    "T_DATA_XOR_CONSERVED_WHEN_DRAINED",
+    "T_DEADLOCK_GLOBAL_PROGRESS_WITHIN_N",
+    "T_LIFECYCLE_CVIF_NEVER_ADDRESSED_AT_THE_BOUNDARY",
+    "T_LIFECYCLE_INTERRUPT_NEVER_ARMED",
+    "T_LIFECYCLE_NO_GROUP_DONE_WITHOUT_AN_ARMED_INTERRUPT",
+    "T_ORDER_WCMD_NEVER_RUNS_AHEAD_OF_ITS_COMMAND",
+    "T_REQRSP_STORE_ONLY_OFFERS_DATA_AFTER_ITS_COMMAND"
+  ],
+  "design_keep": [
+    "u_checker\\.(outstanding_beats|ref_count|ref_wr_ptr|ref_rd_ptr|commands_seen)"
+  ]
+}

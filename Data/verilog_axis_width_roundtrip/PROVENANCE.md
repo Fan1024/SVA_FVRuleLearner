@@ -1,0 +1,342 @@
+# verilog_axis_width_roundtrip provenance
+
+assembled: 2026-08-19
+
+source: an earlier internal task package
+        (copied out of; the source tree was not modified)
+
+upstream RTL: verilog-axis @ 48ff7a7e2ef782cf778d47910cf85835c64b1bce
+              (alexforencich), `rtl/axis_adapter.v` and
+              `rtl/axis_pipeline_fifo.v`, byte-for-byte per the source's
+              DERIVATION.json.
+
+One 8-bit AXI-Stream is widened to 32 by an `axis_adapter`, pushed through a
+4-stage `axis_pipeline_fifo`, and narrowed back to 8 by a second
+`axis_adapter`. A 128-entry reference ring records every accepted input beat
+and its `tlast`, and the target says the output stream is that ring, in order:
+byte for byte, `tlast` for `tlast`, with `tkeep` always 1 and never a beat the
+ring does not hold.
+
+top: testbench
+environment: lists/diag_verilog_axis_width_roundtrip.tcl
+             (task `diag_verilog_axis_width_roundtrip`; declares no
+             assumptions of its own -- the package's two live in `ft/tb.sv`)
+target: T_WIDTH_ROUNDTRIP  (testbench.T_WIDTH_ROUNDTRIP)
+
+The source's `DERIVATION.json` also lists five covers -- `C_PACKED_WORD`,
+`C_PARTIAL_FRAME`, `C_BACKPRESSURED_PIPELINE`, `C_DEEP_DUT_BACKPRESSURE`,
+`C_REFERENCE_WRAP` -- and two assumptions -- `A_RESET_IDLE`,
+`A_INPUT_STICKY`. All seven elaborate with the package. The covers are what
+`COVER_DEPTH` counts if a round is given `--cover-s`; they are not targets.
+
+Parameters, from the source's `DERIVATION.json`: `input_width=8`,
+`packed_width=32`, `output_width=8`, `wide_pipeline_length=4`,
+`reference_depth=128`.
+
+## Ported from `tasks/`, not from the earlier partial attempt
+
+There is a 2026-07-30 staging attempt at
+an internal staging area.
+It was not a port to this harness at all: it targets the **ric3** engine
+(`engine/ric3.toml`, `parser = "yosys_slang"`, `[dut] files = ["ft/tb.sv"]`,
+`reset = "reset"`, `top = "testbench"`) and carries no Jasper recipe, no
+property census and no submission hook. Its `ft/tb.sv` is also an OLDER
+statement of the task than the one in `tasks/`: a 64-entry reference ring with
+hardcoded `6'h3f`/`64` widths instead of the parameterised 128-entry one, and
+no `C_DEEP_DUT_BACKPRESSURE` cover. Reading it was useful only to establish
+that; **this port is from the current `tasks/verilog_axis_width_roundtrip_v4`**
+and nothing was taken from the staging tree.
+
+## What was carried over unchanged
+
+Byte-identical to the source:
+
+    rtl/axis_adapter.v
+    rtl/axis_pipeline_fifo.v
+
+`ft/tb.sv` differs from the source by exactly the two hunks recorded under
+"scrubbed" below. Every line of the composition, the reference model, the
+assumptions, the target and the covers is the source's.
+
+`tcl/` was NOT copied. It is the source's own single-shot evaluator (see
+below), and `DERIVATION.json` was not copied either (see "Dropped hash gates").
+
+## What was written for this package
+
+`lists/` did not exist in the source and is entirely new. v5 admits a task only
+if `taskdefs.TASKS[name]` carries both `elab_tcl` and `diag`, then sources
+`lists/<elab_tcl>` and calls `setup_<diag>` at global scope.
+
+    lists/tc_elab.files        the analyzed file list, package-root-relative.
+                               Also `TASKS[...]["slang"]["command_file"]`, the
+                               file the round appends one
+                               `../submission/<worker>.sv` line to per worker.
+    lists/tc_elab.tcl          the elaboration recipe, derived from the
+                               source's `tcl/setup.tcl` -- see below.
+    lists/diag_verilog_axis_width_roundtrip.tcl
+                               defines `setup_diag_verilog_axis_width_roundtrip`,
+                               creates the Jasper task, prints the assumption
+                               and target census.
+    lists/reset_modes.tcl      `rm_all_registers` + `_rm_apply_reset` and their
+                               globals, which is all `v5/cex.tcl` calls, plus a
+                               little reporting. Copied from
+                               `tasks/openpiton_pmesh_order/lists/` with the
+                               reset expression changed to this package's
+                               (`reset == 1'b1`, active high) and the header
+                               retitled.
+
+Copied verbatim from `tasks/openpiton_pmesh_order/lists/` because both are
+task-agnostic:
+
+    lists/proofgrid_profiles.tcl   sourced by our own tc_elab.tcl
+    lists/vendor/iterdev_utils.tcl `safe_assume`. Our diag declares no
+                                   assumptions and does not call it, but
+                                   `cex.tcl`/`check.tcl` source it when present
+                                   and it costs nothing to ship.
+
+`taskdef.json` is new: a per-task definition dropped in beside the package
+rather than an edit to `taskdefs.py`.
+
+`lists/tc_elab.files.slang` is generated by `taskdefs.slang_args` on every run.
+It is derived, not authored, and `.gitignore` says so.
+
+## Only one file is analyzed, on purpose
+
+`lists/tc_elab.files` lists `+incdir+rtl` and `ft/tb.sv`, and nothing else. The
+two RTL files are pulled in by `` `include `` at the top of `ft/tb.sv`, which
+is how the source's `tcl/setup.tcl` reaches them too. Listing them as well
+would declare every module twice under `--single-unit`. `+incdir+rtl` is what
+makes the includes resolve, and it is the one thing in the list that is not a
+source line -- the round's appended `../submission/<worker>.sv` lines stay
+source lines at the end, as they must.
+
+## What changed from the source's tcl/setup.tcl, and why
+
+Kept: `clear -all`, `analyze -sv12` with `+incdir+rtl`, `elaborate -top
+testbench -disable_auto_bbox`, `set_clock_reference_mode auto`, `clock clock`,
+`set_cumulative_reset on`, `reset -expression {reset == 1'b1}
+-max_iterations 100`.
+
+Dropped, with reasons:
+
+- **`FROZEN_INPUT_MISSING`**, the existence check over the frozen input set. It
+  requires `submission/helpers.sv` to exist before elaboration; v5 stages one
+  standalone file per worker under a different name.
+- **The name censuses** (`fls_require_exact_names` over
+  `FLS_BASE_ASSERTIONS` + `FLS_HELPER_PROPERTIES`, and over
+  `FLS_BASE_ASSUMPTIONS`). They demand the elaborated property set equal a list
+  computed by a Python front end that v5 does not run. v5 stages a different
+  helper set every round, so an exact-match census rejects every legal round.
+  Not lost: `cex.tcl` runs `LABEL_INDEX`, `CHECK_FT_MODULES` and
+  `CHECK_LABEL_COLLISIONS` after this file.
+- **`TARGET_RESOLUTION_FAIL` / `HELPER_RESOLUTION_FAIL`.** Same reason. The
+  target census survives in the diag as a printed count that fails only on
+  zero.
+- **`MULTI_DRIVEN` as an error.** Now reported as
+  `MULTIPLE_DRIVEN count=... list=...`. An abort here kills the round before
+  any verdict; the number in the log answers the same question.
+- **`+define+FLS_EVALUATION` and `+incdir+<submission>`.** See the scrub below.
+- **The whole of `tcl/evaluate.tcl`.** That is the source's own property ledger
+  and proof policy. v5 brings its own (`v5/grid.tcl`, `CONFIG_GRID`) and writes
+  its own report.
+
+Added, not in the source: `AFRA_ELAB_EXTRA` handling (the payload exports it
+unconditionally and a recipe that ignores it drops the run's elaborate switches
+silently), `set_elab_time_limit`, `compilation -profile`, `task -create FPV`,
+and the proofgrid profile load.
+
+Deliberately NOT added: `-create_related_covers` / `-witness_cover_property`.
+The source task elaborates without them, and they would attach
+precondition/witness covers to every helper an agent writes, changing what the
+cover phase counts.
+
+## Scrubbed
+
+`ft/tb.sv`, two hunks. Nothing else in the package was edited.
+
+- **3 lines deleted** at the end of the module:
+
+        `ifdef FLS_EVALUATION
+        `include "helpers.sv"
+        `endif
+
+  Not a leak -- an incompatibility, and the same one `openpiton_pmesh_order`
+  removed. In the source flow a submission is one `helpers.sv` textually
+  included INSIDE `module testbench`. v5 stages one bound standalone file per
+  worker and `v5/elab.tcl` fails a worker whose file does not bind under its
+  own module name. Left in, the directive is either inert (no
+  `FLS_EVALUATION`) or fatal (no such file), and it would tell an agent to
+  write in a shape the harness rejects. This is why the `placement` string for
+  this task is the standalone/`bind` one.
+
+- **3 lines added** after the includes:
+
+        // Restored after the includes: every verilog-axis file ends with
+        // `resetall, which clears the `timescale they set at their top.
+        `timescale 1ns / 1ps
+
+  Both verilog-axis files open with `` `resetall ``, `` `timescale 1ns / 1ps ``,
+  `` `default_nettype none `` and close with `` `resetall ``. The closing
+  `` `resetall `` clears the time scale, so `module testbench` -- declared
+  after the includes -- has none while the two RTL modules do. Slang rejects
+  that outright (`design element does not have a time scale defined but others
+  in the design do`) and `v6_dataset/elab_local.py` is the gate. The fix has to
+  live in the source rather than in the file list, because that list is fed to
+  BOTH Jasper's `analyze -f` and Slang's `-f`, and `--timescale` is a
+  Slang-only option Jasper would reject. Restoring the RTL's own `1ns / 1ps` is
+  inert for FPV -- a time scale affects delays and `$time`, and this package
+  has neither -- and it carries forward through the single compilation unit to
+  the worker files the round appends, which have no time scale of their own.
+
+  Note the `` `resetall `` also clears the file's own leading
+  `` `default_nettype none ``, so `module testbench` compiles under
+  `default_nettype wire` in the source. The inserted line does not change that;
+  it sets a time scale and nothing else.
+
+Nothing else was removed. The source's reference-model structure and its own
+localparams (`REF_DEPTH`, `REF_PTR_W`) are kept: they are load-bearing code and
+the task's own statement of what it built.
+
+## Dropped hash gates
+
+The source's `DERIVATION.json` was NOT copied. It is a SHA-256 manifest --
+`bare_source_task_sha256`, a `source_sha256`/`destination_sha256` pair per
+file -- and this repo does not carry content hashes or hash-based validation
+gates. Everything from it that is not a hash is recorded above: the top, the
+target, the covers, the assumptions, the parameters, the upstream commit and
+the derivation notes. The source file remains in the source tree if the
+manifest is ever wanted.
+
+## DESIGN_KEEP: this task needs a non-empty one
+
+The target's instrument is registered, exactly as `openpiton_pmesh_order`'s is.
+`T_WIDTH_ROUNDTRIP` reads `ref_count`, `ref_rptr` and the ring they index, all
+held in the top level's `always @(posedge clock)` block. Under
+`ENTER_FRA_KEEP` every register not matched by a keep pattern starts
+arbitrary; cut, `ref_rptr` points at an arbitrary ring entry and the target is
+falsified at cycle 0 for a reason that is not the design's and that nothing in
+the design can correct.
+
+The pattern reported for `taskdefs.DESIGN_KEEP`, from `taskdef.json`, is
+
+    ref_(wptr|rptr|count)
+
+matched unanchored with Tcl `regexp` against instance paths as
+`get_design_info -list register` returns them (`testbench.ref_wptr`, ...),
+which is the form `_CHECKER_KEEP` uses. Checked against the elaborated design:
+of the 86 registers in this package, exactly 3 match, all three at the top
+level. Neither `axis_adapter` nor `axis_pipeline_fifo` declares a name
+containing `ref_`, so the pattern does not reach design state.
+
+### The ring's storage is unreset, and the keep set is pointers only
+
+`data_ref` and `last_ref` are deliberately NOT in the pattern, for the same
+reason `openpiton_pmesh_order` leaves `ref_mem` out. The reset branch of
+`ft/tb.sv` assigns `ref_wptr`, `ref_rptr`, `ref_count` and the three `seen_*`
+cover flags and nothing else; `data_ref`/`last_ref` are written only on a push.
+So they have no reset value at all, and `stopat -reset` cuts a reset value --
+keeping a register that has none is a no-op. Those 128 x 9 = 1152 bits start
+arbitrary either way, and matching them would only inflate the `KEEP_PATTERN
+design` count in the round log, which is read as a measurement.
+
+So the kept state is exactly
+
+    ref_wptr    7 bits
+    ref_rptr    7 bits
+    ref_count   8 bits    = 22 bits
+
+and the instrument is anchored at its POINTERS, not at its memory. "A read
+entry was written" is therefore a property that has to hold, not something the
+keep set establishes: the target requires `ref_count != 0` before it reads
+`data_ref[ref_rptr]`, and the count only becomes non-zero through a push, which
+is the same event that writes `data_ref` at `ref_wptr`.
+
+Left cut deliberately:
+
+- `past_valid` -- it only gates the `A_INPUT_STICKY` assumption. Arbitrary
+  either way it changes the assumption set, and an assumption cannot falsify a
+  target. It also carries an `initial past_valid = 1'b0;`, which the reset cut
+  does not touch.
+- `seen_packed_word`, `seen_partial_frame`, `seen_wrap` -- read by covers only,
+  never by the target.
+
+All three kept families are reset-assigned, so the pattern cannot match zero
+and cannot trip `cex.tcl`'s "design keep pattern matched nothing" FAIL.
+
+## Not verified
+
+The Slang gate passes:
+
+    uv run python v6_dataset/elab_local.py --task verilog_axis_width_roundtrip
+    OK: verilog_axis_width_roundtrip elaborates
+
+and `hierarchy.build_ir` builds the design map from it -- 4 instances, 86
+registers, the nine top-level registers among them. What has NOT been run is
+Jasper: no `analyze`/`elaborate` under `lists/tc_elab.tcl`, no register census,
+no `KEEP_PATTERN design` hit count, no proof. Slang and Jasper disagree about
+some SystemVerilog and only Jasper's verdict admits a file to a round.
+
+Also checked locally, because the `placement` string promises it: a standalone
+module carrying one `assert property` and one `cover property`, bound in with
+`bind testbench ...`, elaborates against this package (`elab_local.py --extra`).
+That is the shape v5 stages one of per worker.
+
+## Known caveat: the target is an immediate assertion, so `derive_targets` cannot locate it
+
+`taskdefs.derive_targets` looks for a line that starts with `<label>:` and
+contains the literal `assert property`. This package's target does not have
+that shape -- it is an immediate assertion inside the checker's clocked always
+block, `T_WIDTH_ROUNDTRIP: assert (` followed by the condition on later lines
+-- so `derive_targets` returns `source: ""`, `line: 0` and the model phase
+renders
+
+    - `T_WIDTH_ROUNDTRIP` — not located in the mounted sources
+
+instead of a file and line. Nothing else is affected: `v5/round.py` reads
+`TASKS[task]["target_labels"]` and `cex.tcl:LABEL_INDEX` keys on the last
+dot-separated component, so `T_WIDTH_ROUNDTRIP` resolves in a round, and the
+diag census finds it by name. The cost is that a model-phase agent is told the
+target's name but not where to read it.
+
+This is not fixable inside the package without rewriting the source's target
+into a concurrent assertion, which would change what the task measures. The fix
+is in `taskdefs.TARGET_PATTERN`, which this port was told not to touch. It
+applies identically to the other four packages in this group.
+
+## Phase-1 candidate targets, added 2026-08-19
+
+    sva/targets_verilog_axis_width_roundtrip.sv  35 `T_*` assertions, 19 `C_*` covers
+    lists/targets.txt                            35 rows, `label TAB category TAB intent`
+
+Appended LAST to `lists/tc_elab.files` and `taskdef.json`'s `mount` gained
+`sva`. The gate passes without `--extra`:
+
+    uv run python v6_dataset/elab_local.py --task verilog_axis_width_roundtrip
+    OK: verilog_axis_width_roundtrip elaborates
+
+The oracle is independent of `ft/tb.sv`'s single end-to-end byte ring: it cuts
+the 8 -> 32 -> pipeline -> 8 path at all three internal boundaries and keeps a
+queue across each hop (bytes in, wide words across the pipeline FIFO, bytes
+out), so each stage is judged on its own. `taskdefs.oracle_keep` derives
+`axis_width_targets\.` from the bind.
+
+Nine of the fifteen categories are admitted. NOT admitted, and why: **5 mutual
+exclusion**, **7 allocator discipline**, **8 request-response correspondence**
+and **10 arbitration fairness** all need a contended resource, an allocator or
+a request/response pair, and this is one flow through three registered stages;
+**14 lifecycle / access control** (no permission state); **15 coherence** (no
+agents).
+
+### Not verified, and what is uncertain
+
+Jasper has NOT been run. The judgement calls:
+
+- `T_CONSERV_QA_OCC_MATCHES_UPSIZE_STATE` and
+  `T_CONSERV_QB_OCC_MATCHES_DOWNSIZE_STATE` model the adapters' internal byte
+  accounting -- a completed word's `tkeep` population or the segment counter,
+  plus the skid, plus the output register. Read out of the RTL, not measured.
+- `T_BOUND_QA_OCC_LE_FIVE` and `T_BOUND_QB_OCC_LE_FIVE` are the tight forms of
+  those two and are cex if either analysis is off by one.
+- `T_DEADLOCK_SOURCE_UNBLOCKED_WITHIN_N` is bounded at 128 because the
+  pipeline FIFO's skid holds ~21 wide words and drains at one BYTE per cycle at
+  the egress. That is a bound, not a tight one.

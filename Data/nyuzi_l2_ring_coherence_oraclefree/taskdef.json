@@ -1,0 +1,35 @@
+{
+  "note": "Ported 2026-08-26 from the 0826 hard-target corpus. PROVE only: the phase-1 screen already ran and `target_labels` is its hard subset -- the candidates that came back UNDETERMINED at the screen budget from real reset. cex and proven are excluded: one is wrong, the other is too easy to be a target.",
+  "top": "nyuzi_l2_ring_coherence_ft",
+  "mount": [
+    "rtl",
+    "sva",
+    "ft",
+    "lists"
+  ],
+  "slang": {
+    "command_file": "lists/tc_elab.files"
+  },
+  "elab_tcl": "tc_elab.tcl",
+  "diag": "diag_nyuzi_l2_ring_coherence",
+  "placement": "Your file is a standalone compilation unit added to the design sources. Write full hierarchical names, exactly as the design map shows them.",
+  "scope_note": "",
+  "target_labels": [
+    "T_REQRSP_ICACHE_RESPONSE_HAS_REQUEST",
+    "T_REQRSP_RESPONSE_CACHE_TYPE_MATCHES",
+    "T_REQRSP_RESPONSE_TYPE_MATCHES",
+    "T_CONSERV_FOCUS_RSP_LE_ADM",
+    "T_CONSERV_NO_RESPONSE_WHEN_EMPTY",
+    "T_MUTEX_SNOOP_HIT_ONEHOT",
+    "T_OCC_PENDING_MISS_CAM_NOT_FULL",
+    "T_OCC_INFLIGHT_LE_12",
+    "T_OCC_INFLIGHT_LE_24",
+    "T_PROTO_RESPONSE_CORE_LEGAL",
+    "T_UNIQ_FILL_FIFO_SLOT_UNIQUE",
+    "T_COH_DINVALIDATE_CLEARS_ALL_L1D",
+    "T_COH_L1D_LINE_IN_ONE_WAY"
+  ],
+  "design_keep": [
+    "u_mem\\.(w_beat|r_beat|b_pending|mem_wr_line|mem_wr_active|mem_rd_line|mem_rd_active|mem_probe_valid)"
+  ]
+}

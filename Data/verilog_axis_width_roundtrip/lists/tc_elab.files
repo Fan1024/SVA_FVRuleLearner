@@ -1,0 +1,21 @@
+// Analyzed file list for verilog_axis_width_roundtrip. Paths are relative to
+// the PACKAGE ROOT: the elaboration recipe is sourced with the package root as
+// cwd and `slang` is run from there too, so one spelling serves both.
+//
+// The round appends one `../submission/<worker>.sv` line per worker to the end
+// of this file (v5/round.py), which resolves to <run_root>/submission from the
+// same cwd. Do not add a trailing `-y`/library directive after the file list --
+// an appended source line has to stay a source line.
+//
+// ONE analyzed file. The two verilog-axis RTL files are NOT listed: `ft/tb.sv`
+// pulls them in with `include at file scope, exactly as the upstream task's
+// `tcl/setup.tcl` does, and listing them as well would declare every module
+// twice. `+incdir+rtl` is what makes those includes resolve.
++incdir+rtl
+
+// --- the 8->32->pipeline->8 composition, the reference ring, the target -----
+ft/tb.sv
+
+// --- phase-1 candidate targets, LAST: a `bind` must be analyzed after the
+// --- module it binds into --------------------------------------------------
+sva/targets_verilog_axis_width_roundtrip.sv

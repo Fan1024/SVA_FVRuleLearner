@@ -1,0 +1,49 @@
+// Analyzed file list for wb2axip_axi3_reorder. Paths are relative to the
+// PACKAGE ROOT: the elaboration recipe is sourced with the package root as cwd
+// and `slang` is run from there too, so one spelling serves both.
+//
+// The round appends one `../submission/<worker>.sv` line per worker to the end
+// of this file (v5/round.py), which resolves to <run_root>/submission from the
+// same cwd. Do not add a trailing `-y`/library directive after the file list --
+// an appended source line has to stay a source line.
+//
+// ONE analyzed file. The two wb2axip RTL files are NOT listed: `ft/tb.sv`
+// pulls them in with `include at file scope, exactly as the upstream task's
+// `tcl/setup.tcl` does, and listing them as well would declare both modules
+// twice. `+incdir+rtl` is what makes those includes resolve.
+//
+// `ft/tb.sv` also `undefs FORMAL before the includes, which is what keeps the
+// two files' own ZipCPU formal harnesses out of the elaboration. That is the
+// task's statement of its environment, and it lives in the source, not here.
+
+// --- one Slang-only switch, and why it is here rather than in the source ----
+// `axi3reorder.v:337` reads `sr_valid[gk+1]` where `sr_valid` is
+// `reg [NSREG-1:0]`, inside `else if (sr_advance[gk] && gk<NSREG-1)`. At
+// gk = NSREG-1 the index is one past the end and the branch is statically
+// dead, so nothing ever reads it -- and an out-of-range bit-select of a packed
+// vector is legal Verilog anyway (IEEE 1800 11.5.1: the value is x). Jasper
+// takes it. Slang promotes `index-oob` to an ERROR and will not elaborate the
+// package without this line, which fails the `v6_dataset/elab_local.py` gate.
+//
+// It lives here because this list is the only channel to Slang:
+// `taskdefs.slang_args` copies every non-comment line into
+// `lists/tc_elab.files.slang` and passes that with `-f`. Jasper's `analyze -f`
+// does not understand `-W`, so `lists/tc_elab.tcl` reads this list itself and
+// drops any line starting with `-` before calling `analyze`. That is one place
+// deciding it, and it is documented at both ends.
+//
+// The alternative was editing the DUT. It was rejected: the target is a
+// property ABOUT `axi3reorder`, and a package whose design source is not the
+// upstream source is a different experiment.
+-Wno-index-oob
+
++incdir+rtl
+
+// --- the AXI3 reorder DUT, the reference queues, the target and the covers --
+ft/tb.sv
+
+// --- phase-1 candidate targets, LAST: a `bind` must be analyzed after the
+// --- module it binds into.  A PLAIN path line, not a `-` switch: this
+// --- package's `tc_elab.tcl` reads this list itself and drops `-`-prefixed
+// --- lines before calling `analyze`, so only plain paths reach Jasper.
+sva/targets_wb2axip_axi3_reorder.sv

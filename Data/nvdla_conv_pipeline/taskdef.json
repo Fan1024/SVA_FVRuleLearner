@@ -1,0 +1,55 @@
+{
+  "note": "Ported 2026-08-26 from the 0826 hard-target corpus. PROVE only: the phase-1 screen already ran and `target_labels` is its hard subset -- the candidates that came back UNDETERMINED at the screen budget from real reset. cex and proven are excluded: one is wrong, the other is too easy to be a target.",
+  "top": "nvdla_conv_pipeline_ft",
+  "mount": [
+    "rtl",
+    "sva",
+    "ft",
+    "include",
+    "lists"
+  ],
+  "slang": {
+    "command_file": "lists/tc_elab.files"
+  },
+  "elab_tcl": "tc_elab.tcl",
+  "diag": "diag_nvdla_conv_pipeline",
+  "placement": "Your file is a standalone compilation unit added to the design sources. Write full hierarchical names, exactly as the design map shows them.",
+  "scope_note": "",
+  "target_labels": [
+    "T_ALLOC_CBUF_DAT_NO_GRANT_BEFORE_WRITE",
+    "T_BOUNDRSP_MEM_DAT_RSP_TAKEN_WITHIN_256",
+    "T_BOUND_CBUF_DAT_READS_IN_FLIGHT_LE6",
+    "T_BOUND_CBUF_DAT_WR_ADDR_IN_RANGE",
+    "T_BOUND_MAC_A_TOKENS_IN_FLIGHT_LE4",
+    "T_BOUND_MEM_DAT_REQ_ATOMS_LE256",
+    "T_COHERENCE_CBUF_DAT_WT_SAME_LINE",
+    "T_CONSERV_MAC_A_TOKENS",
+    "T_DATA_CBUF_DAT_LINE_STABLE_WITHOUT_WRITE",
+    "T_DATA_CBUF_DAT_READBACK",
+    "T_DATA_CBUF_WMB_READBACK",
+    "T_DATA_CBUF_WT_READBACK",
+    "T_DATA_MAC_A_PD_PRESERVED",
+    "T_DEADLOCK_CONV_PIPELINE_PROGRESS_WITHIN_1024",
+    "T_DEADLOCK_MEM_DAT_COMMAND_DRAINS_WITHIN_256",
+    "T_FAIR_CSC_DAT_PENDING_ACKED_WITHIN_512",
+    "T_FAIR_CSC_WT_PENDING_ACKED_WITHIN_512",
+    "T_LIFECYCLE_CSB_POSTED_WRITE_IS_SILENT",
+    "T_ORDER_MAC_A_PD_IS_QUEUE_HEAD",
+    "T_ORDER_MAC_B_PD_IS_QUEUE_HEAD",
+    "T_PROTO_MEM_DAT_REQ_STABLE",
+    "T_PROTO_SDP_VALID_STABLE",
+    "T_UNIQ_MAC_A_NO_OUTPUT_WITHOUT_INPUT",
+    "T_UNIQ_MAC_B_NO_OUTPUT_WITHOUT_INPUT"
+  ],
+  "design_keep": [
+    "u_checker\\.(age|shadow|shadow_valid|quiet|dat_arm|wt_arm|wmb_arm|dat_exp|wt_exp|wmb_exp)",
+    "u_checker\\.(last_dat_half|last_dat_valid|dat_en_sr|wt_en_sr|wmb_en_sr|dat_inflight)",
+    "u_checker\\.(tok_wr|tok_rd|tok_cnt|tok_push|tok_pop)",
+    "u_checker\\.(sdp_beats|sdp_beats_d1|sdp_credits|dat_wr_beats)",
+    "u_checker\\.(dat_granted|dat_released|wt_granted|wt_released)",
+    "u_checker\\.(wait_mem_rsp0|wait_dat_pending|wait_wt_pending|wait_owed0|wait_progress)",
+    "u_checker\\.seen_(dat_readback|wt_readback|wmb_readback|mem_dat_rsp|mem_wt_rsp)",
+    "u_mem_(dat|wt)_(mcif|cvif)\\.(owed|hold_cnt)",
+    "ft_sdp_stall"
+  ]
+}

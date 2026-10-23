@@ -1,0 +1,109 @@
+// Analyzed file list for tasks/cva6_frontend_issue_commit.
+//
+// Read by two consumers, which is why one list holds every source:
+//   * lists/tc_elab.tcl:  analyze -sv12 -f lists/tc_elab.files
+//   * taskdefs.slang_args, which filters it into tc_elab.files.slang for the
+//     design map and for v6_dataset/elab_local.py.
+// v5/round.py appends one `../submission/<worker>.sv` line per worker at the
+// end, so ORDER MATTERS: packages first, then the common_cells, then CVA6
+// bottom-up, then the formal top and its two memory models, then the covers,
+// then the targets, and a worker's file last so it can reference anything
+// above it.
+//
+// Paths are relative to the package root -- the drivers `cd $task_root` before
+// sourcing tc_elab.tcl.
+//
+// PITON_ARIANE is NOT defined, so `ariane_pkg`'s `` `include "l15.tmp.h" ``
+// is out. No VERILATOR / SYNTHESIS / SIMULATION define either.
+
++incdir+rtl/cva6/include
++incdir+rtl/common_cells/include
+
+// ---- packages, in dependency order -----------------------------------
+// cv32a65x_config_pkg declares `package cva6_config_pkg`, which is the name
+// every other config file in the CVA6 tree also declares -- exactly ONE of
+// them may be in this list, and this is the one. See PROVENANCE.md.
+rtl/cva6/include/config_pkg.sv
+rtl/cva6/include/cv32a65x_config_pkg.sv
+rtl/cva6/include/riscv_pkg.sv
+rtl/cva6/include/ariane_pkg.sv
+rtl/cva6/include/build_config_pkg.sv
+
+// ---- pulp-platform common_cells --------------------------------------
+// CVA6 instantiates `lzc`, `popcount` and `shift_reg` -- the PRE-RENAME
+// names. This common_cells checkout is the renamed generation and ships the
+// compatibility wrappers under those exact names in src/deprecated/, so this
+// package needs no shim of its own: both the wrapper and the cell are
+// upstream files, byte-identical.
+rtl/common_cells/src/cc_pkg.sv
+rtl/common_cells/src/cc_lzc.sv
+rtl/common_cells/src/cc_popcount.sv
+rtl/common_cells/src/cc_shift_register.sv
+rtl/common_cells/src/cc_shift_register_gated.sv
+rtl/common_cells/src/cc_unread.sv
+rtl/common_cells/src/deprecated/lzc.sv
+rtl/common_cells/src/deprecated/popcount.sv
+rtl/common_cells/src/deprecated/shift_reg.sv
+rtl/common_cells/src/deprecated/unread.sv
+
+// ---- CVA6 leaf cells --------------------------------------------------
+rtl/cva6/cva6_fifo_v3.sv
+
+// ---- stage 1: the instruction frontend --------------------------------
+rtl/cva6/frontend/bht.sv
+rtl/cva6/frontend/ras.sv
+rtl/cva6/frontend/instr_scan.sv
+rtl/cva6/instr_realign.sv
+rtl/cva6/frontend/instr_queue.sv
+rtl/cva6/frontend/frontend.sv
+
+// ---- stage 2: decode ---------------------------------------------------
+rtl/cva6/compressed_decoder.sv
+rtl/cva6/decoder.sv
+rtl/cva6/cvxif_compressed_if_driver.sv
+rtl/cva6/id_stage.sv
+
+// ---- stage 3: issue, the scoreboard and the register file --------------
+rtl/cva6/ariane_regfile_ff.sv
+rtl/cva6/raw_checker.sv
+rtl/cva6/cvxif_issue_register_commit_if_driver.sv
+rtl/cva6/scoreboard.sv
+rtl/cva6/issue_read_operands.sv
+rtl/cva6/issue_stage.sv
+
+// ---- stage 4: execute --------------------------------------------------
+rtl/cva6/alu.sv
+rtl/cva6/alu_wrapper.sv
+rtl/cva6/branch_unit.sv
+rtl/cva6/csr_buffer.sv
+rtl/cva6/multiplier.sv
+rtl/cva6/serdiv.sv
+rtl/cva6/mult.sv
+rtl/cva6/cvxif_fu.sv
+rtl/cva6/pmp/pmp_entry.sv
+rtl/cva6/pmp/pmp.sv
+rtl/cva6/pmp/pmp_data_if.sv
+rtl/cva6/store_buffer.sv
+rtl/cva6/store_unit.sv
+rtl/cva6/load_unit.sv
+rtl/cva6/lsu_bypass.sv
+rtl/cva6/load_store_unit.sv
+rtl/cva6/ex_stage.sv
+
+// ---- stage 5: commit, plus the flush controller and the CSR file -------
+rtl/cva6/commit_stage.sv
+rtl/cva6/controller.sv
+rtl/cva6/csr_regfile.sv
+
+// ---- formal top and its two memory models -----------------------------
+ft/cva6_pipe_fv_pkg.sv
+ft/cva6_fv_icache.sv
+ft/cva6_fv_dcache.sv
+ft/cva6_frontend_issue_commit_ft.sv
+
+// ---- reachability covers (NOT targets; COVER_DEPTH reads these) ------
+sva/covers_cva6_frontend_issue_commit.sv
+
+// ---- phase-1 candidate targets --------------------------------------
+// LAST, because a `bind` must be analyzed after the module it binds into.
+sva/targets_cva6_frontend_issue_commit.sv

@@ -1,0 +1,39 @@
+{
+  "note": "Ported 2026-08-26 from the 0826 hard-target corpus. PROVE only: the phase-1 screen already ran and `target_labels` is its hard subset -- the candidates that came back UNDETERMINED at the screen budget from real reset. cex and proven are excluded: one is wrong, the other is too easy to be a target. `design_keep` carries the source package's own list plus `u_targets_openpiton_two_tile_coherence\\.`, the bound target oracle's instance: this harness has no derived `oracle_keep()`, and an uncut oracle is what keeps the counting targets from being false at cycle 0.",
+  "top": "openpiton_two_tile_coherence_ft",
+  "mount": [
+    "rtl",
+    "sva",
+    "ft",
+    "lists"
+  ],
+  "slang": {
+    "command_file": "lists/tc_elab.files"
+  },
+  "elab_tcl": "tc_elab.tcl",
+  "diag": "diag_two_tile_coherence",
+  "placement": "Your file is a standalone compilation unit added to the design sources. Write full hierarchical names from the top, exactly as the design map shows them.",
+  "scope_note": "",
+  "target_labels": [
+    "T_BOUNDRSP_MEM_ROUND_TRIP_WITHIN_N",
+    "T_BOUND_NOC1_PAIR_QUEUE_LE_DEPTH",
+    "T_BOUND_REVOKE_QUEUE_LE_DEPTH",
+    "T_COHERENCE_HOME_SLICE_OWNS_ITS_LINES",
+    "T_DATA_NOC1_LINE_PRESERVED_ACROSS_MESH_T0",
+    "T_DEADLOCK_L2_POOL_DRAINS_T0",
+    "T_FAIR_MEM_LINK_ADMITTED_WITHIN_N",
+    "T_FAIR_NOC1_ADMITTED_WITHIN_N_T0",
+    "T_MUTEX_L2_MSHR_LINE_ONEHOT_T0",
+    "T_ORDER_MEM_ACK_IN_REQUEST_ORDER",
+    "T_ORDER_NOC1_ID_ARRIVES_IN_SEND_ORDER_T0",
+    "T_PROTO_NOC1_DATA_STABLE_T0",
+    "T_REQRSP_MEM_REQ_NAMES_A_BUSY_ENTRY",
+    "T_UNIQ_L2_MSHR_SET_ONEHOT_T0"
+  ],
+  "design_keep": [
+    "u_checker\\.(sh_excl|sh_shared|req_live|req_key|req_store|req_open|req_open_v|req_open_wbg|rq_key|rq_inv|rq_wr|rq_rd|rq_open|rq_open_v|rq_open_inv|n3_is_wb_open|f1_idx|f1_len|f2_idx|f2_len|f3_idx|f3_len)",
+    "u_mem\\.(hdr_q|src_q|q_wr_f|q_rd_f|rx_state_f|rx_left_f|rx_idx_f|tx_state_f|tx_left_f)",
+    "ready_sr",
+    "u_targets_openpiton_two_tile_coherence\\."
+  ]
+}

@@ -1,0 +1,54 @@
+// Analyzed file list for opentitan_tlul_socket_order. Paths are relative to
+// the PACKAGE ROOT: the elaboration recipe is sourced with the package root as
+// cwd and `slang` is run from there too, so one spelling serves both.
+//
+// The round appends one `../submission/<worker>.sv` line per worker to the end
+// of this file (v5/round.py), which resolves to <run_root>/submission from the
+// same cwd. Do not add a trailing `-y`/library directive after the file list --
+// an appended source line has to stay a source line.
+//
+// ORDER MATTERS. The packages come first (`top_pkg`, `tlul_pkg` and the prim
+// packages are referenced in port declarations, not just bodies), then the
+// prims, then the socket, then the formal top. A worker's appended file lands
+// last and can reference anything above it.
+//
+// `ft/tb.sv` closes with `default_nettype wire`, so an appended worker file is
+// compiled under the default net type and not under the `none` that the formal
+// top sets for itself.
+
+// OpenTitan's own configuration switch. `prim_assert.sv` takes the DUMMY macro
+// set under SYNTHESIS, which turns every `ASSERT/`ASSUME embedded in the
+// upstream RTL into nothing. The upstream flow analyzes with it; without it
+// the socket and both FIFOs would bring ~40 of their own properties into the
+// elaborated set, which is a different task from the one this package states.
++define+SYNTHESIS
+
+// The `include path for prim_assert.sv, prim_assert_dummy_macros.svh,
+// prim_assert_sec_cm.svh, prim_flop_macros.sv and prim_fifo_assert.svh. Those
+// five are NOT listed below: they are macro files reached by `include only,
+// exactly as the upstream flow reaches them.
++incdir+rtl
+
+// --- OpenTitan packages, byte-identical upstream RTL ------------------------
+rtl/top_pkg.sv
+rtl/prim_util_pkg.sv
+rtl/prim_secded_pkg.sv
+rtl/prim_mubi_pkg.sv
+rtl/prim_count_pkg.sv
+rtl/tlul_pkg.sv
+
+// --- prim cells and the TL-UL socket, byte-identical upstream RTL -----------
+rtl/prim_flop.sv
+rtl/prim_buf.sv
+rtl/prim_count.sv
+rtl/prim_fifo_sync_cnt.sv
+rtl/prim_fifo_sync.sv
+rtl/tlul_fifo_sync.sv
+rtl/tlul_socket_1n.sv
+
+// --- the four ordered responders, the host reference queue, the formal top --
+ft/tb.sv
+
+// --- phase-1 candidate targets, bound into the formal top -------------------
+// LAST, because a `bind` has to be analyzed after the module it binds into.
+sva/targets_opentitan_tlul_socket_order.sv

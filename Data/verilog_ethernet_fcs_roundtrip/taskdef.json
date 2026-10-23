@@ -1,0 +1,27 @@
+{
+  "note": "Ported 2026-08-26 from the 0826 hard-target corpus. PROVE only: the phase-1 screen already ran and `target_labels` is its hard subset -- the candidates that came back UNDETERMINED at the screen budget from real reset. cex and proven are excluded: one is wrong, the other is too easy to be a target. `design_keep` carries the source package's own list plus `eth_fcs_targets\\.`, the bound target oracle's instance: this harness has no derived `oracle_keep()`, and an uncut oracle is what keeps the counting targets from being false at cycle 0.",
+  "top": "testbench",
+  "mount": [
+    "rtl",
+    "sva",
+    "ft",
+    "lists"
+  ],
+  "slang": {
+    "command_file": "lists/tc_elab.files"
+  },
+  "elab_tcl": "tc_elab.tcl",
+  "diag": "diag_verilog_ethernet_fcs_roundtrip",
+  "placement": "Your file is a standalone compilation unit added to the design sources. Write full hierarchical names, exactly as the design map shows them.",
+  "scope_note": "",
+  "target_labels": [
+    "T_ORDER_OUT_BYTE_IS_MID_PAYLOAD_HEAD",
+    "T_DATA_NO_BAD_FCS_REPORTED",
+    "T_DATA_OUT_NEVER_MARKED_BAD",
+    "T_CONSERV_BYTES_IN_EQ_OUT_PLUS_INFLIGHT"
+  ],
+  "design_keep": [
+    "(wr_ptr|rd_ptr|ref_count)",
+    "eth_fcs_targets\\."
+  ]
+}

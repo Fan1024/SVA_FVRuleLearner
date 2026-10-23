@@ -1,0 +1,32 @@
+{
+  "note": "Ported 2026-08-26 from the 0826 hard-target corpus. PROVE only: the phase-1 screen already ran and `target_labels` is its hard subset -- the candidates that came back UNDETERMINED at the screen budget from real reset. cex and proven are excluded: one is wrong, the other is too easy to be a target.",
+  "top": "corundum_dma_path_ft",
+  "mount": [
+    "rtl",
+    "sva",
+    "ft",
+    "lists"
+  ],
+  "slang": {
+    "command_file": "lists/tc_elab.files"
+  },
+  "elab_tcl": "tc_elab.tcl",
+  "diag": "diag_corundum_dma_path",
+  "placement": "Your file is a standalone compilation unit added to the design sources. Write full hierarchical names, exactly as the design map shows them.",
+  "scope_note": "",
+  "target_labels": [
+    "T_ALLOC_ENQ_COMMIT_NAMES_LIVE_OP_P0",
+    "T_BOUNDRSP_CPL_STATUS_WITHIN_N",
+    "T_BOUNDRSP_DESC_DELIVERED_WITHIN_N",
+    "T_BOUNDRSP_FETCH_STATUS_WITHIN_N",
+    "T_CONSERV_CPL_HOST_WRITES_LE_REQUESTS",
+    "T_CONSERV_DEQ_NOT_MORE_THAN_POSTED",
+    "T_CONSERV_DESC_DELIVERED_LE_FETCHED",
+    "T_DEADLOCK_DF_TABLE_DRAINS_WITHIN_N",
+    "T_UNIQ_ENQ_OP_TAG_NOT_REUSED_P0"
+  ],
+  "design_keep": [
+    "corundum_dma_targets\\.",
+    "ftenv_"
+  ]
+}

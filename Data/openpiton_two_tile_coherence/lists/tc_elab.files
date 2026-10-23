@@ -1,0 +1,127 @@
+// Analyzed file list for tasks/openpiton_two_tile_coherence.
+//
+// Read by two consumers, which is why one list holds every source:
+//   * lists/tc_elab.tcl:  analyze -sv12 -f lists/tc_elab.files
+//   * taskdefs.slang_args, which filters it into tc_elab.files.slang
+//     for the design map.
+// v5/round.py appends one `../submission/<web>.sv` line per worker at the
+// end, so ORDER MATTERS: the RTL comes first because it carries the
+// `include of define.tmp.h / l15.tmp.h / l2.tmp.h whose macros the mesh
+// wrapper, the checker and the FT then use, and a worker's file must come
+// last so it can reference anything above it.
+//
+// ONE directory holds the L1.5/L2 RTL, the dynamic-node RTL and the two
+// credit transducers, because network_define.v and dmbr_define.v are shipped
+// by both upstream trees and neither has an include guard: two copies in one
+// single-unit compilation would be two sets of the same macros and no way to
+// see which won.
+//
+// Paths are relative to the package root -- the drivers `cd $task_root`
+// before sourcing tc_elab.tcl.
+
++incdir+rtl/openpiton
+
+// USE_GENERIC_SRAM_IMPLEMENTATION suppresses `SYNTHESIZABLE_BRAM inside
+// define.tmp.h, so every sram_* wrapper takes its behavioural array model.
+// OpenPiton does not ship bram_1rw_wrapper in the L1.5/L2 filelists, so the
+// package would otherwise name a module it does not contain.
++define+USE_GENERIC_SRAM_IMPLEMENTATION
+
+// ---- OpenPiton L1.5 + L2 RTL, PyHP-preprocessed --------------------
+// flat_id_to_xy.v and xy_to_flat_id.v are the two-tile rendering; see
+// PROVENANCE.md. Everything else is byte-identical to the copy in
+// tasks/l15_l2_mshr_onehot.
+rtl/openpiton/flat_id_to_xy.v
+rtl/openpiton/xy_to_flat_id.v
+
+rtl/openpiton/l15.v
+rtl/openpiton/l15_mshr.v
+rtl/openpiton/l15_pipeline.v
+rtl/openpiton/l15_csm.v
+rtl/openpiton/l15_hmc.v
+rtl/openpiton/l15_home_encoder.v
+rtl/openpiton/l15_priority_encoder.v
+rtl/openpiton/l15_cpxencoder.v
+rtl/openpiton/rf_l15_lruarray.v
+rtl/openpiton/rf_l15_mesi.v
+rtl/openpiton/rf_l15_lrsc_flag.v
+rtl/openpiton/rf_l15_wmt.v
+rtl/openpiton/noc1buffer.v
+rtl/openpiton/noc1encoder.v
+rtl/openpiton/noc2decoder.v
+rtl/openpiton/noc3buffer.v
+rtl/openpiton/noc3encoder.v
+rtl/openpiton/simplenocbuffer.v
+rtl/openpiton/sram_l15_tag.v
+rtl/openpiton/sram_l15_data.v
+rtl/openpiton/sram_l15_hmt.v
+
+rtl/openpiton/l2.v
+rtl/openpiton/l2_amo_alu.v
+rtl/openpiton/l2_data.v
+rtl/openpiton/l2_data_wrap.v
+rtl/openpiton/l2_data_pgen.v
+rtl/openpiton/l2_data_ecc.v
+rtl/openpiton/l2_decoder.v
+rtl/openpiton/l2_dir.v
+rtl/openpiton/l2_dir_wrap.v
+rtl/openpiton/l2_encoder.v
+rtl/openpiton/l2_mshr.v
+rtl/openpiton/l2_mshr_decoder.v
+rtl/openpiton/l2_mshr_wrap.v
+rtl/openpiton/l2_pipe1.v
+rtl/openpiton/l2_pipe1_buf_in.v
+rtl/openpiton/l2_pipe1_buf_out.v
+rtl/openpiton/l2_pipe1_ctrl.v
+rtl/openpiton/l2_pipe1_dpath.v
+rtl/openpiton/l2_pipe2.v
+rtl/openpiton/l2_pipe2_buf_in.v
+rtl/openpiton/l2_pipe2_ctrl.v
+rtl/openpiton/l2_pipe2_dpath.v
+rtl/openpiton/l2_state.v
+rtl/openpiton/l2_state_wrap.v
+rtl/openpiton/l2_tag.v
+rtl/openpiton/l2_tag_wrap.v
+rtl/openpiton/l2_smc.v
+rtl/openpiton/l2_smc_wrap.v
+rtl/openpiton/l2_config_regs.v
+rtl/openpiton/l2_priority_encoder.v
+rtl/openpiton/l2_broadcast_counter.v
+rtl/openpiton/l2_broadcast_counter_wrap.v
+rtl/openpiton/sram_l2_tag.v
+rtl/openpiton/sram_l2_data.v
+rtl/openpiton/sram_l2_state.v
+rtl/openpiton/sram_l2_dir.v
+
+// ---- OpenPiton dynamic-node router, byte-identical upstream RTL -----
+rtl/openpiton/bus_compare_equal.v
+rtl/openpiton/dmbr_define.v
+rtl/openpiton/dynamic_input_control.v
+rtl/openpiton/dynamic_input_route_request_calc.v
+rtl/openpiton/dynamic_input_top_16.v
+rtl/openpiton/dynamic_input_top_4.v
+rtl/openpiton/dynamic_node_top.v
+rtl/openpiton/dynamic_node_top_wrap.v
+rtl/openpiton/dynamic_output_control.v
+rtl/openpiton/dynamic_output_datapath.v
+rtl/openpiton/dynamic_output_top.v
+rtl/openpiton/flip_bus.v
+rtl/openpiton/net_dff.v
+rtl/openpiton/network_define.v
+rtl/openpiton/network_input_blk_multi_out.v
+rtl/openpiton/one_of_eight.v
+rtl/openpiton/one_of_five.v
+rtl/openpiton/one_of_n.v
+rtl/openpiton/one_of_n_plus_3.v
+rtl/openpiton/space_avail_top.v
+
+// ---- the credit / val-rdy transducers a real tile uses --------------
+rtl/openpiton/credit_to_valrdy.v
+rtl/openpiton/valrdy_to_credit.v
+
+// ---- the 2x1 mesh, the oracle, and the formal top -------------------
+rtl/coherence_mesh.v
+sva/openpiton_two_tile_coherence_checker.sv
+ft/openpiton_two_tile_coherence_ft.sv
+// ---- phase-1 candidate targets ----------------------------------------
+sva/targets_openpiton_two_tile_coherence.sv

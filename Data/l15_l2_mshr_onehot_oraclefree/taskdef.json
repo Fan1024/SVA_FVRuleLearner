@@ -1,0 +1,32 @@
+{
+  "note": "Ported 2026-08-26 from the 0826 hard-target corpus. PROVE only: the phase-1 screen already ran and `target_labels` is its hard subset -- the candidates that came back UNDETERMINED at the screen budget from real reset. cex and proven are excluded: one is wrong, the other is too easy to be a target.",
+  "top": "openpiton_l15l2_deadlock_ft",
+  "mount": [
+    "rtl",
+    "sva",
+    "ft",
+    "lists"
+  ],
+  "slang": {
+    "command_file": "lists/tc_elab.files"
+  },
+  "elab_tcl": "tc_elab.tcl",
+  "diag": "diag_l15_l2_mshr_onehot",
+  "placement": "Your file is a standalone compilation unit added to the design sources. Write full hierarchical names from the top, exactly as the design map shows them.",
+  "scope_note": "",
+  "target_labels": [
+    "T_ALLOC_NOC1BUF_NO_POP_WHEN_EMPTY",
+    "T_ALLOC_NOC1BUF_NO_PUSH_WHEN_FULL",
+    "T_CONSERV_NOC1BUF_OCC_EQ_VALIDS",
+    "T_CONSERV_NOC1BUF_PUSH_MINUS_POP",
+    "T_DEADLOCK_L2_MSHR_POOL_DRAINS_WITHIN_N",
+    "T_FAIR_L15_NOC3_ADMITTED_WITHIN_N",
+    "T_LIFECYCLE_MSHR_ENTRY_NOT_REWRITTEN_WHILE_OUTSTANDING",
+    "T_LIFECYCLE_MSHR_KEY_STABLE_WHILE_OUTSTANDING",
+    "T_MUTEX_L2_MSHR_LINE_ONEHOT",
+    "T_REQRSP_MEM_REQ_HAS_BUSY_ENTRY",
+    "T_UNIQ_L2_MSHR_SETWAY_ONEHOT",
+    "T_UNIQ_NOC1BUF_SLOT_NOT_OVERWRITTEN"
+  ],
+  "design_keep": []
+}

@@ -1,0 +1,117 @@
+// Analyzed file list for nvdla_conv_pipeline.  Paths are relative to the
+// PACKAGE ROOT: the elaboration recipe is sourced with the package root as cwd
+// and `slang` runs from there too, so one spelling serves both.
+//
+// The round appends one `../submission/<worker>.sv` line per worker to the end
+// of this file (v5/round.py), which resolves to <run_root>/submission from the
+// same cwd.  Keep the trailing newline and do not put a library directive
+// after the file list -- an appended source line has to stay a source line.
+//
+// One `analyze -sv12` covers the whole list.  The generated NVDLA RTL is
+// Verilog-2001 but declares no identifier that SystemVerilog-2012 reserves,
+// which is what `nvdla_mcif_order` established for the same code generator.
++incdir+include
+
+// `SYNTHESIS` selects the synthesizable branch and drops the X-injection tasks
+// in `simulate_x_tick.vh`.  `VLIB_BYPASS_POWER_CG` makes every
+// NV_CLK_gate_power a wire-through instead of a latch-based gate, so no SLCG
+// can stop a clock -- which is what makes the CMAC's four-cycle latency and
+// CBUF's six-cycle read latency mean what they say.  `DESIGNWARE_NOEXIST`
+// selects NVDLA's own behavioural NV_DW02_tree / NV_DW_minmax / NV_DW_lsd over
+// the Synopsys DesignWare cells, which are not in this repository.
++define+SYNTHESIS
++define+VLIB_BYPASS_POWER_CG
++define+DESIGNWARE_NOEXIST
+
+// --- library cells and RAM models -------------------------------------------
+// rtl/vlibs/* is upstream `vmod/vlibs`.  nvdla_conv_ram_models.sv is this
+// task's functional replacement for the nine generated SRAM wrappers; the
+// upstream wrappers instantiate foundry macros whose only models are
+// simulation-only.
+rtl/nvdla_conv_ram_models.sv
+rtl/vlibs/NV_BLKBOX_SINK.v
+rtl/vlibs/NV_CLK_gate_power.v
+rtl/vlibs/NV_DW02_tree.v
+rtl/vlibs/NV_DW_minmax.v
+rtl/vlibs/NV_DW_lsd.v
+
+
+// --- CDMA: fetch ------------------------------------------------------------
+rtl/cdma/NV_NVDLA_CDMA_CVT_cell.v
+rtl/cdma/NV_NVDLA_CDMA_DC_fifo.v
+rtl/cdma/NV_NVDLA_CDMA_IMG_ctrl.v
+rtl/cdma/NV_NVDLA_CDMA_IMG_fifo.v
+rtl/cdma/NV_NVDLA_CDMA_IMG_pack.v
+rtl/cdma/NV_NVDLA_CDMA_IMG_sg.v
+rtl/cdma/NV_NVDLA_CDMA_IMG_sg2pack_fifo.v
+rtl/cdma/NV_NVDLA_CDMA_WG_fifo.v
+rtl/cdma/NV_NVDLA_CDMA_WT_fifo.v
+rtl/cdma/NV_NVDLA_CDMA_WT_sp_arb.v
+rtl/cdma/NV_NVDLA_CDMA_WT_wgs_fifo.v
+rtl/cdma/NV_NVDLA_CDMA_WT_wrr_arb.v
+rtl/cdma/NV_NVDLA_CDMA_cvt.v
+rtl/cdma/NV_NVDLA_CDMA_dc.v
+rtl/cdma/NV_NVDLA_CDMA_dma_mux.v
+rtl/cdma/NV_NVDLA_CDMA_dual_reg.v
+rtl/cdma/NV_NVDLA_CDMA_img.v
+rtl/cdma/NV_NVDLA_CDMA_regfile.v
+rtl/cdma/NV_NVDLA_CDMA_shared_buffer.v
+rtl/cdma/NV_NVDLA_CDMA_single_reg.v
+rtl/cdma/NV_NVDLA_CDMA_slcg.v
+rtl/cdma/NV_NVDLA_CDMA_status.v
+rtl/cdma/NV_NVDLA_CDMA_wg.v
+rtl/cdma/NV_NVDLA_CDMA_wt.v
+rtl/cdma/NV_NVDLA_cdma.v
+
+// --- CBUF: the 512 KiB convolution buffer -----------------------------------
+rtl/cbuf/NV_NVDLA_cbuf.v
+
+// --- CSC: sequence control --------------------------------------------------
+rtl/csc/NV_NVDLA_CSC_SG_dat_fifo.v
+rtl/csc/NV_NVDLA_CSC_SG_wt_fifo.v
+rtl/csc/NV_NVDLA_CSC_WL_dec.v
+rtl/csc/NV_NVDLA_CSC_dl.v
+rtl/csc/NV_NVDLA_CSC_dual_reg.v
+rtl/csc/NV_NVDLA_CSC_pra_cell.v
+rtl/csc/NV_NVDLA_CSC_regfile.v
+rtl/csc/NV_NVDLA_CSC_sg.v
+rtl/csc/NV_NVDLA_CSC_single_reg.v
+rtl/csc/NV_NVDLA_CSC_slcg.v
+rtl/csc/NV_NVDLA_CSC_wl.v
+rtl/csc/NV_NVDLA_csc.v
+
+// --- CMAC: the MAC array ----------------------------------------------------
+rtl/cmac/NV_NVDLA_CMAC_CORE_MAC_exp.v
+rtl/cmac/NV_NVDLA_CMAC_CORE_MAC_mul.v
+rtl/cmac/NV_NVDLA_CMAC_CORE_MAC_nan.v
+rtl/cmac/NV_NVDLA_CMAC_CORE_active.v
+rtl/cmac/NV_NVDLA_CMAC_CORE_cfg.v
+rtl/cmac/NV_NVDLA_CMAC_CORE_mac.v
+rtl/cmac/NV_NVDLA_CMAC_CORE_rt_in.v
+rtl/cmac/NV_NVDLA_CMAC_CORE_rt_out.v
+rtl/cmac/NV_NVDLA_CMAC_CORE_slcg.v
+rtl/cmac/NV_NVDLA_CMAC_REG_dual.v
+rtl/cmac/NV_NVDLA_CMAC_REG_single.v
+rtl/cmac/NV_NVDLA_CMAC_core.v
+rtl/cmac/NV_NVDLA_CMAC_reg.v
+rtl/cmac/NV_NVDLA_cmac.v
+
+// --- CACC: the accumulator --------------------------------------------------
+rtl/cacc/NV_NVDLA_CACC_CALC_fp_48b.v
+rtl/cacc/NV_NVDLA_CACC_CALC_int16.v
+rtl/cacc/NV_NVDLA_CACC_CALC_int8.v
+rtl/cacc/NV_NVDLA_CACC_assembly_buffer.v
+rtl/cacc/NV_NVDLA_CACC_assembly_ctrl.v
+rtl/cacc/NV_NVDLA_CACC_calculator.v
+rtl/cacc/NV_NVDLA_CACC_delivery_buffer.v
+rtl/cacc/NV_NVDLA_CACC_delivery_ctrl.v
+rtl/cacc/NV_NVDLA_CACC_dual_reg.v
+rtl/cacc/NV_NVDLA_CACC_regfile.v
+rtl/cacc/NV_NVDLA_CACC_single_reg.v
+rtl/cacc/NV_NVDLA_CACC_slcg.v
+rtl/cacc/NV_NVDLA_cacc.v
+
+// --- the oracle, the formal top and its bounded environment -----------------
+sva/nvdla_conv_pipeline_checker.sv
+ft/nvdla_conv_mem_responder.sv
+ft/nvdla_conv_pipeline_ft.sv

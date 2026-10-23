@@ -1,0 +1,48 @@
+{
+  "note": "Ported 2026-08-26 from the 0826 hard-target corpus. PROVE only: the phase-1 screen already ran and `target_labels` is its hard subset -- the candidates that came back UNDETERMINED at the screen budget from real reset. cex and proven are excluded: one is wrong, the other is too easy to be a target. `design_keep` carries the source package's own list plus `u_targets\\.`, the bound target oracle's instance: this harness has no derived `oracle_keep()`, and an uncut oracle is what keeps the counting targets from being false at cycle 0.",
+  "top": "nvdla_mcif_order_ft",
+  "mount": [
+    "rtl",
+    "sva",
+    "ft",
+    "include",
+    "lists"
+  ],
+  "slang": {
+    "command_file": "lists/tc_elab.files"
+  },
+  "elab_tcl": "tc_elab.tcl",
+  "diag": "diag_mcif_order",
+  "placement": "Your file is a standalone compilation unit added to the design sources. Write full hierarchical names, exactly as the design map shows them.",
+  "scope_note": "",
+  "target_labels": [
+    "T_ALLOC_CQ_INDEX_IN_RANGE",
+    "T_ALLOC_CQ_NO_POP_WHEN_EMPTY",
+    "T_BOUNDRSP_EGRESS_DRAINS_WITHIN_N",
+    "T_BOUNDRSP_INGRESS_ISSUES_WITHIN_N",
+    "T_BOUND_BPT_LATENCY_CREDITS",
+    "T_BOUND_CLIENT_HELD_BEATS",
+    "T_BOUND_COMMAND_QUEUE_NEVER_WRAPS",
+    "T_BOUND_OS_CNT_LE_WINDOW",
+    "T_BOUND_PUBLIC_OUTSTANDING_LE_WINDOW",
+    "T_CONSERV_CQ_FREE_PLUS_ALLOCATED",
+    "T_CONSERV_EGRESS_HOLDINGS_ACCOUNTED",
+    "T_CONSERV_RO_FIFO_HALVES_TRACK",
+    "T_DATA_AR_ADDR_IS_HEAD_COMMAND",
+    "T_DATA_EG_CONTEXT_IS_SINGLE_FULL_BEAT",
+    "T_DATA_EG_WRITE_ENABLE_IS_FULL",
+    "T_DATA_XOR_CONSERVED_WHEN_DRAINED",
+    "T_DEADLOCK_GLOBAL_PROGRESS_WITHIN_N",
+    "T_REQRSP_AR_HAS_A_COMMAND",
+    "T_REQRSP_CQ_WRITE_NAMES_A_REQUESTING_CLIENT",
+    "T_REQRSP_RESPONSE_HAS_A_COMMAND",
+    "T_UNIQ_AR_NEVER_INVENTED",
+    "T_UNIQ_CQ_ENTRY_NOT_DOUBLE_ALLOCATED",
+    "T_UNIQ_CQ_ENTRY_NOT_DOUBLE_FREED",
+    "T_UNIQ_RESPONSE_NEVER_INVENTED"
+  ],
+  "design_keep": [
+    "u_checker\\.(ext_outstanding|axi_pending|ref_wr_ptr|ref_rd_ptr|ref_count|seen_(req|ar|r|rsp))",
+    "u_targets\\."
+  ]
+}

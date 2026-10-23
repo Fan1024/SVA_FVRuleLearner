@@ -1,0 +1,28 @@
+{
+  "note": "Ported 2026-08-26 from the 0826 hard-target corpus. PROVE only: the phase-1 screen already ran and `target_labels` is its hard subset -- the candidates that came back UNDETERMINED at the screen budget from real reset. cex and proven are excluded: one is wrong, the other is too easy to be a target. `design_keep` carries the source package's own list plus `axis_arb_targets\\.`, the bound target oracle's instance: this harness has no derived `oracle_keep()`, and an uncut oracle is what keeps the counting targets from being false at cycle 0.",
+  "top": "testbench",
+  "mount": [
+    "rtl",
+    "sva",
+    "ft",
+    "lists"
+  ],
+  "slang": {
+    "command_file": "lists/tc_elab.files"
+  },
+  "elab_tcl": "tc_elab.tcl",
+  "diag": "diag_verilog_axis_arb_mux_order",
+  "placement": "Your file is a standalone compilation unit added to the design sources. Write full hierarchical names, exactly as the design map shows them.",
+  "scope_note": "",
+  "target_labels": [
+    "T_ORDER_OUT_BEAT_IS_MERGE_HEAD",
+    "T_ORDER_OUT_ID_IS_MERGE_HEAD_ID",
+    "T_DATA_INPUT_FIFO_HEAD_IS_SOURCE_HEAD",
+    "T_UNIQ_NO_SOURCE_DELIVERED_TWICE"
+  ],
+  "design_keep": [
+    "ref_(wptr|rptr|count)",
+    "output_frame_(active|source)",
+    "axis_arb_targets\\."
+  ]
+}

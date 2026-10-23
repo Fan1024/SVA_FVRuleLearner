@@ -1,0 +1,25 @@
+{
+  "note": "Ported 2026-08-26 from the 0826 hard-target corpus. PROVE only: the phase-1 screen already ran and `target_labels` is its hard subset -- the candidates that came back UNDETERMINED at the screen budget from real reset. cex and proven are excluded: one is wrong, the other is too easy to be a target. `design_keep` carries the source package's own list plus `u_targets\\.`, the bound target oracle's instance: this harness has no derived `oracle_keep()`, and an uncut oracle is what keeps the counting targets from being false at cycle 0.",
+  "top": "nvdla_rubik_merge_transpose_ft",
+  "mount": [
+    "rtl",
+    "sva",
+    "ft",
+    "lists"
+  ],
+  "slang": {
+    "command_file": "lists/tc_elab.files"
+  },
+  "elab_tcl": "tc_elab.tcl",
+  "diag": "diag_rubik_merge_transpose",
+  "placement": "Your file is a standalone compilation unit added to the design sources. Write full hierarchical names, exactly as the design map shows them.",
+  "scope_note": "",
+  "target_labels": [
+    "T_DATA_OUTPUT_BYTE_FOLD_MATCHES_ITS_COLUMN"
+  ],
+  "design_keep": [
+    "u_checker\\.(expected_q|expected_index_q|pending_q|completed_batches_q)",
+    "(phase_q|warmup_q|write_index_q|read_index_q|write_data_q)",
+    "u_targets\\."
+  ]
+}
