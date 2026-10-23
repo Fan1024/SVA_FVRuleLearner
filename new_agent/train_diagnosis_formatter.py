@@ -1,4 +1,4 @@
-"""Format all 43 questions currently defined in jev_assertion_diagnosis.py.
+"""Format all 52 questions defined in train_diagnosis.py.
 
 Each input result contains an answer and an upstream confidence value.
 The returned dictionary preserves the same unique question IDs as the input.
@@ -196,6 +196,14 @@ TEMPORAL = {
             "$past, $rose, $fell, $stable, $changed)."
         ),
     },
+    "temporal_implication_timing": {
+        True: (
+            "Correct the consequent start time of an existing implication by changing "
+            "|-> to |=> or vice versa as required. |-> starts the consequent at the "
+            "antecedent's endpoint; |=> starts it one clock later. Account for existing "
+            "## delays and sampled values so the correction does not shift time twice."
+        ),
+    },
     "temporal_insert_delay": {
         True: "Insert a missing ## delay.",
     },
@@ -227,7 +235,7 @@ TEMPORAL = {
         True: "Change the history offset of an existing $past call.",
     },
     "temporal_sampling_clock": {
-        True: "Change the sampling clock used by an existing sampled-value function.",
+        True: "Change the clock signal, edge or event used by the assertion or an existing sampled-value function.",
     },
     "temporal_scope": {
         True: "Apply an existing delay or sampled-value function to a different subexpression.",
@@ -246,23 +254,98 @@ PARENTHESES = {
     "parentheses_grouping": {
         True: "Change expression grouping to correct operator precedence or scope.",
     },
-    "parentheses_insert": {
-        True: "Add grouping parentheses around terms that must be evaluated together.",
-    },
-    "parentheses_remove": {
-        True: "Remove grouping parentheses that force an incorrect evaluation order.",
-    },
-    "parentheses_misplaced": {
-        True: (
-            "Move an existing grouping boundary to include the required terms "
-            "and exclude unintended terms."
-        ),
-    },
+
 }
 
 
 # Global question mappings.
 GLOBAL = {
+    "global_signal_identity": {
+        True: (
+            "Replace a wrong signal identifier with the intended declared signal for "
+            "that operand. For example, a data check may use another channel's data "
+            "instead of the intended channel's data. Determine the replacement from "
+            "the reference and testbench; equivalent aliases or PEC-only declaration "
+            "failures do not justify renaming a valid signal."
+        ),
+    },
+    "global_signal_role": {
+        True: (
+            "Use an operand representing the required behavioral role, rather than "
+            "a different event, state, data source or time snapshot. For example, "
+            "distinguish a request from an accepted transaction, a current value from "
+            "a registered snapshot, and observed data from the model output. Select "
+            "the role required by the reference and testbench definitions."
+        ),
+    },
+    "global_missing_behavioral_branch": {
+        True: (
+            "Add an omitted behavioral scenario together with its required check. "
+            "For example, checking stored FIFO data on a nonempty read does not cover "
+            "an empty simultaneous-transfer path that requires comparison with incoming "
+            "write data. Identify the missing scenario and its obligation from the "
+            "reference; adding == 1'b1 alone does not supply a missing branch."
+        ),
+    },
+    "global_wrong_applicability_condition": {
+        True: (
+            "Correct, remove, repolarize or regroup an existing applicability guard "
+            "that enables the wrong situations or exempts required ones. For example, "
+            "a nonzero-previous-grant guard addresses later arbitration rather than "
+            "first arbitration, and an unnecessary no-write guard can exempt a "
+            "required simultaneous transaction. Preserve the intended obligation."
+        ),
+    },
+    "global_missing_applicability_condition": {
+        True: (
+            "Insert a missing qualification on an already represented obligation, so "
+            "the check applies in its required circumstances. For example, qualify an "
+            "operation-specific data check with its required accepted-transaction guard. "
+            "This adds an absent guard; it does not replace an incorrect existing "
+            "guard or introduce a separate behavioral branch."
+        ),
+    },
+    "global_any_vs_all": {
+        True: (
+            "Correct any-member versus all-members semantics over the intended set. "
+            "For a multi-bit vector, |v checks whether any bit is one, whereas &v "
+            "checks whether every bit is one; equivalent comparisons or member-wise "
+            "conditions may express the same distinction. Choose the quantification "
+            "required by the reference while respecting width and X/Z behavior."
+        ),
+    },
+    "global_required_vs_forbidden_condition": {
+        True: (
+            "Correct the truth requirement or failure polarity of the complete check: "
+            "require the valid condition or reject the violation condition, rather "
+            "than requiring a violation or forbidding valid behavior. For example, "
+            "ok === 1'b1 requires definitely true success, while bad !== 1'b1 rejects "
+            "a definitely true violation. Choose the predicate and comparison together "
+            "from the reference's intended behavior, including X/Z semantics."
+        ),
+    },
+    "global_cosmetic_vs_semantic": {
+        "no_difference": (
+            "No differences were identified within comparison_scope. PEC compilation "
+            "failure alone does not establish a semantic defect."
+        ),
+        "cosmetic_only": (
+            "Only textual or behavior-preserving differences were identified within "
+            "comparison_scope, such as redundant parentheses or equivalent rewrites. "
+            "Any formatting normalization must preserve behavior; do not present it "
+            "as a semantic repair."
+        ),
+        "semantic_difference": (
+            "At least one difference within comparison_scope changes required behavior. "
+            "Address the behavioral difference; cosmetic normalization alone cannot "
+            "correct it. Cosmetic differences may also be present."
+        ),
+        "uncertain": (
+            "Whether the observed differences change behavior is unresolved from the "
+            "available context. Do not treat PEC compilation failure or text mismatch "
+            "alone as evidence of a specific semantic defect."
+        ),
+    },
     "global_operator_category_error_count": {
         "zero": "No operator categories require correction.",
         "one": "One operator category requires correction.",

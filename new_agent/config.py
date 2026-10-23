@@ -4,13 +4,12 @@ from pathlib import Path
 
 # "train": learn rules on selected training cases.
 # "inference": exclude source training cases and retrieve learned rules.
-# "inference_only": baseline on ALL cases, without a training source or retrieval.
 # Launch every mode with python main.py.
-MODE = "train"
+MODE = "inference"
 
 
 # Supported datasets: nl2sva_human, nl2sva_machine, nl2sva_opencore.
-DATASET = "nl2sva_machine"
+DATASET = "nl2sva_human"
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DATASET_PATH = (
     REPO_ROOT / "FVEval" / "data_1k" / "module_sva_nl_manual_editing.csv"
@@ -21,8 +20,6 @@ DATASET_PATH = (
 # [] = split the full dataset and train only on the training portion.
 # [1] or [1, 5, 20] = run exactly these examples, bypassing the random split.
 # These numbers are not physical CSV line numbers or source task_id values.
-# Start with the FIFO example from the failing trace. Change this selection
-# after confirming diagnosis/rule output, or use [] for the training split.
 TRAIN_CASE_IDS = []
 
 # Used only when TRAIN_CASE_IDS = []. The remainder is reserved for inference.
@@ -37,19 +34,19 @@ ASSERTION_MODEL = "gpt-5.6-terra"
 RULE_MODEL = "gpt-5.6-terra"
 
 # Total assertion attempts: 10 = initial generation + at most nine revisions.
-MAX_ROUNDS = 5
+MAX_ROUNDS = 10
 
 # Requested Jasper timeout for native launchers that expose a timeout setting.
 # An unmodified launcher's fixed limit (e.g. 60 s) remains authoritative.
 JASPER_TIMEOUT_SECONDS = 300
 
-# Minimum diagnosis confidence for statements sent to the rule generator.
+# Minimum confidence for training statements and inference rule applicability.
 CONFIDENCE_THRESHOLD = 0.2
 
 # Every invocation creates a separate experiment directory here.
 RUNS_DIR = Path(__file__).resolve().parent / "runs"
 
-# Used only by MODE = "inference". Ignored by train and inference_only.
+# Used only by MODE = "inference". Ignored by train.
 # None selects the most recently completed compatible Train run.
 # An absolute path or a directory name relative to RUNS_DIR selects one run.
 # This SAME run determines the excluded training cases and the retrieval bank.
@@ -62,9 +59,9 @@ TRAINING_RUN_DIR = None
 TOP_K_CASES = 5
 EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 
-# True saves detailed round evidence. False saves only final case records,
-# final scores/rules, and the latest formal input/log; no round history or raw
-# model responses are saved. Temporary tool work is removed when ownership permits.
+# True additionally writes readable debug_trace.txt files.
+# Final scores and learned-rule evidence are saved regardless of this setting.
+# Formal-tool work and native logs remain temporary.
 SAVE_DEBUG_TRACES = True
 
 

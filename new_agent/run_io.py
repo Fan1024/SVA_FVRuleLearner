@@ -213,9 +213,9 @@ def create_experiment(
     """Create one batch directory and save its resolved inputs/selection once."""
     if phase not in ("train", "infer"):
         raise ValueError("phase must be 'train' or 'infer'.")
-    requires_source = phase == "infer" and settings.get("mode") != "inference_only"
+    requires_source = phase == "infer"
     if requires_source != (source_training_run is not None):
-        raise ValueError("Only retrieval-backed inference requires source_training_run.")
+        raise ValueError("Inference requires a source training run; training does not accept one.")
     directory_label = re.sub(r"[^A-Za-z0-9_-]+", "_", dataset).strip("_") or "dataset"
     directory = create_run(directory_label, runs_root=runs_root, phase=phase)
     metadata = {
@@ -513,9 +513,14 @@ def _debug_event_text(record: dict, event: str, data: dict) -> str:
                 lines.extend(["Details:", details])
         return "\n".join(lines)
     if event == "diagnosis":
+        selection = data.get("statements")
+        if "selected_rules" in data:
+            selection = {rule["question_id"]: rule["rule"] for rule in data["selected_rules"]}
         return "\nDIAGNOSIS OUTPUT\n" + _debug_diagnosis_text(
-            data["diagnosis"], data.get("statements"),
+            data["diagnosis"], selection,
         )
+    if event == "rule_selection":
+        return "\nJEV-SELECTED RETRIEVED RULES\n" + json.dumps(data["selected_rules"], indent=2, ensure_ascii=False)
     if event == "statements":
         lines = [f"{name}: {text}" for name, text in data["statements"].items()]
         return "\nSTATEMENTS SENT TO RULE GENERATOR\n" + (

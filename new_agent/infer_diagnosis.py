@@ -1,363 +1,127 @@
-"""Requirement-based inference diagnosis with training-aligned question IDs."""
+"""Assess and filter retrieved training rules for the current inference assertion."""
 
-from typesafe_sdk import Choice, Noul, TypeSafeClient
-
-BACKGROUND = (
-        "Assess the generated SystemVerilog assertion against the requirement and design "
-        "context. No reference assertion or formal-checker feedback is provided. Do not invent "
-        "a hidden reference or assume the generated assertion is wrong. Each repair question "
-        "asks whether the supplied inputs support that change. Answer no when the edit is "
-        "unnecessary or does not apply; use a Noul value near 0.5 when the inputs do not "
-        "support a decision. For Choice questions, use uncertain when appropriate. Judge "
-        "behavior rather than textual style, respect clock/reset semantics and equivalent "
-        "reset aliases, and do not propose edits solely because a different equivalent form "
-        "exists. Each question is independent. Presence observations alone do not imply "
-        "errors. These answers are diagnosis hypotheses, not formal proofs."
-
-)
-
-# Same groups, question keys and repair wording as the training diagnosis.
-# Presence answers are candidate-only because inference has no reference.
-question_groups = {
-    # 1. Implication
-    "implication": {
-        "presence": Choice(
-            instructions=(
-                "Does the generated assertion contain implication operators (|->, |=>)?"
-            ),
-            criteria={
-                "present": "The construct is present in the generated assertion.",
-                "absent": "The construct is absent from the generated assertion.",
-                "uncertain": "The candidate cannot be interpreted reliably enough to decide.",
-            },
-        ),
-        "replace_operator": Noul(
-            instructions="Should an existing implication operator (|-> or |=>) be replaced with a different operator category?",
-        ),
-        "insert_operator": Noul(
-            instructions="Should an implication operator (|-> or |=>) be inserted to express a missing operation?",
-        ),
-        "remove_operator": Noul(
-            instructions="Should an unnecessary implication operator (|-> or |=>) be removed? This question concerns an implication operator (|-> or |=>).",
-        ),
-        "antecedent_consequent": Noul(
-            instructions=(
-                "Should conditions be moved between the antecedent and "
-                "consequent to put the trigger and response on the correct sides?"
-            ),
-        ),
-    },
-
-    # 2. Logical
-    "logical": {
-        "presence": Choice(
-            instructions=(
-                "Does the generated assertion contain logical operators (!, &&, ||)?"
-            ),
-            criteria={
-                "present": "The construct is present in the generated assertion.",
-                "absent": "The construct is absent from the generated assertion.",
-                "uncertain": "The candidate cannot be interpreted reliably enough to decide.",
-            },
-        ),
-        "replace_operator": Noul(
-            instructions="Should an existing operator in this category be replaced with a different operator? This question concerns a logical operator (!, &&, or ||).",
-        ),
-        "insert_operator": Noul(
-            instructions="Should a logical operator (!, &&, or ||) be inserted to express a missing operation?",
-        ),
-        "remove_operator": Noul(
-            instructions="Should an unnecessary operator in this category be removed? This question concerns a logical operator (!, &&, or ||).",
-        ),
-        "scope": Noul(
-            instructions={
-                "background": (
-                    "Logical scope means which terms !, &&, or || applies to. "
-                    "Examples of different scope: !(a && b) versus (!a) && b; "
-                    "a && (b || c) versus (a && b) || c; "
-                    "a || (b && c) versus (a || b) && c. "
-                    "These examples illustrate binding, not edits to copy. "
-                    "A different expression is not wrong if its behavior is equivalent."
-                ),
-                "question": (
-                    "Should the terms controlled by an existing logical operator "
-                    "be regrouped to match the required behavior?"
-                ),
-            },
-        ),
-    },
-
-    # 3. Comparison
-    "comparison": {
-        "presence": Choice(
-            instructions=(
-                "Does the generated assertion contain comparison operators (==, !=, ===, !==, "
-                "<, <=, >, >=)?"
-            ),
-            criteria={
-                "present": "The construct is present in the generated assertion.",
-                "absent": "The construct is absent from the generated assertion.",
-                "uncertain": "The candidate cannot be interpreted reliably enough to decide.",
-            },
-        ),
-        "replace_operator": Noul(
-            instructions="Should an existing operator in this category be replaced with a different operator? This question concerns a comparison operator.",
-        ),
-        "insert_operator": Noul(
-            instructions="Should a comparison operator be inserted to express a missing operation?",
-        ),
-        "remove_operator": Noul(
-            instructions="Should an unnecessary operator in this category be removed? This question concerns a comparison operator.",
-        ),
-        "operands": Noul(
-            instructions="Should an operand of an existing comparison be replaced?",
-        ),
-        "operand_order": Noul(
-            instructions="Should the left and right operands of an existing comparison be exchanged?",
-        ),
-        "four_state_equality": Noul(
-            instructions=(
-                "Should == or != be changed to === or !==, or vice versa, "
-                "to handle X/Z values as required by the supplied context?"
-            ),
-        ),
-    },
-
-    # 4. Bitwise
-    "bitwise": {
-        "presence": Choice(
-            instructions=(
-                "Does the generated assertion contain bitwise operators (binary &, |, ^, ~^, "
-                "^~, unary ~)?"
-            ),
-            criteria={
-                "present": "The construct is present in the generated assertion.",
-                "absent": "The construct is absent from the generated assertion.",
-                "uncertain": "The candidate cannot be interpreted reliably enough to decide.",
-            },
-        ),
-        "replace_operator": Noul(
-            instructions="Should an existing operator in this category be replaced with a different operator? This question concerns a bitwise operator.",
-        ),
-        "insert_operator": Noul(
-            instructions="Should a bitwise operator be inserted to express a missing operation?",
-        ),
-        "remove_operator": Noul(
-            instructions="Should an unnecessary operator in this category be removed? This question concerns a bitwise operator.",
-        ),
-        "operands": Noul(
-            instructions=(
-                "Should a bitwise operation use a different signal, "
-                "vector, bit range, or subexpression?"
-            ),
-        ),
-    },
-
-    # 5. Reduction
-    "reduction": {
-        "presence": Choice(
-            instructions=(
-                "Does the generated assertion contain unary reduction operators (&, |, ^, ~&, "
-                "~|, ~^, ^~)?"
-            ),
-            criteria={
-                "present": "The construct is present in the generated assertion.",
-                "absent": "The construct is absent from the generated assertion.",
-                "uncertain": "The candidate cannot be interpreted reliably enough to decide.",
-            },
-        ),
-        "replace_operator": Noul(
-            instructions="Should an existing operator in this category be replaced with a different operator? This question concerns a reduction operator.",
-        ),
-        "insert_operator": Noul(
-            instructions="Should a reduction operator be inserted to express a missing operation?",
-        ),
-        "remove_operator": Noul(
-            instructions="Should an unnecessary operator in this category be removed? This question concerns a reduction operator.",
-        ),
-        "vector_coverage": Noul(
-            instructions=(
-                "Should the reduction apply to a different vector, bit range, "
-                "or expression to include the required bits?"
-            ),
-        ),
-    },
-
-    # 6. Temporal
-    "temporal": {
-        "presence": Choice(
-            instructions=(
-                "Does the generated assertion contain ## delays or sampled-value functions "
-                "($past, $rose, $fell, $stable, $changed)? Exclude |-> and |=>, which belong to "
-                "implication."
-            ),
-            criteria={
-                "present": "The construct is present in the generated assertion.",
-                "absent": "The construct is absent from the generated assertion.",
-                "uncertain": "The candidate cannot be interpreted reliably enough to decide.",
-            },
-        ),
-        "insert_delay": Noul(
-            instructions="Should a missing ## delay be inserted?",
-        ),
-        "remove_delay": Noul(
-            instructions="Should an unnecessary ## delay be removed?",
-        ),
-        "delay_value": Noul(
-            instructions="Should the cycle count of an existing fixed ## delay be changed?",
-        ),
-        "delay_lower_bound": Noul(
-            instructions="Should the lower bound of an existing ## delay range be changed?",
-        ),
-        "delay_upper_bound": Noul(
-            instructions="Should the upper bound of an existing ## delay range be changed?",
-        ),
-        "replace_sampling_function": Noul(
-            instructions=(
-                "Should an existing sampled-value function be replaced with "
-                "a different function? Consider $past, $rose, $fell, $stable, and $changed."
-            ),
-        ),
-        "insert_sampling_function": Noul(
-            instructions="Should a missing sampled-value function be inserted?",
-        ),
-        "remove_sampling_function": Noul(
-            instructions="Should an unnecessary sampled-value function be removed?",
-        ),
-        "past_offset": Noul(
-            instructions="Should the history offset of an existing $past call be changed?",
-        ),
-        "sampling_clock": Noul(
-            instructions=(
-                "Should a clock signal, edge, or event used by the assertion "
-                "or an existing sampled-value function be changed?"
-            ),
-        ),
-        "scope": Noul(
-            instructions={
-                "background": (
-                    "Scope means which expression a delay or sampled-value function "
-                    "controls. For example, $past(a && b) samples both terms in the "
-                    "previous cycle, whereas $past(a) && b samples only a in the "
-                    "previous cycle and uses b from the current cycle. "
-                    "Judge expression binding here, not the delay or history offset."
-                ),
-                "question": (
-                    "Should an existing delay or sampled-value function be applied "
-                    "to a different subexpression?"
-                ),
-            },
-        ),
-    },
-
-    # 7. Parentheses
-    "parentheses": {
-        "presence": Choice(
-            instructions=(
-                "Does the generated assertion contain expression-grouping parentheses? Exclude "
-                "assert property wrappers, clock events, and function-call delimiters."
-            ),
-            criteria={
-                "present": "The construct is present in the generated assertion.",
-                "absent": "The construct is absent from the generated assertion.",
-                "uncertain": "The candidate cannot be interpreted reliably enough to decide.",
-            },
-        ),
-        "grouping": Noul(
-            instructions=(
-                "Should the expression be grouped differently to fix "
-                "operator precedence or scope? "
-                "Ignore extra parentheses that preserve the same behavior."
-            ),
-        ),
-    },
-
-    # 8. Global
-    "global": {
-        "operator_category_error_count": Choice(
-            instructions=(
-                "How many operator categories need correction? Count implication, "
-                "logical, comparison, bitwise excluding shifts, reduction, and "
-                "temporal limited to delays and sampled-value functions. "
-                "Count each category once even if it has several wrong, missing, "
-                "or extra operators. A replacement between categories affects "
-                "both categories. Exclude parentheses and equivalent rewrites."
-            ),
-            criteria={
-                "zero": "0 categories.",
-                "one": "1 category.",
-                "two_or_three": "2 or 3 categories.",
-                "more_than_three": "More than 3 categories.",
-                "uncertain": "The supplied context is insufficient to determine the count.",
-            },
-        ),
-        "operator_occurrence_edit_count": Choice(
-            instructions=(
-                "How many individual operator occurrences need correction? "
-                "Count implication, logical, comparison, bitwise excluding shifts, "
-                "reduction, and temporal delays and sampled-value functions only. "
-                "Count each wrong, missing, or extra occurrence once. Repeated "
-                "uses of the same operator count separately. A replacement "
-                "counts once, even if several changes are needed at that occurrence. "
-                "Exclude parentheses and equivalent rewrites."
-            ),
-            criteria={
-                "zero": "0 operator occurrences.",
-                "one": "1 operator occurrence.",
-                "two_or_three": "2 or 3 operator occurrences.",
-                "more_than_three": "More than 3 operator occurrences.",
-                "uncertain": "The supplied context is insufficient to determine the count.",
-            },
-        ),
-    },
-
-}
-
-# Jev receives flat IDs; the editable question definitions stay grouped above.
-questions = {}
-for group, group_questions in question_groups.items():
-    for name, question in group_questions.items():
-        questions[f"{group}_{name}"] = question
+from typesafe_sdk import Noul, TypeSafeClient
 
 
 def diagnose_inference_assertion(requirement, generated_assertion, design_context="", *,
-    comparison_scope="", client=None, usage_callback=None,
+    retrieved_cases, comparison_scope="", confidence_threshold=0.4,
+    client=None, usage_callback=None,
 ):
-    """Return one batch of inference answers without accepting a reference."""
+    """Ask one question per retrieved rule and retain confident yes answers."""
+    active_questions = {}
+    candidates = {}
+    background = (
+        "Assess each retrieved training rule against the CURRENT requirement, "
+        "generated assertion and design_context. No current-case reference or "
+        "PEC feedback is provided. Historical references belong only to training cases. "
+        "Judge the rule's transferable behavioral principle, not an exact match "
+        "to its original edit. Map signals by role and adapt related operators "
+        "when they express the same correction, preserving required polarity. "
+        "For example, a four-state equality principle may also guide four-state "
+        "inequality when the current requirement needs inequality and X/Z handling. "
+        "Answer yes when that principle addresses a current issue and supports "
+        "a correction consistent with the current requirement and design context. "
+        "Check timing, widths, parameters, reset and X/Z applicability conditions. "
+        "Shared operators or topic similarity alone are insufficient. Answer no "
+        "for unrelated, already-resolved, conflicting or out-of-scope guidance. "
+        "Do not select label changes or excluded clock/reset wrapper changes as "
+        "semantic corrections. Do not override explicit current-case timing merely "
+        "because a historical benchmark reference used different timing. "
+        "Use a Noul value near 0.5 when applicability cannot be determined. "
+        "Inspect the testbench or module interface to clarify signal meanings, widths, "
+        "parameters and relationships. If the requirement omits information needed to "
+        "express its intended behavior, consider additional declared signals supported "
+        "by that context. Do not add signals or conditions merely because they are "
+        "available, and do not invent undeclared signals."
+    )
+    for case in retrieved_cases:
+        for number, (rule_id, rule) in enumerate(case["rules"].items(), 1):
+            question_id = f"case_{case['case_number']:04d}_rule_{number:04d}"
+            source_round = case.get("rule_rounds", {}).get(rule_id)
+            group = case.get("rule_groups", {}).get(rule_id, [])
+            source = None
+            applications = []
+            for evidence in case.get("round_evidence", []):
+                if source_round is not None and evidence["round"] == source_round:
+                    source = evidence
+                used = evidence.get("rules_used", [])
+                if source_round is not None and any(
+                    item.get("updated_round") == source_round
+                    and item.get("rule") == rule
+                    and set(item.get("group", [])) == set(group)
+                    for item in used
+                ):
+                    applications.append({
+                        "round": evidence["round"],
+                        "generated_assertion": evidence.get("generated_assertion"),
+                        "evaluation": evidence.get("evaluation"),
+                        "other_rules_supplied": len(used) - 1,
+                    })
+            candidate = {
+                "question_id": question_id,
+                "source_case_number": case["case_number"],
+                "source_rule_id": rule_id,
+                "source_requirement": case["requirement"],
+                "historical_reference_assertion": case.get("reference_assertion"),
+                "group": group, "rule": rule, "generated_round": source_round,
+                "source_assertion": source.get("generated_assertion") if source else None,
+                "source_evaluation": source.get("evaluation") if source else None,
+                "applications": applications,
+            }
+            candidates[question_id] = candidate
+            active_questions[question_id] = Noul(instructions={
+                "retrieved_rule": candidate,
+                "question": (
+                    "Does this rule provide a useful behavioral correction principle "
+                    "for an issue in the current assertion, after adapting signal roles "
+                    "and related operators while preserving the current requirement's "
+                    "meaning, design constraints and comparison_scope?"
+                ),
+            })
     request_state = {
-        "background": BACKGROUND,
+        "background": background,
         "comparison_scope": comparison_scope,
         "requirement": requirement,
         "generated_assertion": generated_assertion,
         "design_context": design_context,
     }
+    if not active_questions:
+        return {"answers": {}, "raw_answers": {}, "model": None,
+                "state": request_state, "questions": {}, "candidates": candidates, "selected_rules": []}
     if client is None:
         with TypeSafeClient() as owned_client:
-            response = owned_client.system_one(state=request_state, questions=questions)
+            response = owned_client.system_one(state=request_state, questions=active_questions)
     else:
-        response = client.system_one(state=request_state, questions=questions)
+        response = client.system_one(state=request_state, questions=active_questions)
     if usage_callback is not None:
         usage_callback(getattr(response, "usage", None))
-    if set(response.answers) != set(questions):
+    if set(response.answers) != set(active_questions):
         raise RuntimeError("Jev response question names do not match the request")
     answers = {}
     raw_answers = {}
-    for question_id in questions:
+    selected_rules = []
+    for question_id in active_questions:
         raw = response.answers[question_id].model_dump(mode="json")
         raw_answers[question_id] = raw
-        if raw["type"] == "noul":
-            answers[question_id] = {
-                "answer": raw["noul"] > 0.5,
-                "confidence": round(abs(2 * raw["noul"] - 1), 12),
-            }
-        else:
-            answers[question_id] = {"answer": raw["choice"], "confidence": raw["confidence"]}
+        if raw["type"] != "noul":
+            raise RuntimeError(f"Expected a Noul answer for {question_id}")
+        answers[question_id] = {
+            "answer": raw["noul"] > 0.5,
+            "confidence": round(abs(2 * raw["noul"] - 1), 12),
+        }
+        if answers[question_id]["answer"] and answers[question_id]["confidence"] >= confidence_threshold:
+            selected_rules.append({
+                **candidates[question_id],
+                "applicability_confidence": answers[question_id]["confidence"],
+            })
     return {
         "answers": answers,
         "raw_answers": raw_answers,
         "model": response.model,
         "state": request_state,
+        "candidates": candidates,
+        "selected_rules": selected_rules,
         "questions": {key: value.model_dump(mode="json", exclude_none=True)
-                      for key, value in questions.items()},
+                      for key, value in active_questions.items()},
     }
 

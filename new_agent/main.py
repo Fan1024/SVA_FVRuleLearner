@@ -17,8 +17,8 @@ from new_agent.pipeline import run_pipeline
 
 def validate_config() -> None:
     """Check active settings once, before creating a run or making API calls."""
-    if config.MODE not in {"train", "inference", "inference_only"}:
-        raise ValueError('MODE must be "train", "inference", or "inference_only".')
+    if config.MODE not in {"train", "inference"}:
+        raise ValueError('MODE must be "train" or "inference".')
     if config.MODE == "inference":
         if type(config.TOP_K_CASES) is not int or config.TOP_K_CASES < 1:
             raise ValueError("TOP_K_CASES must be a positive integer.")
@@ -75,11 +75,6 @@ def main() -> int:
             config.DATASET_PATH, config.TRAIN_CASE_IDS,
             train_fraction=config.TRAIN_FRACTION, split_seed=config.SPLIT_SEED,
         )
-    elif config.MODE == "inference_only":
-        cases = dataset_loader.read_dataset(config.DATASET_PATH)
-        print("Inference-only baseline: all dataset cases; no training source or retrieval.", flush=True)
-        print(f"Automatically selected inference case IDs ({len(cases)}):",
-              [case["case_number"] for case in cases], flush=True)
     else:
         dataset_path = dataset_loader.resolve_dataset_path(config.DATASET_PATH)
         source_dir, source_metadata = run_io.select_training_run(
@@ -114,7 +109,7 @@ def main() -> int:
         "comparison_scope": policy["scope"],
         "revision_rules": "previous_round_only",
         "round_policy": "pec_or_bleu_or_max_rounds",
-        "pec_compile_error_policy": "continue_requirement_diagnosis_and_guidance" if phase == "infer" else "continue_reference_diagnosis_and_rule_generation",
+        "pec_compile_error_policy": "continue_retrieved_rule_diagnosis_and_guidance" if phase == "infer" else "continue_reference_diagnosis_and_rule_generation",
         "case_ids": ([case["case_number"] for case in cases]
                      if phase == "infer" else list(config.TRAIN_CASE_IDS)),
         "dataset_split": dataset_split,
@@ -125,13 +120,7 @@ def main() -> int:
         "save_debug_traces": config.SAVE_DEBUG_TRACES,
     }
 
-    if config.MODE == "inference_only":
-        settings.update(
-            source_training_run=None,
-            inference_case_selection="all_dataset_cases",
-            training_case_ids=[], retrieval_top_k=0, retrieval_eligible_cases=0,
-        )
-    elif phase == "infer":
+    if phase == "infer":
         settings.update(
             source_training_run=str(source_dir),
             inference_case_selection="all_dataset_cases_minus_source_selected_cases",

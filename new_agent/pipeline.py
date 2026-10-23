@@ -69,20 +69,18 @@ def run_pipeline(directory, record: dict, *, retriever=None) -> int:
     File-system failures can still prevent reliable recording and must propagate.
     """
     inference = record["settings"].get("phase", "train") == "infer"
-    inference_only = inference and record["settings"].get("mode") == "inference_only"
     if inference:
         from new_agent import infer_assertion_generator as assertion_generator
         from new_agent import infer_rule_generator as rule_generator
         from new_agent.infer_diagnosis import diagnose_inference_assertion as diagnose
-        from new_agent.infer_diagnosis_formatter import format_inference_diagnosis as format_diagnosis
-        if not inference_only and retriever is None:
+        if retriever is None:
             raise ValueError("Retrieval-backed inference requires the resolved training-rule retriever.")
     else:
         from new_agent import train_assertion_generator as assertion_generator
         from new_agent import train_rule_generator as rule_generator
         from new_agent.train_diagnosis import diagnose_assertion_mismatches as diagnose
         from new_agent.train_diagnosis_formatter import format_diagnosis
-    retrieved_cases = [] if inference_only else None
+    retrieved_cases = None
     inputs = record["inputs"]
     policy = formal_check.get_evaluation_policy(inputs.get("dataset", config.DATASET))
     comparison_scope = policy["scope"]
@@ -115,6 +113,7 @@ def run_pipeline(directory, record: dict, *, retriever=None) -> int:
                 user_prompt = assertion_generator.build_generation_prompt(
                     requirement=inputs["requirement"], testbench=inputs["testbench"],
                     previous_assertion=previous_assertion, rules=selected_rules,
+                    case_history=record["round_evidence"][:-1],
                     comparison_scope=comparison_scope, revision_feedback=revision_feedback,
                     assertion_template=policy.get("assertion_template", "asrt: assert property (@(posedge clk) BODY);"),
                 )
@@ -221,10 +220,21 @@ def run_pipeline(directory, record: dict, *, retriever=None) -> int:
                     f"Round {round_number}: PEC verdict unavailable; continuing "
                     f"with {'requirement-based' if inference else 'reference-based'} diagnosis and rule generation.", flush=True,
                 )
-            else:
-                print(f"Round {round_number}: running Jev diagnosis.", flush=True)
             stage = "diagnosis"
             try:
+                if inference and retrieved_cases is None:
+                    stage = "retrieval"
+                    run_io.update_run(directory, record, stage=stage)
+                    retrieved_cases = retriever.retrieve(inputs["requirement"])
+                    evidence = [{"case_number": c["case_number"], "design_name": c.get("design_name"),
+                                 "task_id": c.get("task_id"), "similarity": c["similarity"]}
+                                for c in retrieved_cases]
+                    run_io.update_run(directory, record, retrieved_cases=evidence)
+                    run_io.save_debug_event(directory, record, "retrieval", cases=retrieved_cases)
+                    print("Retrieved case IDs:", [c["case_number"] for c in retrieved_cases], flush=True)
+                stage = "diagnosis"
+                print(f"Round {round_number}: running Jev "
+                      f"{'rule applicability' if inference else 'diagnosis'}.", flush=True)
                 run_io.update_run(directory, record, stage=stage)
                 with run_io.measure_stage(record, "diagnosis") as capture_usage:
                     diagnosis_inputs = {
@@ -234,46 +244,58 @@ def run_pipeline(directory, record: dict, *, retriever=None) -> int:
                         "comparison_scope": comparison_scope,
                         "usage_callback": capture_usage,
                     }
-                    if not inference:
+                    if inference:
+                        diagnosis_inputs.update(retrieved_cases=retrieved_cases,
+                                                confidence_threshold=config.CONFIDENCE_THRESHOLD)
+                    else:
                         diagnosis_inputs.update(
                             reference_assertion=inputs["reference_assertion"],
                             formal_feedback=formal_result["feedback"],
                         )
                     diagnosis = diagnose(**diagnosis_inputs)
-                stage = "formatting"
                 run_io.update_run(directory, record, stage=stage, diagnosis=diagnosis,
                                   diagnosis_model=diagnosis.get("model"))
                 run_io.save_diagnosis_model(record, diagnosis.get("model"))
-                statements = None
-                try:
-                    statements = format_diagnosis(diagnosis["answers"], confidence_threshold=config.CONFIDENCE_THRESHOLD)
-                finally:
-                    run_io.save_debug_event(directory, record, "diagnosis", diagnosis=diagnosis, statements=statements)
-                run_io.update_run(directory, record, statements=statements)
-                run_io.save_debug_event(directory, record, "statements", statements=statements)
+                if inference:
+                    selected = diagnosis["selected_rules"]
+                    selected_ids = {rule["question_id"] for rule in selected}
+                    record["round_evidence"][-1]["retrieved_rule_selection"] = {
+                        question_id: {
+                            "source_case_number": candidate["source_case_number"],
+                            "source_rule_id": candidate["source_rule_id"],
+                            **diagnosis["answers"][question_id],
+                            "selected": question_id in selected_ids,
+                        } for question_id, candidate in diagnosis["candidates"].items()
+                    }
+                    run_io.save_debug_event(directory, record, "diagnosis", diagnosis=diagnosis, selected_rules=selected)
+                    run_io.save_debug_event(directory, record, "rule_selection", selected_rules=selected)
+                    print(f"Round {round_number}: Jev selected {len(selected)}/"
+                          f"{len(diagnosis['answers'])} retrieved rules.", flush=True)
+                else:
+                    stage = "formatting"
+                    run_io.update_run(directory, record, stage=stage)
+                    statements = None
+                    try:
+                        statements = format_diagnosis(diagnosis["answers"], confidence_threshold=config.CONFIDENCE_THRESHOLD)
+                    finally:
+                        run_io.save_debug_event(directory, record, "diagnosis", diagnosis=diagnosis, statements=statements)
+                    run_io.update_run(directory, record, statements=statements)
+                    run_io.save_debug_event(directory, record, "statements", statements=statements)
                 stage = "rule_generation"
                 print(f"Round {round_number}: running rule generation.", flush=True)
                 run_io.update_run(directory, record, stage=stage)
                 rule_inputs = {
                     "requirement": inputs["requirement"],
                     "generated_assertion": generated_assertion,
-                    "statements": statements, "testbench": inputs["testbench"],
+                    "testbench": inputs["testbench"],
                     "comparison_scope": comparison_scope,
                 }
                 if inference:
-                    if retrieved_cases is None:
-                        stage = "retrieval"
-                        run_io.update_run(directory, record, stage=stage)
-                        retrieved_cases = retriever.retrieve(inputs["requirement"])
-                        evidence = [{"case_number": c["case_number"], "design_name": c.get("design_name"),
-                                     "task_id": c.get("task_id"), "similarity": c["similarity"]}
-                                    for c in retrieved_cases]
-                        run_io.update_run(directory, record, retrieved_cases=evidence)
-                        run_io.save_debug_event(directory, record, "retrieval", cases=retrieved_cases)
-                        print("Retrieved case IDs:", [c["case_number"] for c in retrieved_cases], flush=True)
-                    rule_inputs["retrieved_cases"] = retrieved_cases
+                    rule_inputs["selected_rules"] = selected
+                    rule_inputs["case_history"] = record["round_evidence"]
                 else:
-                    rule_inputs.update(reference_assertion=inputs["reference_assertion"],
+                    rule_inputs.update(statements=statements,
+                                       reference_assertion=inputs["reference_assertion"],
                                        formal_feedback=formal_result["feedback"])
                 stage = "rule_generation"
                 run_io.update_run(directory, record, stage=stage)

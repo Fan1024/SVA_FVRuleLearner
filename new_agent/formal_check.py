@@ -83,7 +83,11 @@ def get_evaluation_policy(dataset: str) -> dict:
     return {"scope": scope + " Keep the complete assertion syntactically valid. "
             "Native per-round training writes the original dataset testbench; "
             "it does not separately compile an inserted full generated assertion.",
-            "include_reset": not human, "tcl_file": f"run_jg_{dataset}.tcl"}
+            "include_reset": not human, "tcl_file": f"run_jg_{dataset}.tcl",
+            "assertion_template": (
+                "asrt: assert property (@(posedge clk) BODY);" if human else
+                "assert property (@(posedge clk) BODY);"
+            )}
 
 
 def validate_backend() -> Path:

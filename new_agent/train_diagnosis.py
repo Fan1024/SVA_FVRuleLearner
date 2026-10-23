@@ -50,7 +50,17 @@ def diagnose_assertion_mismatches(
             "Different syntax can express the same behavior. "
             "For each repair question, answer yes only when that change is needed. "
             "Answer no when it is not needed or the question does not apply. "
-            "Each question is independent. Use the supplied design and tool context."
+            "Each question is independent; related repair questions may both be yes. "
+            "Judge Noul repair questions as yes/no decisions, with uncertainty near 0.5; "
+            "Choice questions classify the supplied alternatives. General examples "
+            "illustrate distinctions, not edits to copy into this case. "
+            "Use the reference to establish the benchmark target when prose is ambiguous. "
+            "Use the supplied design and tool context."
+            " Inspect the testbench or module interface to clarify signal meanings, widths, "
+            "parameters and relationships. If the requirement omits information needed to "
+            "express its intended behavior, consider additional declared signals supported "
+            "by that context. Do not add signals or conditions merely because they are "
+            "available, and do not invent undeclared signals."
         ),
         **inputs,
     }
@@ -136,13 +146,13 @@ def diagnose_assertion_mismatches(
                 },
             ),
             "replace_operator": Noul(
-                instructions="Should an existing operator in this category be replaced with a different operator? This question concerns a comparison operator.",
+                instructions="Should an existing operator in this category be replaced with a different operator? This question concerns a comparison operator (==, !=, ===, !==, <, <=, >, >=).",
             ),
             "insert_operator": Noul(
                 instructions="Should a comparison operator be inserted to express a missing operation?",
             ),
             "remove_operator": Noul(
-                instructions="Should an unnecessary operator in this category be removed? This question concerns a comparison operator.",
+                instructions="Should an unnecessary operator in this category be removed? This question concerns a comparison operator (==, !=, ===, !==, <, <=, >, >=).",
             ),
             "operands": Noul(
                 instructions="Should an operand of an existing comparison be replaced?",
@@ -170,13 +180,13 @@ def diagnose_assertion_mismatches(
                 },
             ),
             "replace_operator": Noul(
-                instructions="Should an existing operator in this category be replaced with a different operator? This question concerns a bitwise operator.",
+                instructions="Should an existing operator in this category be replaced with a different operator? This question concerns a bitwise operator (binary &, |, ^, ~^, ^~, or unary ~).",
             ),
             "insert_operator": Noul(
                 instructions="Should a bitwise operator be inserted to express a missing operation?",
             ),
             "remove_operator": Noul(
-                instructions="Should an unnecessary operator in this category be removed? This question concerns a bitwise operator.",
+                instructions="Should an unnecessary operator in this category be removed? This question concerns a bitwise operator (binary &, |, ^, ~^, ^~, or unary ~).",
             ),
             "operands": Noul(
                 instructions=(
@@ -198,13 +208,13 @@ def diagnose_assertion_mismatches(
                 },
             ),
             "replace_operator": Noul(
-                instructions="Should an existing operator in this category be replaced with a different operator? This question concerns a reduction operator.",
+                instructions="Should an existing operator in this category be replaced with a different operator? This question concerns a unary reduction operator (&, |, ^, ~&, ~|, ~^, or ^~).",
             ),
             "insert_operator": Noul(
                 instructions="Should a reduction operator be inserted to express a missing operation?",
             ),
             "remove_operator": Noul(
-                instructions="Should an unnecessary operator in this category be removed? This question concerns a reduction operator.",
+                instructions="Should an unnecessary operator in this category be removed? This question concerns a unary reduction operator (&, |, ^, ~&, ~|, ~^, or ^~).",
             ),
             "vector_coverage": Noul(
                 instructions=(
@@ -220,13 +230,31 @@ def diagnose_assertion_mismatches(
                 instructions=(
                     "Where are ## delays and sampled-value functions "
                     "($past, $rose, $fell, $stable, $changed) used? "
-                    "Exclude |-> and |=>, which belong to implication."
+                    "Exclude |-> and |=> from this presence question; their timing "
+                    "is assessed separately by temporal_implication_timing."
                 ),
                 criteria={
                     "reference_only": "Only in the reference assertion.",
                     "generated_only": "Only in the generated assertion.",
                     "both": "In both assertions.",
                     "neither": "In neither assertion.",
+                },
+            ),
+            "implication_timing": Noul(
+                instructions={
+                    "background": (
+                        "This question concerns the start time of an existing implication's "
+                        "consequent: a |-> b starts b at the antecedent's endpoint, while "
+                        "a |=> b starts it one clock later. For a sequence antecedent, use "
+                        "its endpoint, not its first cycle. Account for explicit ## delays "
+                        "and sampled-value functions; different spellings may be equivalent."
+                    ),
+                    "question": (
+                        "Should an existing |-> be changed to |=>, or vice versa, to "
+                        "correct same-cycle versus next-cycle timing? Answer no if the "
+                        "complete timing already matches the reference or if the needed "
+                        "repair is only insertion/removal of implication or a ## delay."
+                    ),
                 },
             ),
             "insert_delay": Noul(
@@ -305,8 +333,143 @@ def diagnose_assertion_mismatches(
             ),
         },
 
-        # Global: only operator categories and operator occurrences.
+        # Global: behavioral repairs across operator categories, plus operator counts.
         "global": {
+            "signal_identity": Noul(
+                instructions={
+                    "background": (
+                        "Signal identity means selecting the intended declared signal at "
+                        "an operand, independently of the surrounding operator. For example, "
+                        "a data comparison may use another channel's data signal instead "
+                        "of the intended channel's data. Equivalent aliases are not errors. "
+                        "Check original testbench declarations: a missing declaration only "
+                        "in PEC's generated stub does not justify renaming a valid signal."
+                    ),
+                    "question": (
+                        "Should a signal identifier in the generated assertion be replaced "
+                        "because it names the wrong signal for the required behavior?"
+                    ),
+                },
+            ),
+            "signal_role": Noul(
+                instructions={
+                    "background": (
+                        "Signal role means the information a signal represents: request "
+                        "versus accepted transaction, current value versus registered "
+                        "snapshot, raw input versus derived tracker, or observed data versus "
+                        "model output. Similar names or widths do not establish equal roles. "
+                        "Use testbench definitions and the reference to determine the role."
+                    ),
+                    "question": (
+                        "Should an operand be changed to a signal or subexpression with "
+                        "the correct behavioral role, because the current operand "
+                        "represents a different event, state, data source or time snapshot?"
+                    ),
+                },
+            ),
+            "missing_behavioral_branch": Noul(
+                instructions={
+                    "background": (
+                        "A behavioral branch is a required scenario with its own obligation, "
+                        "not merely an extra Boolean operator. For example, a read may need "
+                        "stored-data comparison when nonempty and incoming-write-data "
+                        "comparison for an empty simultaneous transfer. Checking one path "
+                        "does not cover the other. Adding == 1'b1 alone does not create a "
+                        "missing scenario. A branch may be encoded without explicit if/else."
+                    ),
+                    "question": (
+                        "Should a missing scenario and its required check be added because "
+                        "the generated assertion omits an entire behavioral branch covered "
+                        "by the reference? Distinguish a missing branch from a wrong or "
+                        "missing guard on an obligation that is already represented."
+                    ),
+                },
+            ),
+            "wrong_applicability_condition": Noul(
+                instructions={
+                    "background": (
+                        "An applicability condition determines when an existing obligation "
+                        "must hold. A wrong existing guard can enable the wrong mode or "
+                        "exempt a required scenario. For example, last_grant != 0 checks "
+                        "later arbitration rather than first arbitration, or an extra "
+                        "no-write guard may incorrectly exempt simultaneous transactions."
+                    ),
+                    "question": (
+                        "Should an existing applicability guard be replaced, removed, "
+                        "repolarized or regrouped because it checks the wrong situations "
+                        "for an otherwise represented obligation? Do not classify a wholly "
+                        "absent qualification as a wrong existing guard."
+                    ),
+                },
+            ),
+            "missing_applicability_condition": Noul(
+                instructions={
+                    "background": (
+                        "A missing applicability condition is an absent qualification on "
+                        "an already represented obligation. For example, an operation-specific "
+                        "data check may require an accepted-transaction guard that is absent. "
+                        "This differs from replacing an incorrect existing guard or adding "
+                        "a separate scenario with a different obligation."
+                    ),
+                    "question": (
+                        "Should a missing applicability condition be inserted so an "
+                        "existing check is enforced under the required circumstances, "
+                        "rather than applying without a necessary qualification?"
+                    ),
+                },
+            ),
+            "any_vs_all": Noul(
+                instructions={
+                    "background": (
+                        "This question concerns existential versus universal coverage of "
+                        "the intended bits or members, regardless of syntax. For a multi-bit "
+                        "vector, |v asks whether any bit is one, while &v asks whether every "
+                        "bit is one. All-ones comparisons and member-wise conditions can "
+                        "express the same distinction. Check actual width and X/Z behavior; "
+                        "any and all coincide on a one-bit vector. Wrong vector/range "
+                        "selection is assessed separately by operand/coverage questions."
+                    ),
+                    "question": (
+                        "Should the generated assertion change from requiring any member "
+                        "to requiring all members, or vice versa, over the intended set "
+                        "to match the reference's required behavior?"
+                    ),
+                },
+            ),
+            "required_vs_forbidden_condition": Noul(
+                instructions={
+                    "background": (
+                        "A property can require a success condition or reject a violation "
+                        "condition. For example, ok === 1'b1 requires definitely true ok, "
+                        "whereas bad !== 1'b1 rejects definitely true bad. Negation, ordinary "
+                        "equality and case equality are not interchangeable for X/Z values. "
+                        "Changing == to === alone concerns comparison_four_state_equality; "
+                        "here judge the intended meaning and polarity of the whole check."
+                    ),
+                    "question": (
+                        "Should the assertion's truth requirement or failure polarity be "
+                        "changed because it requires a violation, forbids a valid condition, "
+                        "or otherwise confuses a required condition with a forbidden one? "
+                        "Judge behavior, not a preference for either assertion style."
+                    ),
+                },
+            ),
+            "cosmetic_vs_semantic": Choice(
+                instructions=(
+                    "Classify differences within comparison_scope using the reference "
+                    "and design context. Redundant parentheses, whitespace, and demonstrably "
+                    "equivalent rewrites do not change behavior. If both cosmetic and "
+                    "behavioral differences exist, select semantic_difference. Do not "
+                    "classify an assertion as semantically wrong solely because PEC "
+                    "compilation failed; choose uncertain when behavior cannot be established."
+                ),
+                criteria={
+                    "no_difference": "No differences are identified within comparison_scope.",
+                    "cosmetic_only": "Differences are textual or behavior-preserving only; no semantic repair is supported.",
+                    "semantic_difference": "At least one difference changes required behavior, with or without cosmetic differences.",
+                    "uncertain": "The available context does not establish whether differences change behavior.",
+                },
+            ),
             "operator_category_error_count": Choice(
                 instructions=(
                     "How many operator categories need correction? Count implication, "
@@ -314,7 +477,10 @@ def diagnose_assertion_mismatches(
                     "temporal limited to delays and sampled-value functions. "
                     "Count each category once even if it has several wrong, missing, "
                     "or extra operators. A replacement between categories affects "
-                    "both categories. Exclude parentheses and equivalent rewrites."
+                    "both categories. A |-> versus |=> timing repair counts as implication, "
+                    "not as a second temporal category. Count behavioral repairs only "
+                    "when they require these operator changes. Exclude parentheses "
+                    "and equivalent rewrites."
                 ),
                 criteria={
                     "zero": "0 categories.",
@@ -331,6 +497,7 @@ def diagnose_assertion_mismatches(
                     "Count each wrong, missing, or extra occurrence once. Repeated "
                     "uses of the same operator count separately. A replacement "
                     "counts once, even if several changes are needed at that occurrence. "
+                    "Count |-> versus |=> as one implication occurrence edit. "
                     "Exclude parentheses and equivalent rewrites."
                 ),
                 criteria={
@@ -353,6 +520,12 @@ def diagnose_assertion_mismatches(
 
         for name, question in group_questions.items():
             question_id = f"{group}_{name}"
+            instructions = question.instructions
+            question = question.model_copy(update={"instructions": {
+                "question_type": "yes/no repair (Noul)" if isinstance(question, Noul) else "classification (Choice)",
+                "category": group,
+                **(instructions if isinstance(instructions, dict) else {"question": instructions}),
+            }})
             questions[question_id] = question
             question_definitions[question_id] = question.model_dump(
                 mode="json", exclude_none=True
