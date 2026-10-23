@@ -90,8 +90,10 @@ def main() -> int:
         print(f"Automatically selected inference case IDs ({len(cases)}):",
               [case["case_number"] for case in cases], flush=True)
         from new_agent.infer_retrieval import RuleRetriever
+        training_ids = {c["case_number"] for c in source_metadata["selected_cases"]}
         retriever = RuleRetriever(
-            source_dir, training_case_ids={c["case_number"] for c in source_metadata["selected_cases"]},
+            source_dir, training_case_ids=training_ids,
+            training_cases=dataset_loader.load_cases(dataset_path, sorted(training_ids)),
             top_k=config.TOP_K_CASES, model_name=config.EMBEDDING_MODEL,
         )
     dataset_path = Path(cases[0]["dataset_path"])
@@ -127,6 +129,8 @@ def main() -> int:
             training_case_ids=[c["case_number"] for c in source_metadata["selected_cases"]],
             retrieval_top_k=config.TOP_K_CASES, embedding_model=config.EMBEDDING_MODEL,
             retrieval_eligible_cases=len(retriever.cases),
+            example_retrieval="top_three_training_requirements_by_cosine",
+            example_pool_size=len(retriever.examples),
             source_rules_sha256=retriever.sha256,
         )
 

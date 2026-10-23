@@ -5,11 +5,11 @@ from pathlib import Path
 # "train": learn rules on selected training cases.
 # "inference": exclude source training cases and retrieve learned rules.
 # Launch every mode with python main.py.
-MODE = "inference"
+MODE = "train"
 
 
 # Supported datasets: nl2sva_human, nl2sva_machine, nl2sva_opencore.
-DATASET = "nl2sva_human"
+DATASET = "nl2sva_machine"
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DATASET_PATH = (
     REPO_ROOT / "FVEval" / "data_1k" / "module_sva_nl_manual_editing.csv"
@@ -27,7 +27,7 @@ TRAIN_CASE_IDS = []
 TRAIN_FRACTION = 0.8
 
 # Keep this seed and the CSV unchanged to reproduce the same split.
-SPLIT_SEED = 42
+SPLIT_SEED = 100
 
 # Models for the two generation components. Jev uses its service default.
 ASSERTION_MODEL = "gpt-5.6-terra"

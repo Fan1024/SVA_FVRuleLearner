@@ -121,8 +121,9 @@ def split_cases(
 ) -> tuple[list[dict], list[dict]]:
     """Randomly partition whole examples; preserve original IDs and file order.
 
-    The training count is rounded down. Every remaining example belongs to
-    inference. A local random generator leaves global random state unchanged.
+    Match FVRuleLearner: shuffle with the seed, reserve the first floor(N *
+    test_fraction) positions for inference, and train on the remainder. Return
+    cases in CSV order. A local generator leaves global random state unchanged.
     """
     if (
         type(train_fraction) not in (int, float)
@@ -135,16 +136,19 @@ def split_cases(
     if len(cases) < 2:
         raise ValueError("A train/inference split requires at least two examples.")
 
-    training_count = int(len(cases) * train_fraction)
-    if not 1 <= training_count < len(cases):
+    # Round the complementary fraction so 1 - 0.8 behaves like the original
+    # literal 0.2 (otherwise floating-point error can turn 60 test cases into 59).
+    test_fraction = round(1 - train_fraction, 12)
+    inference_count = int(len(cases) * test_fraction)
+    if not 1 <= inference_count < len(cases):
         raise ValueError(
-            f"TRAIN_FRACTION={train_fraction} gives {training_count} training examples "
-            f"out of {len(cases)}. Choose a fraction that leaves both parts nonempty."
+            f"TRAIN_FRACTION={train_fraction} leaves {inference_count} inference "
+            f"examples out of {len(cases)}. Choose a fraction leaving both parts nonempty."
         )
 
     positions = list(range(len(cases)))
     Random(split_seed).shuffle(positions)
-    training_positions = set(positions[:training_count])
+    training_positions = set(positions[inference_count:])
     training = [case for index, case in enumerate(cases) if index in training_positions]
     inference = [case for index, case in enumerate(cases) if index not in training_positions]
     return training, inference
@@ -167,6 +171,7 @@ def load_training_cases(
         cases, train_fraction=train_fraction, split_seed=split_seed,
     )
     split = {
+        "method": "fvrulelearner_test_first_shuffle",
         "train_fraction": train_fraction,
         "seed": split_seed,
         "training_case_ids": [case["case_number"] for case in training],

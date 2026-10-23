@@ -21,7 +21,10 @@ Before returning the assertion, check:
 - The complete predicate has the intended polarity: require valid behavior or
   reject a violation. Do not introduce an unintended negation. Choose explicit
   truth comparisons and X/Z handling only with the required meaning and scope.
-Follow the supplied dataset-specific assertion template and comparison scope.
+Training examples demonstrate translation patterns. Adapt them to the current
+requirement and testbench, using current signal declarations and only the guards
+and timing required here. Follow the current dataset's assertion template and
+comparison scope.
 """
 
 
@@ -35,6 +38,7 @@ def build_generation_prompt(
     revision_feedback: str | None = None,
     assertion_template: str = "asrt: assert property (@(posedge clk) BODY);",
     case_history: list[dict] | None = None,
+    examples: list[dict] | None = None,
 ) -> str:
     """Build a fresh initial or revision prompt; never accept a reference."""
     revision = ""
@@ -84,6 +88,15 @@ def build_generation_prompt(
         + "\nEND CASE HISTORY\n"
     ) if history else ""
 
+    example_guidance = (
+        "\nSIMILAR TRAINING EXAMPLES\n"
+        + json.dumps([{
+            "requirement": example["requirement"],
+            "reference_assertion": example["reference_assertion"],
+        } for example in examples], indent=2, ensure_ascii=False)
+        + "\nEND TRAINING EXAMPLES\n"
+    ) if examples else ""
+
     scope_guidance = (
         "\nEVALUATION SCOPE\n" + comparison_scope
         + "\nChoose clock and reset conditions from the task and testbench.\n"
@@ -100,6 +113,7 @@ def build_generation_prompt(
 
 {testbench}
 
+{example_guidance}
 Question: Create a SVA assertion checks {requirement}
 {scope_guidance}{revision}{history_guidance}{retry_guidance}
 Generate exactly one assertion using this statement structure:

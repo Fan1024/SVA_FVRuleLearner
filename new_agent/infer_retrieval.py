@@ -1,4 +1,4 @@
-"""A frozen training-rule bank ranked by natural-language requirement similarity."""
+"""Separate example and rule indexes for one selected training run."""
 
 import hashlib
 import json
@@ -6,11 +6,25 @@ from pathlib import Path
 
 
 class RuleRetriever:
-    """Read one resolved run once; encode its eligible requirements once on CPU."""
+    """Share one embedding model; rank training examples and rule cases separately."""
 
-    def __init__(self, training_run_dir, *, training_case_ids, top_k: int, model_name: str):
+    def __init__(self, training_run_dir, *, training_case_ids, training_cases,
+                 top_k: int, model_name: str):
         self.directory = Path(training_run_dir).resolve()
         self.top_k = top_k
+        # Examples come from the source run's complete selected training pool in
+        # the verified CSV, independently of rule availability or generation success.
+        self.examples = [{
+            "case_number": case["case_number"],
+            "requirement": case["requirement"],
+            "reference_assertion": case["reference_assertion"],
+        } for case in training_cases]
+        if (not self.examples or len({c["case_number"] for c in self.examples}) != len(self.examples)
+                or {c["case_number"] for c in self.examples} != set(training_case_ids)):
+            raise ValueError("Example pool must contain exactly the selected training cases.")
+        if any(not isinstance(case[key], str) or not case[key].strip()
+               for case in self.examples for key in ("requirement", "reference_assertion")):
+            raise ValueError("Every training example needs a requirement and reference assertion.")
         path = self.directory / "learned_rules.jsonl"
         data = path.read_bytes()
         self.sha256 = hashlib.sha256(data).hexdigest()
@@ -69,19 +83,30 @@ class RuleRetriever:
                 "rule_rounds": {key: case.get("rule_rounds", {}).get(key) for key in rules},
                 "round_evidence": round_evidence,
             })
-        if not self.cases:
-            raise ValueError(f"No cases with nonempty requirements and rules in {path}.")
         # Training mode does not import or load the embedding dependency.
         from sentence_transformers import SentenceTransformer
         from sklearn.metrics.pairwise import cosine_similarity
         self._cosine_similarity = cosine_similarity
         self.model = SentenceTransformer(model_name, device="cpu")
-        self.embeddings = self.model.encode([c["requirement"] for c in self.cases])
+        embeddings = self.model.encode(
+            [c["requirement"] for c in self.examples] + [c["requirement"] for c in self.cases]
+        )
+        self.example_embeddings = embeddings[:len(self.examples)]
+        self.embeddings = embeddings[len(self.examples):]
 
     def retrieve(self, requirement: str) -> list[dict]:
         """Rank eligible cases before selecting up to top_k; keep ties deterministic."""
+        if not self.cases:
+            return []
         query = self.model.encode([requirement])
         scores = self._cosine_similarity(query, self.embeddings)[0]
         order = sorted(range(len(scores)), key=lambda i: (-float(scores[i]), self.cases[i]["case_number"]))
         return [{**self.cases[i], "similarity": float(scores[i])}
                 for i in order[:self.top_k]]
+
+    def retrieve_examples(self, requirement: str) -> list[dict]:
+        """Return up to three training pairs, regardless of their rules or pass status."""
+        query = self.model.encode([requirement])
+        scores = self._cosine_similarity(query, self.example_embeddings)[0]
+        order = sorted(range(len(scores)), key=lambda i: (-float(scores[i]), self.examples[i]["case_number"]))
+        return [{**self.examples[i], "similarity": float(scores[i])} for i in order[:3]]

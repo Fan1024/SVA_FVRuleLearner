@@ -81,6 +81,7 @@ def run_pipeline(directory, record: dict, *, retriever=None) -> int:
         from new_agent.train_diagnosis import diagnose_assertion_mismatches as diagnose
         from new_agent.train_diagnosis_formatter import format_diagnosis
     retrieved_cases = None
+    example_cases = None
     inputs = record["inputs"]
     policy = formal_check.get_evaluation_policy(inputs.get("dataset", config.DATASET))
     comparison_scope = policy["scope"]
@@ -110,13 +111,26 @@ def run_pipeline(directory, record: dict, *, retriever=None) -> int:
             generated_assertion = None
             stage = "generation"
             try:
-                user_prompt = assertion_generator.build_generation_prompt(
-                    requirement=inputs["requirement"], testbench=inputs["testbench"],
-                    previous_assertion=previous_assertion, rules=selected_rules,
-                    case_history=record["round_evidence"][:-1],
-                    comparison_scope=comparison_scope, revision_feedback=revision_feedback,
-                    assertion_template=policy.get("assertion_template", "asrt: assert property (@(posedge clk) BODY);"),
-                )
+                if inference and example_cases is None:
+                    stage = "example_retrieval"
+                    example_cases = retriever.retrieve_examples(inputs["requirement"])
+                    run_io.update_run(directory, record, retrieved_examples=[
+                        {"case_number": case["case_number"], "similarity": case["similarity"]}
+                        for case in example_cases
+                    ])
+                    run_io.save_debug_event(directory, record, "example_retrieval", examples=example_cases)
+                    print("Example case IDs:", [case["case_number"] for case in example_cases], flush=True)
+                stage = "generation"
+                generation_inputs = {
+                    "requirement": inputs["requirement"], "testbench": inputs["testbench"],
+                    "previous_assertion": previous_assertion, "rules": selected_rules,
+                    "case_history": record["round_evidence"][:-1],
+                    "comparison_scope": comparison_scope, "revision_feedback": revision_feedback,
+                    "assertion_template": policy.get("assertion_template", "asrt: assert property (@(posedge clk) BODY);"),
+                }
+                if inference:
+                    generation_inputs["examples"] = example_cases
+                user_prompt = assertion_generator.build_generation_prompt(**generation_inputs)
                 attempt["prompts"]["user"] = user_prompt
                 run_io.update_run(directory, record, stage=stage)
                 if client is None:

@@ -403,6 +403,7 @@ def final_record(record: dict) -> dict:
     saved["phase"] = record["settings"].get("phase", "train")
     saved["mode"] = record["settings"].get("mode", "inference" if saved["phase"] == "infer" else "train")
     saved["retrieved_cases"] = record.get("retrieved_cases", [])
+    saved["retrieved_examples"] = record.get("retrieved_examples", [])
     saved["inputs"] = {
         name: record["inputs"][name]
         for name in ("case_number", "design_name", "requirement", "reference_assertion")
@@ -527,6 +528,8 @@ def _debug_event_text(record: dict, event: str, data: dict) -> str:
             "\n".join(lines) if lines else
             "None. Rule generation may explore potential issues using the background."
         )
+    if event == "example_retrieval":
+        return "\nRETRIEVED TRAINING EXAMPLES\n" + json.dumps(data["examples"], indent=2, ensure_ascii=False)
     if event == "retrieval":
         return "\nRETRIEVED TRAINING CASES\n" + json.dumps(data["cases"], indent=2)
     if event == "rule_request":
