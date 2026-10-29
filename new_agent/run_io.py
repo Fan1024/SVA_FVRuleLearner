@@ -777,7 +777,11 @@ def save_summaries(summary_dir, record: dict) -> None:
         "round_evidence": record["round_evidence"],
     }
     if record["settings"].get("flat_training_output"):
-        learning["round_failures"] = record.get("round_failures", [])
+        # Full per-round outputs live in rules/case_NNNN.jsonl exactly once.
+        # Keep the existing rule index for the unchanged inference reader.
+        learning.pop("round_evidence", None)
+        learning["trace_file"] = record.get("rule_trace_file")
+        learning["round_failure_count"] = len(record.get("round_failures", []))
         learning["error"] = (None if record.get("error") is None else {
             key: record["error"].get(key) for key in ("stage", "type", "message")})
     _update_case_collection(directory / "learned_rules.jsonl", learning)

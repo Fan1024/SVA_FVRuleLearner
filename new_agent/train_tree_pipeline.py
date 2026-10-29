@@ -18,11 +18,8 @@ from new_agent.pipeline import (
 
 @contextmanager
 def _save_round_trace(directory, record, round_number):
-    """One durable JSONL entry per attempt, including early returns/interruption.
-
-    This is a training-only supplementary output. Existing evaluation/learning
-    exports and inference IO remain unchanged. No debug flag gates this trace.
-    """
+    """Lazy per-case JSONL: case/reference once, diagnosis once per round."""
+    from new_agent.train_tree_rule_generator import compact_tree
     try:
         yield
     finally:
@@ -32,49 +29,52 @@ def _save_round_trace(directory, record, round_number):
                     if item["round"] == round_number]
         output = evidence.get("tree_rule_diagnosis")
         raw = evidence.get("tree_rule_raw_response")
+        trees = evidence.get("assertion_trees")
         evaluation = evidence.get("evaluation")
-        rule_errors = [item for item in failures if item["stage"] in
-                       {"tree_construction", "rule_generation", "rule_validation"}]
-        inputs = record["inputs"]
         error_type, error, _ = sys.exc_info()
         entry = {
-            "case_number": inputs["case_number"],
-            "design_name": inputs["design_name"], "task_id": inputs["task_id"],
             "round": round_number,
-            "generated_assertion": evidence.get("generated_assertion"),
+            "assertion": evidence.get("generated_assertion"),
             "evaluation": evaluation,
-            "assertion_trees": evidence.get("assertion_trees"),
-            "rule_generator": {
-                "status": ("completed" if output is not None else
-                           "error" if rule_errors or raw is not None else "not_run"),
-                "raw_response": raw,
-                "output": output,
-                "errors": rule_errors,
-                "skipped_reason": (None if output is not None or rule_errors else
-                    "candidate_accepted" if evaluation and evaluation.get("accepted") else
-                    "round_budget_exhausted" if round_number == config.MAX_ROUNDS else
-                    record.get("diagnosis_skipped_reason")),
-            },
-            "rules_used": evidence.get("rules_used", []),
-            "rules_generated": evidence.get("rules_generated", {}),
-            "round_failures": failures,
-            "interruption": None if error_type is None else {
-                "type": error_type.__name__, "message": str(error)},
+            "diagnosis_from_round": evidence.get("diagnosis_from_round"),
         }
+        if trees and "generated" in trees:
+            entry["generated_tree"] = compact_tree(trees["generated"], include_source=False)
+        if output is not None:
+            # Store the response once as readable JSON, not raw + parsed + extracted copies.
+            entry["diagnosis"] = output
+        elif raw is not None:
+            entry["diagnosis_raw"] = raw
+        else:
+            entry["diagnosis_skipped"] = (
+                "candidate_accepted" if evaluation and evaluation.get("accepted") else
+                "round_budget_exhausted" if round_number == config.MAX_ROUNDS else
+                record.get("diagnosis_skipped_reason", "not_run"))
+        if failures:
+            entry["errors"] = failures
+        if error_type is not None:
+            entry["interruption"] = {"type": error_type.__name__, "message": str(error)}
+        inputs = record["inputs"]
         root = Path(record.get("summary_directory", directory)) / "rules"
         path = root / f"case_{inputs['case_number']:04d}.jsonl"
         pending = record.setdefault("_pending_rule_trace", [])
         pending.append(entry)
-        # Do not create files for initial successes or cases that never reach
-        # tree/rule processing. Once needed, retain earlier buffered rounds too.
-        if (path.exists() or raw is not None or output is not None or rule_errors
-                or "assertion_trees" in evidence):
+        if path.exists() or raw is not None or output is not None or trees is not None or failures:
             root.mkdir(parents=True, exist_ok=True)
+            if not record.get("_rule_trace_initialized"):
+                first = pending[0]
+                first["case"] = {key: inputs[key] for key in ("case_number", "design_name", "task_id")}
+                first["reference_assertion"] = inputs.get("reference_assertion")
+                record["_rule_trace_initialized"] = True
+            if trees and "reference" in trees and not record.get("_reference_tree_saved"):
+                pending[-1]["reference_tree"] = compact_tree(trees["reference"], include_source=False)
+                record["_reference_tree_saved"] = True
             with path.open("a", encoding="utf-8") as stream:
                 for row in pending:
                     stream.write(json.dumps(row, ensure_ascii=False) + "\n")
                 stream.flush()
             pending.clear()
+            record["rule_trace_file"] = f"rules/{path.name}"
 
 
 def run_training_pipeline(directory, record: dict, *, retriever=None) -> int:
@@ -97,18 +97,23 @@ def run_training_pipeline(directory, record: dict, *, retriever=None) -> int:
     previous_assertion = None
     revision_feedback = None
     client = None
+    latest_diagnosis_response = None
+    latest_generated_tree = None
+    latest_diagnosis_round = None
 
     for round_number in range(1, config.MAX_ROUNDS + 1):
         with _save_round_trace(directory, record, round_number):
             run_io.start_usage_round(record, round_number)
-            selected_rules = [r for r in retained_rules(registry)
-                              if r["updated_round"] == round_number - 1]
             # A failed call before extraction must never associate old text with new scores.
             attempt = run_io.start_attempt(
                 directory, record, round_number,
                 system_prompt=assertion_generator.SYSTEM_PROMPT,
-                user_prompt="", rules=selected_rules,
+                user_prompt="", rules=[],
             )
+            evidence = record["round_evidence"][-1]
+            evidence.pop("rules_used", None)
+            evidence.pop("rules_generated", None)
+            evidence["diagnosis_from_round"] = latest_diagnosis_round
             # Persistent formal diagnostics disabled. To restore later, import
             # nullcontext from contextlib, restore check_dir below, and replace
             # TemporaryDirectory with nullcontext(str(check_dir)). Also restore
@@ -123,12 +128,15 @@ def run_training_pipeline(directory, record: dict, *, retriever=None) -> int:
                     stage = "generation"
                     generation_inputs = {
                         "requirement": inputs["requirement"], "testbench": inputs["testbench"],
-                        "previous_assertion": previous_assertion, "rules": selected_rules,
-                        "case_history": record["round_evidence"][:-1],
+                        "previous_assertion": previous_assertion,
+                        "diagnosis_response": latest_diagnosis_response,
+                        "previous_tree": latest_generated_tree,
                         "comparison_scope": comparison_scope, "revision_feedback": revision_feedback,
                         "assertion_template": policy.get("assertion_template", "asrt: assert property (@(posedge clk) BODY);"),
                     }
                     user_prompt = assertion_generator.build_generation_prompt(**generation_inputs)
+                    # Consume only the immediately preceding round's response; no history/readback.
+                    latest_diagnosis_response = latest_generated_tree = latest_diagnosis_round = None
                     attempt["prompts"]["user"] = user_prompt
                     run_io.update_run(directory, record, stage=stage)
                     if client is None:
@@ -262,7 +270,11 @@ def run_training_pipeline(directory, record: dict, *, retriever=None) -> int:
                     evidence = record["round_evidence"][-1]
                     evidence["tree_rule_raw_response"] = rule_response
                     run_io.save_debug_event(directory, record, "rule_response", raw_response=rule_response)
-                    stage = "rule_validation"
+                    # Pass the FULL unmodified model response, independent of parsing/export.
+                    latest_diagnosis_response = rule_response
+                    latest_generated_tree = rule_generator.compact_tree(trees["generated"], include_source=False)
+                    latest_diagnosis_round = round_number
+                    stage = "response_format"
                     run_io.update_run(directory, record, stage=stage)
                     diagnosis = rule_generator.parse_response(rule_response, trees)
                     evidence["tree_rule_diagnosis"] = deepcopy(diagnosis)
@@ -270,16 +282,15 @@ def run_training_pipeline(directory, record: dict, *, retriever=None) -> int:
                     replacement = deepcopy(registry)
                     update_rule_registry(replacement, new_rules, round_number)
                     registry = replacement
-                    evidence["rules_generated"] = deepcopy(new_rules)
                     run_io.update_run(directory, record, diagnosis=diagnosis,
                                       diagnosis_model=config.RULE_MODEL,
                                       rule_registry=retained_rules(registry))
                     run_io.save_diagnosis_model(record, config.RULE_MODEL)
-                    if new_rules:
-                        run_io.save_debug_event(directory, record, "rule_update", rule_registry=record["rule_registry"])
                 except Exception as error:
                     _remember_round_error(directory, record, round_number, stage, error)
-                    run_io.update_run(directory, record, diagnosis_skipped_reason=f"{stage} failed; continuing next round.")
+                    reason = ("Response format check failed; full response still goes to the next round."
+                              if latest_diagnosis_round == round_number else f"{stage} failed; continuing next round.")
+                    run_io.update_run(directory, record, diagnosis_skipped_reason=reason)
                 continue
 
     # No earlier pass is possible here. Keep the latest attempt and its scores.

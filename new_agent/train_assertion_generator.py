@@ -22,6 +22,9 @@ Before returning the assertion, check:
   reject a violation. Do not introduce an unintended negation. Choose explicit
   truth comparisons and X/Z handling only with the required meaning and scope.
 Follow the supplied dataset-specific assertion template and comparison scope.
+When revising, use the complete latest diagnosis response as local correction
+guidance. Do not invent additional edits to ancestors deferred to a later round.
+Node IDs are location labels only; never include them in the assertion.
 """
 
 
@@ -29,60 +32,39 @@ def build_generation_prompt(
     requirement: str,
     testbench: str,
     previous_assertion: str | None = None,
-    rules: list[dict] | None = None,
     *,
     comparison_scope: str = COMPARISON_SCOPE,
     revision_feedback: str | None = None,
     assertion_template: str = "asrt: assert property (@(posedge clk) BODY);",
-    case_history: list[dict] | None = None,
+    diagnosis_response: str | None = None,
+    previous_tree: dict | None = None,
 ) -> str:
     """Build a fresh initial or revision prompt; never accept a reference."""
     revision = ""
     if previous_assertion is not None:
         if not previous_assertion.strip():
             raise ValueError("A revision requires a nonempty previous assertion.")
-        guidance = []
-        for number, entry in enumerate(rules or [], 1):
-            rule = entry.get("rule")
-            if not isinstance(rule, str) or not rule.strip():
-                raise ValueError("Every selected rule must contain nonempty rule text.")
-            guidance.append(f"{number}. {rule.strip()}")
-        guidance_text = "\n".join(guidance) or (
-            "No specific correction rule is available. Re-derive the assertion "
-            "from the requirement and testbench, reviewing its clock, disable "
-            "condition, trigger, response, signal relationships, and timing."
-        )
-        revision = (
-            "\nRevise the previous assertion using the latest correction guidance.\n"
-            "Check the guidance against the requirement and testbench; preserve required behavior.\n"
-            "If no specific correction is available, review the behavioral checks above.\n"
-            "Always return one complete assertion.\n"
-            "\nPREVIOUS ASSERTION\n" + previous_assertion
-            + "\n\nCORRECTION GUIDANCE\n" + guidance_text + "\n"
-        )
-    elif rules:
-        raise ValueError("Rules require a previous assertion for this experiment.")
-
-    history = [{
-        "round": entry.get("round"),
-        "generated_assertion": entry.get("generated_assertion"),
-        "checker_status": (entry.get("evaluation") or {}).get("status"),
-        "rules_used": [{"group": rule.get("group"), "rule": rule.get("rule")}
-                       for rule in entry.get("rules_used", [])],
-        "rules_generated": [{"group": rule.get("group"), "rule": rule.get("rule")}
-                            for rule in entry.get("rules_generated", {}).values()],
-    } for entry in (case_history or []) if entry.get("generated_assertion")]
-    history_guidance = (
-        "\nUse this case's earlier attempts to identify repeated assertions and opposite edits.\n"
-        "Earlier rules record attempted corrections; they are not cumulative instructions.\n"
-        "Use the latest correction guidance for the next edit. Preserve required scenarios,\n"
-        "and revisit an earlier form only for a specific behavioral reason from the task.\n"
-        "A previously untried expression alone does not justify a change. Distinguish\n"
-        "semantic correction from equivalent rewriting. PEC_COMPILE_ERROR provides no\n"
-        "equivalence verdict and does not prove that an earlier candidate was wrong.\n"
-        "CASE HISTORY\n" + json.dumps(history, indent=2, ensure_ascii=False)
-        + "\nEND CASE HISTORY\n"
-    ) if history else ""
+        revision = "\nPREVIOUS ASSERTION\n" + previous_assertion + "\n"
+        if diagnosis_response is not None:
+            revision += (
+                "\nLATEST DIAGNOSIS RESPONSE\n" + diagnosis_response
+                + "\nEND LATEST DIAGNOSIS RESPONSE\n"
+                "Apply each selected correction using its difference, explanation and rule. "
+                "These are local edits to the previous assertion. Preserve other branches, "
+                "signals and timing unless a selected coordinated correction requires changing them. "
+                "Do not independently correct deferred ancestors in this round. "
+                "Return a complete assertion, not a patch or tree.\n"
+            )
+            if previous_tree is not None:
+                revision += ("\nPREVIOUS GENERATED TREE (IDs locate occurrences)\n"
+                             + json.dumps(previous_tree, ensure_ascii=False) + "\n")
+        else:
+            revision += (
+                "\nNo diagnosis response was produced in the preceding round. "
+                "Review the requirement, testbench and any checker feedback.\n"
+            )
+    elif diagnosis_response is not None:
+        raise ValueError("Diagnosis feedback requires a previous assertion.")
 
     scope_guidance = (
         "\nEVALUATION SCOPE\n" + comparison_scope
@@ -101,7 +83,7 @@ def build_generation_prompt(
 {testbench}
 
 Question: Create a SVA assertion checks {requirement}
-{scope_guidance}{revision}{history_guidance}{retry_guidance}
+{scope_guidance}{revision}{retry_guidance}
 Generate exactly one assertion using this statement structure:
 {assertion_template}
 If the testbench/task requires reset disabling, put disable iff (RESET) after

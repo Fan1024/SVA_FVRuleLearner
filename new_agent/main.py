@@ -136,7 +136,8 @@ def main() -> int:
                         tree_parser="raw-tree-prototype-1.2",
                         tree_parse_failure_policy="explicit_opaque_source_anchor",
                         training_diagnosis_model=config.RULE_MODEL,
-                        training_rule_schema="node_rules_and_formatting_rules_v1")
+                        training_rule_schema="bottom_up_corrections_v2",
+                        training_feedback="complete_latest_response_only")
 
     if phase == "infer":
         settings.update(
