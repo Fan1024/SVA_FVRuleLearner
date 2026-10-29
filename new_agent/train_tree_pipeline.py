@@ -135,6 +135,14 @@ def run_training_pipeline(directory, record: dict, *, retriever=None) -> int:
                         "assertion_template": policy.get("assertion_template", "asrt: assert property (@(posedge clk) BODY);"),
                     }
                     user_prompt = assertion_generator.build_generation_prompt(**generation_inputs)
+                    if previous_assertion is not None:
+                        if latest_diagnosis_response is not None:
+                            print(f"Round {round_number}: forwarding complete diagnosis from round "
+                                  f"{latest_diagnosis_round} to assertion generator "
+                                  f"({len(latest_diagnosis_response)} characters).", flush=True)
+                        else:
+                            print(f"Round {round_number}: no diagnosis response from the preceding round; "
+                                  "no rule feedback is available.", flush=True)
                     # Consume only the immediately preceding round's response; no history/readback.
                     latest_diagnosis_response = latest_generated_tree = latest_diagnosis_round = None
                     attempt["prompts"]["user"] = user_prompt

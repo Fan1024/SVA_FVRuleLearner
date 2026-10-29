@@ -55,8 +55,8 @@ A checker compilation failure is not a counterexample. Ground diagnosis in the
 inputs. If parse_error is present, use its opaque source anchor for source-based
 diagnosis; do not invent internal nodes or claim a parsed bottom-up analysis.
 
-OUTPUT
-Return {"corrections": [...]} only. Each correction has these fields:
+OUTPUT JSON
+Return this JSON object only: {"corrections": [...]}. Each correction has these fields:
 {
   "generated_node_id": "existing generated node or subtree root ID",
   "reference_node_ids": ["relevant reference IDs"],

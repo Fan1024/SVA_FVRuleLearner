@@ -931,8 +931,9 @@ def print_summary(run_dir, record: dict) -> None:
     if record["trace_error"]:
         print("Trace save error:", record["trace_error"])
     if record.get("round_failures"):
-        target = "learned_rules.jsonl" if record["settings"].get("flat_training_output") else "result.json"
-        print(f"Round-stage errors: {len(record['round_failures'])}; see {target} round_failures.")
+        target = (record.get("rule_trace_file", "rules/case_NNNN.jsonl") + " errors"
+                  if record["settings"].get("flat_training_output") else "result.json round_failures")
+        print(f"Round-stage errors: {len(record['round_failures'])}; see {target}.")
     if record["summary_error"]:
         print("Summary save error:", record["summary_error"])
     if record["settings"].get("flat_training_output"):
