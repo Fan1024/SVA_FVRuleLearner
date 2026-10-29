@@ -15,6 +15,14 @@ from new_agent import config, dataset_loader, formal_check, run_io
 from new_agent.pipeline import run_pipeline
 
 
+def select_workflow():
+    """Keep inference on the original pipeline; route training to tree rules."""
+    if config.MODE == "train":
+        from new_agent.train_tree_pipeline import run_training_pipeline
+        return run_training_pipeline
+    return run_pipeline
+
+
 def validate_config() -> None:
     """Check active settings once, before creating a run or making API calls."""
     if config.MODE not in {"train", "inference"}:
@@ -52,7 +60,7 @@ def validate_config() -> None:
 def validate_credentials() -> None:
     """Reject absent credentials before paying for assertion-generation calls."""
     required = ["OPENAI_API_KEY"]
-    if config.MAX_ROUNDS > 1:
+    if config.MODE == "inference" and config.MAX_ROUNDS > 1:
         required.append("TYPESAFE_API_KEY")
     missing = [name for name in required if not os.environ.get(name, "").strip()]
     if missing:
@@ -122,6 +130,14 @@ def main() -> int:
         "save_debug_traces": config.SAVE_DEBUG_TRACES,
     }
 
+    if phase == "train":
+        settings.update(training_workflow="assertion_pec_tree_llm_rules",
+                        flat_training_output=True,
+                        tree_parser="raw-tree-prototype-1.2",
+                        tree_parse_failure_policy="explicit_opaque_source_anchor",
+                        training_diagnosis_model=config.RULE_MODEL,
+                        training_rule_schema="node_rules_and_formatting_rules_v1")
+
     if phase == "infer":
         settings.update(
             source_training_run=str(source_dir),
@@ -176,10 +192,11 @@ def main() -> int:
                     f"{case['design_name']} / {case['task_id']}"
                 )
                 case_exit = run_io.run_experiment(
-                    workflow=partial(run_pipeline, retriever=retriever),
+                    workflow=partial(select_workflow(), retriever=retriever),
                     cleanup_work=formal_check.cleanup_work,
                     case_id=case["task_id"],
-                    case_dir=experiment_dir / "cases" / f"case_{case['case_number']:04d}",
+                    case_dir=(experiment_dir if phase == "train" else
+                              experiment_dir / "cases" / f"case_{case['case_number']:04d}"),
                     summary_dir=experiment_dir,
                     models=models,
                     inputs={**case, "dataset": config.DATASET},
@@ -207,7 +224,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
-
-
-

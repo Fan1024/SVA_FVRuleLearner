@@ -233,7 +233,8 @@ def create_experiment(
                 "case_number": case["case_number"],
                 "design_name": case["design_name"],
                 "task_id": case["task_id"],
-                "directory": f"cases/case_{case['case_number']:04d}",
+                "directory": (None if settings.get("flat_training_output") else
+                              f"cases/case_{case['case_number']:04d}"),
             }
             for case in cases
         ],
@@ -431,6 +432,8 @@ def final_record(record: dict) -> dict:
 
 def save_run(run_dir, record: dict) -> None:
     """Write compact final records; tracing also permits overwritten checkpoints."""
+    if record["settings"].get("flat_training_output"):
+        return
     tracing = record["settings"].get("save_debug_traces", False)
     if not tracing and record["finished_at"] is None:
         return
@@ -579,8 +582,13 @@ def save_debug_event(run_dir, record: dict, event: str, **data) -> None:
     path = Path(run_dir) / "debug_trace.txt"
     first_write = not path.exists()
     with path.open("a", encoding="utf-8", newline="\n") as file:
-        if first_write:
+        new_flat_case = (record["settings"].get("flat_training_output") and
+                         event == "assertion_request" and
+                         record["pending_attempt"]["round"] == 1)
+        if first_write or new_flat_case:
             inputs = record["inputs"]
+            if record["settings"].get("flat_training_output"):
+                file.write(f"\nCASE {inputs['case_number']}: {inputs['design_name']}/{inputs['task_id']}\n")
             checker = record["settings"].get("checker")
             if checker:
                 file.write(f"EVALUATION POLICY\n{checker}\n\n")
@@ -768,6 +776,10 @@ def save_summaries(summary_dir, record: dict) -> None:
         "rule_rounds": rule_rounds,
         "round_evidence": record["round_evidence"],
     }
+    if record["settings"].get("flat_training_output"):
+        learning["round_failures"] = record.get("round_failures", [])
+        learning["error"] = (None if record.get("error") is None else {
+            key: record["error"].get(key) for key in ("stage", "type", "message")})
     _update_case_collection(directory / "learned_rules.jsonl", learning)
 
 
@@ -784,7 +796,15 @@ def run_experiment(
     """
     # BLEU loads lazily during scoring; metric errors must not stop fixing.
     case_started = perf_counter()
-    if case_dir is None:
+    flat = settings.get("flat_training_output", False)
+    if flat and settings.get("phase", "train") != "train":
+        raise ValueError("Flat output is training-only.")
+    if flat:
+        if summary_dir is None:
+            raise ValueError("Flat training requires a shared summary_dir.")
+        directory = Path(summary_dir)
+        directory.mkdir(parents=True, exist_ok=True)
+    elif case_dir is None:
         directory = create_run(case_id, runs_root=runs_root)
     else:
         directory = Path(case_dir)
@@ -794,7 +814,7 @@ def run_experiment(
         Path(directory if summary_dir is None else summary_dir).resolve()
     )
     save_run(directory, record)
-    if case_dir is None:  # Standalone calls still get their own metadata file.
+    if case_dir is None and not flat:  # Standalone calls still get their own metadata file.
         metadata = {
             "case_id": case_id, "dataset": inputs.get("dataset", "nl2sva_human"),
             "design_name": inputs.get("design_name", ""),
@@ -907,10 +927,14 @@ def print_summary(run_dir, record: dict) -> None:
     if record["trace_error"]:
         print("Trace save error:", record["trace_error"])
     if record.get("round_failures"):
-        print(f"Round-stage errors: {len(record['round_failures'])}; see result.json round_failures.")
+        target = "learned_rules.jsonl" if record["settings"].get("flat_training_output") else "result.json"
+        print(f"Round-stage errors: {len(record['round_failures'])}; see {target} round_failures.")
     if record["summary_error"]:
         print("Summary save error:", record["summary_error"])
-    print("Result:", Path(run_dir) / "result.json")
+    if record["settings"].get("flat_training_output"):
+        print("Evaluation:", Path(run_dir) / "evaluation.csv")
+    else:
+        print("Result:", Path(run_dir) / "result.json")
 
 
 
