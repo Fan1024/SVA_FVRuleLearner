@@ -1,4 +1,4 @@
-"""Inference payloads never accept a target reference or raw checker feedback."""
+"""Reference-free inference; checker feedback is limited to a coarse status."""
 import json
 import re
 from new_agent import assertion_tree
@@ -117,13 +117,19 @@ def bank_rule_ids(bank):
 
 
 def build_rule_prompt(requirement, testbench, tree, candidates, *, comparison_scope,
-                      rule_bank=None):
+                      rule_bank=None, checker_status=None):
     bank = compact_rule_bank(candidates) if rule_bank is None else rule_bank
-    return TASK_INSTRUCTIONS + '\nINPUT DATA\n' + json.dumps({
+    data = {
         'requirement': requirement, 'testbench': testbench,
         'generated_tree': compact_tree(tree), 'retrieved_rule_bank': bank,
         'comparison_scope': comparison_scope,
-    }, ensure_ascii=False, indent=2)
+    }
+    if checker_status is not None:
+        if not isinstance(checker_status, str) or checker_status not in {
+                'IMPLIES', 'NO_EQUIVALENCE', 'PEC_COMPILE_ERROR'}:
+            raise ValueError('Expected a supported coarse checker status, not tool output')
+        data['checker_status'] = checker_status
+    return TASK_INSTRUCTIONS + '\nINPUT DATA\n' + json.dumps(data, ensure_ascii=False, indent=2)
 
 
 def parse_response(raw, tree, candidates):

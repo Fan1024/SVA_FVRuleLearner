@@ -556,6 +556,8 @@ def _debug_event_text(record: dict, event: str, data: dict) -> str:
             return raw  # Preserve malformed output before parsing reports the error.
     if event == 'rule_evaluations_error':
         return '\nRULE EVALUATION WARNING\n' + data['reason']
+    if event == 'rule_retry':
+        return '\nRULE GENERATOR RETRY\n' + data['reason']
     if event == "rule_update":
         return "\nDECISION\nContinue: candidate not accepted; guidance is available for the next round."
     if event == "case_finished":

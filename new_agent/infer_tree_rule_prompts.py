@@ -7,6 +7,8 @@ Diagnose bottom-up. Return one brief diagnosis and concrete rule for each select
 independent correction. Each rule must state when it applies and what to change.
 Use all provided background and retrieved rules to identify and locate target
 issues, then select useful principles and adapt them into correction rules.
+If no retrieved rule addresses an issue, derive a correction from the current
+task and return it in the same format with source_rule_ids: [].
 Ground every correction in the current requirement, testbench and SystemVerilog
 assertion semantics.
 Use node IDs only to locate corrections. Write rules with actual current signal
@@ -40,6 +42,15 @@ throughout each case. Placeholder roles are naming hints; determine applicabilit
 from the requirement and expression semantics. Use supplied rule IDs as
 source_rule_ids when their principles inform a correction. Use retrieved evidence
 to adapt guidance, rather than copying an entire training assertion.
+
+CHECKER STATUS
+checker_status is the coarse outcome for the current assertion, without reference
+expressions or tool logs. IMPLIES reports a one-way implication, not full
+equivalence; the label alone does not identify its direction. NO_EQUIVALENCE
+reports failure of equivalence. These outcomes require further correction.
+PEC_COMPILE_ERROR means no semantic verdict was obtained: assess the assertion
+against the task independently, and do not treat checker compilation as proof
+of a behavioral defect. Distinguish target-grounded hypotheses from proven facts.
 
 BOTTOM-UP DIAGNOSIS
 An issue is a specific mismatch between the generated assertion's behavior and
@@ -82,15 +93,25 @@ Use one analysis with three main actions:
    considering the full target context and all supplied rules and examples.
 2. For each issue, select useful retrieved correction principles. Select at least
    one when applicable; a principle can transfer across different signals,
-   expressions or policies. If none applies, use target-grounded guidance.
+   expressions or policies. If none applies, generate a target-derived rule
+   from the requirement, testbench and current assertion tree.
 3. Adapt that guidance into one case-specific rule per independent correction,
    using the current signal roles, expressions, conditions and timing.
 
 For every supplied rule, give one brief reason why you selected it or did not
 select it for a correction in this round. Relate the reason to the target issue
-and the rule's principle. If none are selected, distinguish finding no target
-issue from finding no applicable rule. Record these decisions even when the
-corrections array is empty.
+and the rule's principle. Rejection of all retrieved rules still requires a
+task-derived correction, with all retrieved rules marked selected: false.
+
+NONEMPTY CORRECTION FEEDBACK
+Return at least ONE concrete correction rule for the next round. An empty or
+inapplicable retrieved bank is a reason to derive guidance from the target task,
+not to end diagnosis. Independently review coverage of required scenarios,
+initial/history-valid states, missing or extra conditions, signal roles and
+timing. Choose the strongest target-grounded correction hypothesis and explain
+its behavioral consequence; a generic instruction to review or regenerate the
+assertion is not a correction rule. Keep the defined bottom-up independence and
+condition-and-action format. A hypothesis remains subject to formal validation.
 
 CORRECTION LOCATION
 Content changes, missing/extra constructs, moves and regrouping are possible.
@@ -134,8 +155,8 @@ a brief signal-value or timing example may clarify the consequence when supporte
 by the current context; do not invent a formal counterexample.
 Generate exactly ONE rule for each selected independent correction unit. Do not
 output the requirement, testbench, complete assertions, unchanged nodes or
-mechanical-edit inventories. Return an empty corrections array if no supported
-correction is identified.
+mechanical-edit inventories. The corrections array must be nonempty, including
+when source_rule_ids is empty for every correction.
 
 Each rule_evaluations entry contains:
 {

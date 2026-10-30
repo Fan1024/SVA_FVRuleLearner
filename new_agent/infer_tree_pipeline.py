@@ -41,7 +41,8 @@ def _save_inference_trace(directory, record, round_number):
             entry["diagnosis_skipped"] = (
                 "candidate_accepted" if (evidence.get("evaluation") or {}).get("accepted")
                 else record.get("diagnosis_skipped_reason", "not_run"))
-        for key in ('rule_evaluations', 'rule_evaluations_error'):
+        for key in ('rule_evaluations', 'rule_evaluations_error',
+                    'diagnosis_checker_status', 'diagnosis_retries'):
             if key in evidence:
                 entry[key] = deepcopy(evidence[key])
         errors = [row for row in record.get("round_failures", []) if row["round"] == round_number]
@@ -281,45 +282,74 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
                     if "parse_error" in tree:
                         print(f"Round {round_number}: unsupported tree syntax; using explicit source anchor: "
                               f"{tree['parse_error']}", flush=True)
-                    stage = "rule_generation"
                     stage = 'rule_generation'
-                    print(f"Round {round_number}: one LLM call for bottom-up diagnosis, rule selection "
+                    print(f"Round {round_number}: running LLM bottom-up diagnosis, rule selection "
                           "and adaptation.", flush=True)
                     run_io.update_run(directory, record, stage=stage)
                     rule_prompt = rule_generator.build_rule_prompt(
                         inputs['requirement'], inputs['testbench'], tree, candidates,
-                        comparison_scope=comparison_scope, rule_bank=record['retrieved_rule_bank'])
-                    run_io.save_debug_event(directory, record, "rule_request")
-                    with run_io.measure_stage(record, "rule") as capture_usage:
-                        rule_response = model_io.request_text(
-                            client=client, model=config.RULE_MODEL,
-                            instructions=rule_generator.SYSTEM_PROMPT, user_prompt=rule_prompt,
-                            json_output=True, usage_callback=capture_usage,
-                        )
-                    evidence = record["round_evidence"][-1]
-                    evidence["inference_raw_response"] = rule_response
-                    run_io.save_debug_event(directory, record, "rule_response", raw_response=rule_response)
-                    # Raw output includes trace-only decisions. Forward validated
-                    # corrections only; malformed output remains debug evidence.
-                    latest_diagnosis_response = latest_generated_tree = latest_diagnosis_round = None
-                    stage = "response_format"
-                    run_io.update_run(directory, record, stage=stage)
+                        comparison_scope=comparison_scope, rule_bank=record['retrieved_rule_bank'],
+                        checker_status=status)
+                    evidence = record['round_evidence'][-1]
+                    evidence['diagnosis_checker_status'] = status
                     source_candidates = [{'rules': [{'id': rule_id} for rule_id in
                                         rule_generator.bank_rule_ids(record['retrieved_rule_bank'])]}]
-                    diagnosis = rule_generator.parse_response(rule_response, tree, source_candidates)
-                    evidence["inference_diagnosis"] = deepcopy(diagnosis)
+                    run_io.save_debug_event(directory, record, "rule_request")
+                    # One normal call; repair an empty answer once with the same model.
+                    # A single measurement captures the usage of both calls when needed.
+                    latest_diagnosis_response = latest_generated_tree = latest_diagnosis_round = None
+                    with run_io.measure_stage(record, "rule") as capture_usage:
+                        for diagnosis_attempt in range(2):
+                            stage = 'rule_generation'
+                            rule_response = model_io.request_text(
+                                client=client, model=config.RULE_MODEL,
+                                instructions=rule_generator.SYSTEM_PROMPT, user_prompt=rule_prompt,
+                                json_output=True, usage_callback=capture_usage,
+                            )
+                            evidence['inference_raw_response'] = rule_response
+                            run_io.save_debug_event(directory, record, 'rule_response', raw_response=rule_response)
+                            for key in ('inference_diagnosis', 'rule_evaluations', 'rule_evaluations_error'):
+                                evidence.pop(key, None)
+                            stage = 'response_format'
+                            run_io.update_run(directory, record, stage=stage)
+                            diagnosis = rule_generator.parse_response(rule_response, tree, source_candidates)
+                            evidence['inference_diagnosis'] = deepcopy(diagnosis)
+                            # Missing debug reasons do not discard otherwise useful corrections.
+                            evidence['rule_evaluations'] = json.loads(rule_response).get('rule_evaluations')
+                            try:
+                                evidence['rule_evaluations'] = rule_generator.parse_rule_evaluations(
+                                    rule_response, source_candidates, diagnosis)
+                            except ValueError as error:
+                                evidence['rule_evaluations_error'] = str(error)
+                                print(f'Round {round_number}: incomplete rule selection reasons: {error}', flush=True)
+                                run_io.save_debug_event(directory, record, 'rule_evaluations_error', reason=str(error))
+                            if diagnosis['corrections']:
+                                break
+                            evidence.setdefault('diagnosis_retries', []).append({
+                                'attempt': diagnosis_attempt + 1, 'reason': 'empty_corrections',
+                                'raw_response': rule_response,
+                                **({'rule_evaluations_error': evidence['rule_evaluations_error']}
+                                   if 'rule_evaluations_error' in evidence else {}),
+                            })
+                            if diagnosis_attempt == 1:
+                                raise ValueError('Rule model returned no correction after one repair attempt; '
+                                                 'continuing the assertion round budget without accepting it')
+                            reason = ('The rule model returned no correction. Retrying once: generate at least '
+                                      'one concrete task-derived rule if no retrieved principle applies.')
+                            print(f'Round {round_number}: {reason}', flush=True)
+                            run_io.save_debug_event(directory, record, 'rule_retry', reason=reason)
+                            rule_prompt += (
+                                '\nOUTPUT REPAIR\nYour preceding response had an empty corrections array. '
+                                'Return at least one concrete target-grounded correction in the defined format. '
+                                'When no retrieved rule applies, derive a rule from the current requirement, '
+                                'testbench, tree and checker status with source_rule_ids: []. '
+                                'Keep per-rule selection reasons and bottom-up correction independence.\n'
+                            )
+                    # Raw output includes trace-only decisions. Forward validated
+                    # corrections only; malformed output remains debug evidence.
                     latest_diagnosis_response = json.dumps(diagnosis, ensure_ascii=False)
                     latest_generated_tree = rule_generator.compact_tree(tree, include_source=False)
                     latest_diagnosis_round = round_number
-                    # Missing/invalid debug reasons must not discard useful corrections.
-                    evidence['rule_evaluations'] = json.loads(rule_response).get('rule_evaluations')
-                    try:
-                        evidence['rule_evaluations'] = rule_generator.parse_rule_evaluations(
-                            rule_response, source_candidates, diagnosis)
-                    except ValueError as error:
-                        evidence['rule_evaluations_error'] = str(error)
-                        print(f"Round {round_number}: incomplete rule selection reasons: {error}", flush=True)
-                        run_io.save_debug_event(directory, record, 'rule_evaluations_error', reason=str(error))
                     selected = {rule_id for item in diagnosis["corrections"] for rule_id in item["source_rule_ids"]}
                     task_derived = sum(not item['source_rule_ids'] for item in diagnosis['corrections'])
                     print(f"Round {round_number}: {len(diagnosis['corrections'])} independent corrections; "
@@ -333,14 +363,17 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
                                       diagnosis_model=config.RULE_MODEL,
                                       rule_registry=retained_rules(registry))
                     run_io.save_diagnosis_model(record, config.RULE_MODEL)
-                    if not diagnosis['corrections']:
-                        print(f"Round {round_number}: no actionable guidance; stopping this case "
-                              "without accepting the assertion.", flush=True)
-                        run_io.update_run(directory, record, status='COMPLETED', passed=False,
-                                          stage='finished', stop_reason='no_guidance')
-                        return 0
                 except Exception as error:
                     _remember_round_error(directory, record, round_number, stage, error)
+                    if latest_diagnosis_response is None:
+                        verdict = ('No semantic verdict was obtained.' if status == 'PEC_COMPILE_ERROR'
+                                   else 'Full equivalence has not been established.')
+                        revision_feedback = (
+                            f'Checker status: {status}. {verdict} The rule stage did not provide usable '
+                            'corrections. Independently re-derive the assertion from the requirement and '
+                            'testbench, checking required scenarios, history validity, guards and timing. '
+                            'An empty diagnosis is not evidence that the previous assertion was accepted.'
+                        )
                     reason = ("Response format check failed; validated corrections still go to the next round."
                               if latest_diagnosis_round == round_number else f"{stage} failed; continuing next round.")
                     run_io.update_run(directory, record, diagnosis_skipped_reason=reason)
