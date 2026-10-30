@@ -23,6 +23,11 @@ training cases provide deduplicated requirements, rules and compact before/after
 examples. requirement_id and example_id refer to the requirements and examples
 tables. Signal placeholders
 are consistent within each retrieved case, but independent across cases.
+Each retrieved rule also has a masked source location: its expression and position
+in the linked BEFORE assertion. It explains where the training correction applied,
+not where to edit the current target. A null location means the older source did
+not contain enough evidence to recover one. Identify the target location using
+the current generated tree, then adapt the rule to that location.
 Use each retrieved requirement and rule condition to interpret signal roles,
 then adapt applicable guidance to the current signals and specification.
 Operators, literals and timing bounds in retrieved content are preserved;
@@ -116,6 +121,9 @@ condition-and-action format. A hypothesis remains subject to formal validation.
 CORRECTION LOCATION
 Content changes, missing/extra constructs, moves and regrouping are possible.
 Locate each correction using an EXISTING current node or affected subtree root.
+The program converts generated_node_id into a separate textual Location for the
+assertion generator. The tree is used for diagnosis and locating occurrences;
+the generator receives Location and Rule without the tree or source node IDs.
 For missing constructs, anchor the existing expression whose relationship must
 change. For coordinated changes across branches, use their smallest meaningful
 containing subtree. Do not enumerate replacement graphs, new IDs or link updates.

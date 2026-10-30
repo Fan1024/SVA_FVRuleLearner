@@ -12,6 +12,7 @@ from tempfile import TemporaryDirectory
 from openai import OpenAI
 from new_agent import config, formal_check, model_io, run_io
 from new_agent import tree_archive
+from new_agent.correction_locations import feedback_json
 from new_agent.pipeline import (
     _failed_round, _remember_round_error, retained_rules, update_rule_registry,
 )
@@ -96,7 +97,6 @@ def run_training_pipeline(directory, record: dict, *, retriever=None) -> int:
     revision_feedback = None
     client = None
     latest_diagnosis_response = None
-    latest_generated_tree = None
     latest_diagnosis_round = None
 
     for round_number in range(1, config.MAX_ROUNDS + 1):
@@ -128,7 +128,6 @@ def run_training_pipeline(directory, record: dict, *, retriever=None) -> int:
                         "requirement": inputs["requirement"], "testbench": inputs["testbench"],
                         "previous_assertion": previous_assertion,
                         "diagnosis_response": latest_diagnosis_response,
-                        "previous_tree": latest_generated_tree,
                         "comparison_scope": comparison_scope, "revision_feedback": revision_feedback,
                         "assertion_template": policy.get("assertion_template", "asrt: assert property (@(posedge clk) BODY);"),
                     }
@@ -142,7 +141,7 @@ def run_training_pipeline(directory, record: dict, *, retriever=None) -> int:
                             print(f"Round {round_number}: no diagnosis response from the preceding round; "
                                   "no rule feedback is available.", flush=True)
                     # Consume only the immediately preceding round's response; no history/readback.
-                    latest_diagnosis_response = latest_generated_tree = latest_diagnosis_round = None
+                    latest_diagnosis_response = latest_diagnosis_round = None
                     attempt["prompts"]["user"] = user_prompt
                     run_io.update_run(directory, record, stage=stage)
                     if client is None:
@@ -281,14 +280,17 @@ def run_training_pipeline(directory, record: dict, *, retriever=None) -> int:
                     evidence = record["round_evidence"][-1]
                     evidence["tree_rule_raw_response"] = rule_response
                     run_io.save_debug_event(directory, record, "rule_response", raw_response=rule_response)
-                    # Pass the FULL unmodified model response, independent of parsing/export.
-                    latest_diagnosis_response = rule_response
-                    latest_generated_tree = rule_generator.compact_tree(trees["generated"], include_source=False)
-                    latest_diagnosis_round = round_number
+                    # Raw model output stays in the trace. Only located correction
+                    # text is forwarded; source/reference IDs and trees stay local.
+                    latest_diagnosis_response = latest_diagnosis_round = None
                     stage = "response_format"
                     run_io.update_run(directory, record, stage=stage)
                     diagnosis = rule_generator.parse_response(rule_response, trees)
                     evidence["tree_rule_diagnosis"] = deepcopy(diagnosis)
+                    latest_diagnosis_response = feedback_json(diagnosis, tree=trees['generated'])
+                    latest_diagnosis_round = round_number
+                    run_io.save_debug_event(directory, record, 'correction_locations',
+                                            corrections=diagnosis['corrections'])
                     new_rules = rule_generator.export_rules(diagnosis, round_number)
                     replacement = deepcopy(registry)
                     update_rule_registry(replacement, new_rules, round_number)
@@ -299,7 +301,7 @@ def run_training_pipeline(directory, record: dict, *, retriever=None) -> int:
                     run_io.save_diagnosis_model(record, config.RULE_MODEL)
                 except Exception as error:
                     _remember_round_error(directory, record, round_number, stage, error)
-                    reason = ("Response format check failed; full response still goes to the next round."
+                    reason = ("Validated location and rule feedback goes to the next round."
                               if latest_diagnosis_round == round_number else f"{stage} failed; continuing next round.")
                     run_io.update_run(directory, record, diagnosis_skipped_reason=reason)
                 continue

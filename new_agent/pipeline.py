@@ -22,6 +22,7 @@ def update_rule_registry(registry: dict, new_rules: dict, round_number: int) -> 
                 earlier["first_learned_round"] if earlier else round_number
             ),
             "updated_round": round_number,
+            **({'location': entry['location']} if entry.get('location') else {}),
         }
 
 

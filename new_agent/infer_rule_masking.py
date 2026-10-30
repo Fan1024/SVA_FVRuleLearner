@@ -211,20 +211,27 @@ def prepare_candidates(cases, contexts=None):
         trace = compact_rounds(case.get('revision_trace', []))
         context['_source_assertions'] = [r['assertion'] for r in trace if r['assertion']]
         descriptions = dict(case['rules'])
+        indexed_locations = case.get('rule_locations', {})
+        indexed_locations = indexed_locations if isinstance(indexed_locations, dict) else {}
+        for key, location in indexed_locations.items():
+            if isinstance(location, str) and location.strip():
+                descriptions[f'location_{key}'] = location
         for i, entry in enumerate(trace):
             for j, correction in enumerate(entry['corrections']):
-                for field in ('difference', 'why_it_matters', 'rule'):
+                for field in ('difference', 'why_it_matters', 'rule', 'location'):
                     if correction.get(field):
                         descriptions[f'trace_{i}_{j}_{field}'] = correction[field]
         masker = CaseMasker(source_names(case['requirement'], descriptions, context))
         requirement = masker.mask(case['requirement'])
-        rules = [{'id': f"C{case['case_number']:04d}:{key}", 'rule': masker.mask(text)}
+        rules = [{'id': f"C{case['case_number']:04d}:{key}", 'rule': masker.mask(text),
+                  **({'location': masker.mask(indexed_locations[key])}
+                     if isinstance(indexed_locations.get(key), str) and indexed_locations[key].strip() else {})}
                  for key, text in case['rules'].items()]
         for entry in trace:
             if entry['assertion']:
                 entry['assertion'] = masker.mask(entry['assertion'])
             for j, correction in enumerate(entry['corrections'], 1):
-                for field in ('difference', 'why_it_matters', 'rule'):
+                for field in ('difference', 'why_it_matters', 'rule', 'location'):
                     if field in correction:
                         correction[field] = masker.mask(correction[field])
                 correction['id'] = f"C{case['case_number']:04d}:round_{entry['round']}:correction_{j}"

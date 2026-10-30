@@ -558,6 +558,10 @@ def _debug_event_text(record: dict, event: str, data: dict) -> str:
         return '\nRULE EVALUATION WARNING\n' + data['reason']
     if event == 'rule_retry':
         return '\nRULE GENERATOR RETRY\n' + data['reason']
+    if event == 'correction_locations':
+        return '\nCORRECTION LOCATIONS\n' + '\n'.join(
+            f"{number}. Location: {item['location']}"
+            for number, item in enumerate(data['corrections'], 1))
     if event == "rule_update":
         return "\nDECISION\nContinue: candidate not accepted; guidance is available for the next round."
     if event == "case_finished":
@@ -774,11 +778,14 @@ def save_summaries(summary_dir, record: dict) -> None:
     rule_groups = {}
     rules = {}
     rule_rounds = {}
+    rule_locations = {}
     for number, entry in enumerate(record["rule_registry"], start=1):
         rule_id = f"rule_{number}"
         rule_groups[rule_id] = entry["group"]
         rules[rule_id] = entry["rule"]
         rule_rounds[rule_id] = entry["updated_round"]
+        if entry.get('location'):
+            rule_locations[rule_id] = entry['location']
 
     learning = {
         "case_number": row["case_number"], "design_name": row["design_name"],
@@ -789,6 +796,7 @@ def save_summaries(summary_dir, record: dict) -> None:
         "rule_groups": rule_groups,
         "rules": rules,
         "rule_rounds": rule_rounds,
+        "rule_locations": rule_locations,
         "round_evidence": record["round_evidence"],
     }
     if record["settings"].get("flat_training_output"):

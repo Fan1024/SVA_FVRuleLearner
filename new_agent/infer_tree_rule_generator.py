@@ -2,6 +2,7 @@
 import json
 import re
 from new_agent import assertion_tree
+from new_agent.correction_locations import location_for
 from new_agent.infer_tree_rule_prompts import SYSTEM_PROMPT, TASK_INSTRUCTIONS
 from new_agent.infer_training_traces import EVALUATION_FIELDS
 
@@ -45,7 +46,9 @@ def candidate_rule_ids(candidates):
 def safe_candidate(case):
     """Explicit allowlist including revision evidence, never raw saved records."""
     result = {'case_number': case['case_number'], 'requirement': case['requirement'],
-              'rules': [{'id': r['id'], 'rule': r['rule']} for r in case['rules']],
+              'rules': [{'id': r['id'], 'rule': r['rule'],
+                         **({'location': r['location']} if r.get('location') else {})}
+                        for r in case['rules']],
               'trace_status': case.get('trace_status', 'unavailable_missing_trace'),
               'revision_trace': []}
     for entry in case.get('revision_trace', []):
@@ -55,7 +58,7 @@ def safe_candidate(case):
             'evaluation': {key: value for key, value in entry.get('evaluation', {}).items()
                            if key in EVALUATION_FIELDS},
             'corrections': [{key: correction[key]
-                             for key in ('id', 'difference', 'why_it_matters', 'rule')
+                             for key in ('id', 'difference', 'why_it_matters', 'rule', 'location')
                              if key in correction}
                             for correction in entry.get('corrections', [])],
         })
@@ -74,22 +77,32 @@ def compact_rule_bank(candidates):
             requirement_ids[requirement] = key
             requirements[key] = requirement
         rules, seen = [], {}
-        for rule in case['rules']:
-            key = re.sub(r'\s+', ' ', rule['rule']).strip()
-            if key not in seen:
-                item = {'id': rule['id'], 'rule': rule['rule']}
-                seen[key] = item
+
+        def add_rule(rule):
+            text_key = re.sub(r'\s+', ' ', rule['rule']).strip()
+            location = rule.get('location') or None
+            matches = seen.setdefault(text_key, [])
+            item = next((r for r in matches if r.get('location') == location), None)
+            # An old index may lack the location available in its linked trace.
+            if item is None and location:
+                item = next((r for r in matches if not r.get('location')), None)
+            if item is None and not location and matches:
+                item = matches[0]
+            if item is None:
+                item = {'id': rule['id'], 'rule': rule['rule'], 'location': location}
+                matches.append(item)
                 rules.append(item)
+            elif location:
+                item['location'] = location
+            return item
+
+        for rule in case['rules']:
+            add_rule(rule)
         rounds = case['revision_trace']
         for entry in rounds:
             following = next((r for r in rounds if r['diagnosis_from_round'] == entry['round']), None)
             for correction in entry['corrections']:
-                key = re.sub(r'\s+', ' ', correction['rule']).strip()
-                if key not in seen:
-                    item = {'id': correction['id'], 'rule': correction['rule']}
-                    seen[key] = item
-                    rules.append(item)
-                item = seen[key]
+                item = add_rule(correction)
                 before = entry.get('assertion')
                 after = following.get('assertion') if following else None
                 if not isinstance(before, str):
@@ -156,7 +169,9 @@ def parse_response(raw, tree, candidates):
     # Keep the agreed correction format; source text and extra metadata stay
     # in the bank rather than being repeated as next-round feedback.
     fields = ('generated_node_id', 'source_rule_ids', 'difference', 'why_it_matters', 'rule')
-    return {'corrections': [{key: item[key] for key in fields} for item in data['corrections']]}
+    return {'corrections': [dict({key: item[key] for key in fields},
+                               location=location_for(tree, item['generated_node_id']))
+                            for item in data['corrections']]}
 
 
 def parse_rule_evaluations(raw, candidates, diagnosis):
@@ -189,5 +204,6 @@ def parse_rule_evaluations(raw, candidates, diagnosis):
 
 def export_rules(data, round_number):
     return {f'rule_{i}': {'group': ['inference_tree_correction', f'round_{round_number:04d}',
-                                  f'correction_{i:04d}'], 'rule': item['rule'].strip()}
+                                  f'correction_{i:04d}'], 'rule': item['rule'].strip(),
+                           **({'location': item['location']} if item.get('location') else {})}
             for i, item in enumerate(data['corrections'], 1)}

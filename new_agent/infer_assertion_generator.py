@@ -1,6 +1,7 @@
 import json
 
 from new_agent.formal_check import COMPARISON_SCOPE
+from new_agent.correction_locations import feedback_json
 
 
 SYSTEM_PROMPT = """You write SystemVerilog assertions from natural-language requirements.
@@ -48,32 +49,36 @@ def build_generation_prompt(
         if not previous_assertion.strip():
             raise ValueError("A revision requires a nonempty previous assertion.")
         if diagnosis_response is not None:
+            diagnosis_response = feedback_json(
+                diagnosis_response, assertion=previous_assertion, tree=previous_tree)
             revision = (
                 "\nPREVIOUS ASSERTION\n" + previous_assertion
                 + "\n\nLATEST DIAGNOSIS RESPONSE\n" + diagnosis_response
                 + "\nEND LATEST DIAGNOSIS RESPONSE\n"
                 "Apply only the corrections selected in the latest diagnosis response, "
-                "using each correction's difference, explanation and target-specific rule. "
+                "using each correction's Location to identify the exact expression occurrence "
+                "before applying its condition-and-action Rule. The position and expression "
+                "distinguish repeated operators and identical subexpressions. Use difference "
+                "and explanation as context. "
                 "If corrections is empty, preserve the previous assertion. "
-                "source_rule_ids record provenance; they are not instructions to fetch or "
+                "The located rules are not instructions to fetch or "
                 "apply additional retrieved training rules. Check corrections against the CURRENT "
                 "requirement and testbench. Training examples illustrate translation patterns; "
                 "do not introduce extra edits from their assertion bodies. Preserve unrelated "
                 "branches, signals and timing, and defer ancestors excluded by the bottom-up "
-                "diagnosis. The current requirement, testbench and generated tree are unmasked; "
+                "diagnosis. The current requirement, testbench and locations are unmasked; "
                 "use their actual declared signal names, never training placeholders or IDs. "
                 "Return one complete assertion.\n"
             )
-            if previous_tree is not None:
-                revision += ("\nPREVIOUS GENERATED TREE\n"
-                             + json.dumps(previous_tree, ensure_ascii=False) + "\n")
         else:
             guidance = []
             for number, entry in enumerate(rules or [], 1):
                 rule = entry.get("rule")
                 if not isinstance(rule, str) or not rule.strip():
                     raise ValueError("Every selected rule must contain nonempty rule text.")
-                guidance.append(f"{number}. {rule.strip()}")
+                location = entry.get('location')
+                prefix = f"Location: {location}\n" if isinstance(location, str) and location else ''
+                guidance.append(f"{number}. {prefix}Rule: {rule.strip()}")
             guidance_text = "\n".join(guidance) or (
                 "No specific correction rule is available. Re-derive the assertion "
                 "from the requirement and testbench, reviewing its clock, disable "

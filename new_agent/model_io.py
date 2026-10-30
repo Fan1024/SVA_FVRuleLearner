@@ -37,8 +37,11 @@ def parse_rules(response_text: str) -> dict:
         raise ValueError("Use consecutive names: rule_1, rule_2, and so on.")
     groups = set()
     for name, entry in rules.items():
-        if not isinstance(entry, dict) or set(entry) != {"group", "rule"}:
-            raise ValueError(f"{name} must contain only group and rule.")
+        if (not isinstance(entry, dict) or not {"group", "rule"} <= set(entry)
+                or set(entry) - {"group", "rule", "location"}):
+            raise ValueError(f"{name} must contain group and rule, with optional textual location.")
+        if 'location' in entry and (not isinstance(entry['location'], str) or not entry['location'].strip()):
+            raise ValueError(f"{name}.location must be nonempty text.")
         group = entry["group"]
         if (not isinstance(group, list) or not group or
             any(not isinstance(label, str) or not re.fullmatch(r"[a-z][a-z0-9_]*", label)

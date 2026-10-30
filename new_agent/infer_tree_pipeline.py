@@ -12,6 +12,7 @@ from tempfile import TemporaryDirectory
 from openai import OpenAI
 from new_agent import config, formal_check, model_io, run_io
 from new_agent import tree_archive
+from new_agent.correction_locations import feedback_json
 from new_agent.pipeline import (
     _failed_round, _remember_round_error, retained_rules, update_rule_registry,
 )
@@ -93,7 +94,6 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
     revision_feedback = None
     client = None
     latest_diagnosis_response = None
-    latest_generated_tree = None
     latest_diagnosis_round = None
 
     for round_number in range(1, config.MAX_ROUNDS + 1):
@@ -135,7 +135,6 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
                         "requirement": inputs["requirement"], "testbench": inputs["testbench"],
                         "previous_assertion": previous_assertion, "examples": example_cases,
                         "diagnosis_response": latest_diagnosis_response,
-                        "previous_tree": latest_generated_tree,
                         "comparison_scope": comparison_scope, "revision_feedback": revision_feedback,
                         "assertion_template": policy.get("assertion_template", "asrt: assert property (@(posedge clk) BODY);"),
                     }
@@ -149,7 +148,7 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
                             print(f"Round {round_number}: no diagnosis response from the preceding round; "
                                   "no rule feedback is available.", flush=True)
                     # Consume only the immediately preceding round's response; no history/readback.
-                    latest_diagnosis_response = latest_generated_tree = latest_diagnosis_round = None
+                    latest_diagnosis_response = latest_diagnosis_round = None
                     attempt["prompts"]["user"] = user_prompt
                     run_io.update_run(directory, record, stage=stage)
                     if client is None:
@@ -297,7 +296,7 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
                     run_io.save_debug_event(directory, record, "rule_request")
                     # One normal call; repair an empty answer once with the same model.
                     # A single measurement captures the usage of both calls when needed.
-                    latest_diagnosis_response = latest_generated_tree = latest_diagnosis_round = None
+                    latest_diagnosis_response = latest_diagnosis_round = None
                     with run_io.measure_stage(record, "rule") as capture_usage:
                         for diagnosis_attempt in range(2):
                             stage = 'rule_generation'
@@ -347,9 +346,10 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
                             )
                     # Raw output includes trace-only decisions. Forward validated
                     # corrections only; malformed output remains debug evidence.
-                    latest_diagnosis_response = json.dumps(diagnosis, ensure_ascii=False)
-                    latest_generated_tree = rule_generator.compact_tree(tree, include_source=False)
+                    latest_diagnosis_response = feedback_json(diagnosis, tree=tree)
                     latest_diagnosis_round = round_number
+                    run_io.save_debug_event(directory, record, 'correction_locations',
+                                            corrections=diagnosis['corrections'])
                     selected = {rule_id for item in diagnosis["corrections"] for rule_id in item["source_rule_ids"]}
                     task_derived = sum(not item['source_rule_ids'] for item in diagnosis['corrections'])
                     print(f"Round {round_number}: {len(diagnosis['corrections'])} independent corrections; "

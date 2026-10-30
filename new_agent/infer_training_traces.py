@@ -1,6 +1,7 @@
 """Load compact, allowlisted training revision evidence after case retrieval."""
 import json
 from pathlib import Path
+from new_agent.correction_locations import recover_location
 
 
 EVALUATION_FIELDS = ('status', 'syntax', 'pec', 'relax_pec', 'bleu', 'rouge',
@@ -34,9 +35,17 @@ def compact_rounds(rounds):
                     continue
                 rule = correction.get('rule')
                 if isinstance(rule, str) and rule.strip():
-                    corrections.append({key: correction[key].strip()
-                        for key in ('difference', 'why_it_matters', 'rule')
-                        if isinstance(correction.get(key), str) and correction[key].strip()})
+                    compact = {key: correction[key].strip()
+                        for key in ('difference', 'why_it_matters', 'rule', 'location')
+                        if isinstance(correction.get(key), str) and correction[key].strip()}
+                    if 'location' not in compact:
+                        tree = entry.get('generated_tree')
+                        if tree is None and isinstance(entry.get('assertion_trees'), dict):
+                            tree = entry['assertion_trees'].get('generated')
+                        location = recover_location(assertion, correction.get('generated_node_id'), tree)
+                        if location:
+                            compact['location'] = location
+                    corrections.append(compact)
         else:
             # Older runs store generated rules directly in round_evidence.
             generated = entry.get('rules_generated', {})
@@ -44,7 +53,10 @@ def compact_rounds(rounds):
                 for rule in generated.values():
                     text = rule.get('rule') if isinstance(rule, dict) else rule
                     if isinstance(text, str) and text.strip():
-                        corrections.append({'rule': text.strip()})
+                        compact = {'rule': text.strip()}
+                        if isinstance(rule, dict) and isinstance(rule.get('location'), str):
+                            compact['location'] = rule['location'].strip()
+                        corrections.append(compact)
         feedback_round = entry.get('diagnosis_from_round')
         if type(feedback_round) is not int:
             used = entry.get('rules_used', [])

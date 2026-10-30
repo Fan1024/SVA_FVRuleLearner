@@ -3,6 +3,7 @@
 import json
 
 from new_agent import assertion_tree
+from new_agent.correction_locations import location_for
 from new_agent.formal_check import COMPARISON_SCOPE
 from new_agent.train_tree_rule_prompts import SYSTEM_PROMPT, TASK_INSTRUCTIONS
 
@@ -69,8 +70,8 @@ def compact_tree(tree, *, include_source=True):
 def parse_response(response_text, trees):
     """Basic JSON/field/ID checks only. This does not validate graph edits or SVA.
 
-    The pipeline forwards the complete raw response even if these checks fail;
-    checks control structured storage/retrieval export, not generation feedback.
+    Node IDs remain in inspection records; textual locations become generator
+    feedback and can later be masked with the source examples for retrieval.
     """
     result = json.loads(response_text)
     if not isinstance(result, dict) or not isinstance(result.get("corrections"), list):
@@ -88,6 +89,7 @@ def parse_response(response_text, trees):
         for key in ("difference", "why_it_matters", "rule"):
             if not isinstance(entry.get(key), str) or not entry[key].strip():
                 raise ValueError(f"Correction needs nonempty {key} text")
+        entry['location'] = location_for(trees['generated'], node_id)
     return result
 
 
@@ -96,4 +98,5 @@ def export_rules(response, round_number):
     return {f"rule_{i}": {
         "group": ["tree_correction", f"round_{round_number:04d}", f"correction_{i:04d}"],
         "rule": entry["rule"].strip(),
+        **({'location': entry['location']} if entry.get('location') else {}),
     } for i, entry in enumerate(response["corrections"], 1)}

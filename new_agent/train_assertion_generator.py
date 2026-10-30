@@ -1,6 +1,7 @@
 import json
 
 from new_agent.formal_check import COMPARISON_SCOPE
+from new_agent.correction_locations import feedback_json
 
 
 SYSTEM_PROMPT = """You write SystemVerilog assertions from natural-language requirements.
@@ -46,18 +47,20 @@ def build_generation_prompt(
             raise ValueError("A revision requires a nonempty previous assertion.")
         revision = "\nPREVIOUS ASSERTION\n" + previous_assertion + "\n"
         if diagnosis_response is not None:
+            diagnosis_response = feedback_json(
+                diagnosis_response, assertion=previous_assertion, tree=previous_tree)
             revision += (
                 "\nLATEST DIAGNOSIS RESPONSE\n" + diagnosis_response
                 + "\nEND LATEST DIAGNOSIS RESPONSE\n"
-                "Apply each selected correction using its difference, explanation and rule. "
+                "Use each correction's Location to identify the exact expression occurrence in "
+                "the previous assertion, then apply its condition-and-action Rule. "
+                "The location includes the expression and its position to distinguish repeated "
+                "operators or identical subexpressions. Use difference and explanation as context. "
                 "These are local edits to the previous assertion. Preserve other branches, "
                 "signals and timing unless a selected coordinated correction requires changing them. "
                 "Do not independently correct deferred ancestors in this round. "
                 "Return a complete assertion, not a patch or tree.\n"
             )
-            if previous_tree is not None:
-                revision += ("\nPREVIOUS GENERATED TREE (IDs locate occurrences)\n"
-                             + json.dumps(previous_tree, ensure_ascii=False) + "\n")
         else:
             revision += (
                 "\nNo diagnosis response was produced in the preceding round. "

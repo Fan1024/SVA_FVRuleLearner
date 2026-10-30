@@ -64,6 +64,9 @@ class RuleRetriever:
             groups = case.get("rule_groups", {})
             if not isinstance(groups, dict):
                 raise ValueError(f"Invalid rule_groups for case {number}.")
+            locations = case.get('rule_locations', {})
+            if not isinstance(locations, dict):
+                locations = {}
             # Only these fields can later enter inference prompts. References,
             # assertions and scores below belong only to selected TRAINING cases.
             # Tool logs, runtime prompts and arbitrary JSON fields stay excluded.
@@ -92,6 +95,8 @@ class RuleRetriever:
                 "task_id": case.get("task_id"), "requirement": requirement.strip(),
                 "passed": case.get("passed"), "rules": rules,
                 "rule_groups": {key: groups.get(key, []) for key in rules},
+                "rule_locations": {key: locations[key] for key in rules
+                                   if isinstance(locations.get(key), str) and locations[key].strip()},
                 "reference_assertion": case.get("reference_assertion"),
                 "rule_rounds": {key: case.get("rule_rounds", {}).get(key) for key in rules},
                 "round_evidence": round_evidence,
