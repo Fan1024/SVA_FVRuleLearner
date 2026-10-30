@@ -94,9 +94,11 @@ def source_names(requirement, rules, context=None):
     functions = set(re.findall(r'(?<![.$\w])([A-Za-z_]\w*)\s*\(', source)) - KEYWORDS
     names -= functions
     declared_signals = set(names)
+    explicit_names = set()
     for fragment in re.findall(r"['\"]([A-Za-z_][\w$]*)['\"]", requirement):
         if fragment not in KEYWORDS:
             names.add(fragment)
+            explicit_names.add(fragment)
     sources = [context.get('reference_assertion', '')] + context.get('_source_assertions', [])
     for rule in rules.values():
         sources.extend(re.findall(r'`([^`]+)`', rule))
@@ -116,10 +118,12 @@ def source_names(requirement, rules, context=None):
                 if (re.fullmatch(IDENTIFIER, value) and value not in KEYWORDS
                         and not value.startswith('$') and value not in functions):
                     names.add(value)
+                    explicit_names.add(value)
             continue
         def walk(node):
             if node['kind'] in {'signal', 'parameter'}:
                 names.add(node['value'])
+                explicit_names.add(node['value'])
             for child in node.get('children', []):
                 walk(child)
         walk(tree['root'])
@@ -133,6 +137,9 @@ def source_names(requirement, rules, context=None):
         r'[A-Za-z_][\w$]*_(?:req|ack|vld|rdy|en|rst|cnt|count|value|d\d+))\b')
     for text in descriptions:
         names.update(signal_pattern.findall(text))
+    # Unused loop declarations a/i must not turn English articles or i.e. into
+    # signal placeholders. Retain short names explicitly used in SVA/quotes.
+    names -= {name for name in declared_signals if len(name) == 1 and name not in explicit_names}
     return names - KEYWORDS - functions
 
 
@@ -142,6 +149,14 @@ def placeholder_role(name):
     words = set(re.split(r'[^a-z0-9]+', normalized))
     if re.search(r'(?:^|_)d\d+(?:_|$)', normalized):
         return 'delayed_signal'
+    if 'mask' in words and words & {'req', 'request'}:
+        return 'request_mask'
+    if words & {'gnt', 'grant'}:
+        if words & {'last', 'previous', 'prev'}:
+            return 'previous_grant_signal'
+        if words & {'cont', 'continued', 'continuous'}:
+            return 'continued_grant_signal'
+        return 'grant_signal'
     for aliases, role in (
         ({'clk', 'clock'}, 'clock'),
         ({'rst', 'reset', 'resetn', 'rstn'}, 'reset'),
@@ -152,6 +167,8 @@ def placeholder_role(name):
         ({'en', 'enable'}, 'enable_signal'),
         ({'cnt', 'count', 'counter'}, 'counter_signal'),
         ({'value'}, 'value_signal'),
+        ({'hold'}, 'hold_signal'),
+        ({'busy'}, 'busy_signal'),
     ):
         if words & aliases:
             return role

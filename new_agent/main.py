@@ -103,6 +103,8 @@ def main() -> int:
             training_cases=dataset_loader.load_cases(dataset_path, sorted(training_ids)),
             top_k=config.TOP_K_CASES, model_name=config.EMBEDDING_MODEL,
         )
+        print(f"Rule retrieval pool: {len(retriever.cases)} passed training cases with rules; "
+              f"{len(retriever.excluded_unpassed_case_ids)} unpassed cases excluded.", flush=True)
     dataset_path = Path(cases[0]["dataset_path"])
     models = {"assertion": config.ASSERTION_MODEL, "rule": config.RULE_MODEL}
     settings = {
@@ -143,12 +145,15 @@ def main() -> int:
             inference_workflow="bottom_up_tree_rule_selection",
             inference_diagnosis_model=config.RULE_MODEL,
             inference_feedback="complete_latest_response_only",
+            inference_rule_stages='one_call_diagnose_then_select_and_adapt',
+            inference_rule_context='deduplicated_requirements_rules_linked_examples_no_scores',
             training_evidence_masking="after_unmasked_cosine; requirements_rules_revision_traces; role_based_unique_per_case",
             source_training_run=str(source_dir),
             inference_case_selection="all_dataset_cases_minus_source_selected_cases",
             training_case_ids=[c["case_number"] for c in source_metadata["selected_cases"]],
             retrieval_top_k=config.TOP_K_CASES, embedding_model=config.EMBEDDING_MODEL,
             retrieval_eligible_cases=len(retriever.cases),
+            retrieval_passed_cases_only=True,
             example_retrieval="top_three_training_requirements_by_cosine",
             example_pool_size=len(retriever.examples),
             source_rules_sha256=retriever.sha256,

@@ -32,6 +32,7 @@ class RuleRetriever:
         data = path.read_bytes()
         self.sha256 = hashlib.sha256(data).hexdigest()
         self.cases = []
+        self.excluded_unpassed_case_ids = []
         self._trace_sources = {}
         self._trace_cache = {}
         seen = set()
@@ -45,6 +46,9 @@ class RuleRetriever:
             if type(number) is not int or number not in training_case_ids or number in seen:
                 raise ValueError(f"Invalid or duplicate rule-bank case ID at line {line_number}.")
             seen.add(number)
+            if case.get('passed') is not True:
+                self.excluded_unpassed_case_ids.append(number)
+                continue
             requirement = case.get("requirement")
             rules = case.get("rules")
             if not isinstance(requirement, str) or not requirement.strip() or not isinstance(rules, dict):

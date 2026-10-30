@@ -11,6 +11,7 @@ import sys
 from tempfile import TemporaryDirectory
 from openai import OpenAI
 from new_agent import config, formal_check, model_io, run_io
+from new_agent import tree_archive
 from new_agent.pipeline import (
     _failed_round, _remember_round_error, retained_rules, update_rule_registry,
 )
@@ -25,6 +26,7 @@ def _save_inference_trace(directory, record, round_number):
     finally:
         evidence = next((row for row in reversed(record["round_evidence"])
                          if row["round"] == round_number), {})
+        tree_archive.finish_round(directory, record, round_number, evidence)
         entry = {key: evidence.get(key) for key in
                  ("round", "generated_assertion", "evaluation", "diagnosis_from_round")}
         tree = evidence.get("generated_tree")
@@ -50,8 +52,8 @@ def _save_inference_trace(directory, record, round_number):
             "case": {key: inputs[key] for key in ("case_number", "design_name", "task_id")},
             "rounds": [],
         })
-        if "masked_candidates" in record and "retrieved_cases" not in document:
-            document["retrieved_cases"] = record["masked_candidates"]
+        if 'retrieved_rule_bank' in record and 'retrieved_rule_bank' not in document:
+            document['retrieved_rule_bank'] = record['retrieved_rule_bank']
         document["rounds"].append(entry)
         path = Path(directory) / "inference_trace.json"
         if path.exists() or tree is not None or raw is not None or errors:
@@ -162,6 +164,11 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
                     attempt["generation"]["assertion"] = generated_assertion
                     record["round_evidence"][-1]["generated_assertion"] = generated_assertion
                     previous_assertion = generated_assertion
+                    stage = 'tree_recording'
+                    with run_io.measure_stage(record, 'diagnosis') as capture_tree_usage:
+                        inspection_trees = tree_archive.record_generated(
+                            directory, record, round_number, generated_assertion)
+                        capture_tree_usage({'input_tokens': 0, 'output_tokens': 0})
                     stage = "formal_check"
                     run_io.update_run(directory, record, stage=stage)
                     with run_io.measure_stage(record, "tool"):
@@ -251,11 +258,12 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
                         stage = "retrieval"
                         retrieved = retriever.retrieve(inputs["requirement"])
                         candidates = prepare_candidates(retrieved, getattr(retriever, "masking_contexts", {}))
-                        record["masked_candidates"] = candidates
+                        record['retrieved_rule_bank'] = rule_generator.compact_rule_bank(candidates)
                         run_io.update_run(directory, record, retrieved_cases=[
                             {"case_number": case["case_number"], "similarity": case["similarity"]}
                             for case in retrieved])
-                        run_io.save_debug_event(directory, record, "retrieval", cases=candidates)
+                        run_io.save_debug_event(directory, record, 'retrieval',
+                                                rule_bank=record['retrieved_rule_bank'])
                         print("Retrieved rule case IDs:", [c["case_number"] for c in candidates], flush=True)
                         for case in candidates:
                             print(f"  Training case {case['case_number']}: "
@@ -264,19 +272,20 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
                     stage = "tree_construction"
                     run_io.update_run(directory, record, stage=stage)
                     with run_io.measure_stage(record, "diagnosis") as capture_tree_usage:
-                        tree = rule_generator.build_tree(generated_assertion)
+                        tree = inspection_trees['generated']
                         capture_tree_usage({"input_tokens": 0, "output_tokens": 0})
                     record["round_evidence"][-1]["generated_tree"] = tree
                     if "parse_error" in tree:
                         print(f"Round {round_number}: unsupported tree syntax; using explicit source anchor: "
                               f"{tree['parse_error']}", flush=True)
                     stage = "rule_generation"
-                    print(f"Round {round_number}: running inference LLM bottom-up diagnosis and rule selection.", flush=True)
+                    stage = 'rule_generation'
+                    print(f"Round {round_number}: one LLM call for bottom-up diagnosis, rule selection "
+                          "and adaptation.", flush=True)
                     run_io.update_run(directory, record, stage=stage)
                     rule_prompt = rule_generator.build_rule_prompt(
-                        requirement=inputs["requirement"], testbench=inputs["testbench"],
-                        tree=tree, candidates=candidates, comparison_scope=comparison_scope,
-                    )
+                        inputs['requirement'], inputs['testbench'], tree, candidates,
+                        comparison_scope=comparison_scope, rule_bank=record['retrieved_rule_bank'])
                     run_io.save_debug_event(directory, record, "rule_request")
                     with run_io.measure_stage(record, "rule") as capture_usage:
                         rule_response = model_io.request_text(
@@ -293,11 +302,16 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
                     latest_diagnosis_round = round_number
                     stage = "response_format"
                     run_io.update_run(directory, record, stage=stage)
-                    diagnosis = rule_generator.parse_response(rule_response, tree, candidates)
+                    diagnosis = rule_generator.parse_response(rule_response, tree,
+                        [{'rules': [{'id': rule_id} for rule_id in
+                                    rule_generator.bank_rule_ids(record['retrieved_rule_bank'])]}])
                     evidence["inference_diagnosis"] = deepcopy(diagnosis)
+                    latest_diagnosis_response = json.dumps(diagnosis, ensure_ascii=False)
                     selected = {rule_id for item in diagnosis["corrections"] for rule_id in item["source_rule_ids"]}
+                    task_derived = sum(not item['source_rule_ids'] for item in diagnosis['corrections'])
                     print(f"Round {round_number}: {len(diagnosis['corrections'])} independent corrections; "
-                          f"{len(selected)} retrieved training rules selected.", flush=True)
+                          f"{len(selected)} retrieved training rules selected; "
+                          f"{task_derived} task-derived corrections.", flush=True)
                     new_rules = rule_generator.export_rules(diagnosis, round_number)
                     replacement = deepcopy(registry)
                     update_rule_registry(replacement, new_rules, round_number)
@@ -306,6 +320,12 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
                                       diagnosis_model=config.RULE_MODEL,
                                       rule_registry=retained_rules(registry))
                     run_io.save_diagnosis_model(record, config.RULE_MODEL)
+                    if not diagnosis['corrections']:
+                        print(f"Round {round_number}: no actionable guidance; stopping this case "
+                              "without accepting the assertion.", flush=True)
+                        run_io.update_run(directory, record, status='COMPLETED', passed=False,
+                                          stage='finished', stop_reason='no_guidance')
+                        return 0
                 except Exception as error:
                     _remember_round_error(directory, record, round_number, stage, error)
                     reason = ("Response format check failed; full response still goes to the next round."

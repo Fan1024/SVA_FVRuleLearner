@@ -429,6 +429,7 @@ def final_record(record: dict) -> dict:
     if record["settings"].get("inference_workflow"):
         saved["inference_trace_file"] = record.get("inference_trace_file")
     saved["summary_directory"] = record.get("summary_directory")
+    saved['tree_file'] = record.get('tree_file')
     return saved
 
 
@@ -542,6 +543,8 @@ def _debug_event_text(record: dict, event: str, data: dict) -> str:
     if event == "example_retrieval":
         return "\nRETRIEVED TRAINING EXAMPLES\n" + json.dumps(data["examples"], indent=2, ensure_ascii=False)
     if event == "retrieval":
+        if 'rule_bank' in data:
+            return '\nRETRIEVED RULE BANK\n' + json.dumps(data['rule_bank'], indent=2, ensure_ascii=False)
         return "\nRETRIEVED TRAINING CASES\n" + json.dumps(data["cases"], indent=2)
     if event == "rule_request":
         return "\nRULE GENERATOR OUTPUT"
@@ -795,6 +798,7 @@ def save_summaries(summary_dir, record: dict) -> None:
     if record["settings"].get("inference_workflow"):
         learning.pop("round_evidence", None)
         learning["trace_file"] = record.get("inference_trace_file")
+    learning['tree_file'] = record.get('tree_file')
     _update_case_collection(directory / "learned_rules.jsonl", learning)
 
 

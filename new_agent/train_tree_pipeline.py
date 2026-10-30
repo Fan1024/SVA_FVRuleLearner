@@ -11,6 +11,7 @@ import sys
 from tempfile import TemporaryDirectory
 from openai import OpenAI
 from new_agent import config, formal_check, model_io, run_io
+from new_agent import tree_archive
 from new_agent.pipeline import (
     _failed_round, _remember_round_error, retained_rules, update_rule_registry,
 )
@@ -25,6 +26,7 @@ def _save_round_trace(directory, record, round_number):
     finally:
         evidence = next((item for item in reversed(record["round_evidence"])
                          if item["round"] == round_number), {})
+        tree_archive.finish_round(directory, record, round_number, evidence)
         failures = [item for item in record.get("round_failures", [])
                     if item["round"] == round_number]
         output = evidence.get("tree_rule_diagnosis")
@@ -159,6 +161,11 @@ def run_training_pipeline(directory, record: dict, *, retriever=None) -> int:
                     attempt["generation"]["assertion"] = generated_assertion
                     record["round_evidence"][-1]["generated_assertion"] = generated_assertion
                     previous_assertion = generated_assertion
+                    stage = 'tree_recording'
+                    with run_io.measure_stage(record, 'diagnosis') as capture_tree_usage:
+                        inspection_trees = tree_archive.record_generated(
+                            directory, record, round_number, generated_assertion)
+                        capture_tree_usage({'input_tokens': 0, 'output_tokens': 0})
                     stage = "formal_check"
                     run_io.update_run(directory, record, stage=stage)
                     with run_io.measure_stage(record, "tool"):
@@ -248,7 +255,7 @@ def run_training_pipeline(directory, record: dict, *, retriever=None) -> int:
                 try:
                     run_io.update_run(directory, record, stage=stage)
                     with run_io.measure_stage(record, "diagnosis") as capture_tree_usage:
-                        trees = rule_generator.build_trees(inputs["reference_assertion"], generated_assertion)
+                        trees = inspection_trees
                         capture_tree_usage({"input_tokens": 0, "output_tokens": 0})
                     record["round_evidence"][-1]["assertion_trees"] = trees
                     for side in ("generated", "reference"):

@@ -1,5 +1,6 @@
 """Inference payloads never accept a target reference or raw checker feedback."""
 import json
+import re
 from new_agent import assertion_tree
 from new_agent.infer_tree_rule_prompts import SYSTEM_PROMPT, TASK_INSTRUCTIONS
 from new_agent.infer_training_traces import EVALUATION_FIELDS
@@ -61,11 +62,66 @@ def safe_candidate(case):
     return result
 
 
-def build_rule_prompt(requirement, testbench, tree, candidates, *, comparison_scope):
-    safe = [safe_candidate(c) for c in candidates]
+def compact_rule_bank(candidates):
+    """One source requirement/text per occurrence; no scores or full histories."""
+    requirements, requirement_ids, cases = {}, {}, []
+    examples, example_ids = {}, {}
+    for candidate in candidates:
+        case = safe_candidate(candidate)
+        requirement = case['requirement']
+        if requirement not in requirement_ids:
+            key = f'Q{len(requirements) + 1}'
+            requirement_ids[requirement] = key
+            requirements[key] = requirement
+        rules, seen = [], {}
+        for rule in case['rules']:
+            key = re.sub(r'\s+', ' ', rule['rule']).strip()
+            if key not in seen:
+                item = {'id': rule['id'], 'rule': rule['rule']}
+                seen[key] = item
+                rules.append(item)
+        rounds = case['revision_trace']
+        for entry in rounds:
+            following = next((r for r in rounds if r['diagnosis_from_round'] == entry['round']), None)
+            for correction in entry['corrections']:
+                key = re.sub(r'\s+', ' ', correction['rule']).strip()
+                if key not in seen:
+                    item = {'id': correction['id'], 'rule': correction['rule']}
+                    seen[key] = item
+                    rules.append(item)
+                item = seen[key]
+                before = entry.get('assertion')
+                after = following.get('assertion') if following else None
+                if not isinstance(before, str):
+                    continue
+                example = {'before': before, 'after': after if isinstance(after, str) else None}
+                old = item.get('example')
+                if old is None or (old['before'] == old['after'] and before != after):
+                    item['example'] = example
+        for item in rules:
+            example = item.pop('example', None)
+            if example is not None:
+                key = (case['case_number'], example['before'], example['after'])
+                if key not in example_ids:
+                    example_id = f'E{len(examples) + 1}'
+                    example_ids[key] = example_id
+                    examples[example_id] = example
+                item['example_id'] = example_ids[key]
+        cases.append({'case_number': case['case_number'],
+                      'requirement_id': requirement_ids[requirement], 'rules': rules})
+    return {'requirements': requirements, 'examples': examples, 'cases': cases}
+
+
+def bank_rule_ids(bank):
+    return {rule['id'] for case in bank['cases'] for rule in case['rules']}
+
+
+def build_rule_prompt(requirement, testbench, tree, candidates, *, comparison_scope,
+                      rule_bank=None):
+    bank = compact_rule_bank(candidates) if rule_bank is None else rule_bank
     return TASK_INSTRUCTIONS + '\nINPUT DATA\n' + json.dumps({
         'requirement': requirement, 'testbench': testbench,
-        'generated_tree': compact_tree(tree), 'retrieved_cases': safe,
+        'generated_tree': compact_tree(tree), 'retrieved_rule_bank': bank,
         'comparison_scope': comparison_scope,
     }, ensure_ascii=False, indent=2)
 
@@ -91,7 +147,10 @@ def parse_response(raw, tree, candidates):
         for field in ('difference', 'why_it_matters', 'rule'):
             if not isinstance(item.get(field), str) or not item[field].strip():
                 raise ValueError(f'Correction requires nonempty {field}')
-    return data
+    # Keep the agreed correction format; source text and extra metadata stay
+    # in the bank rather than being repeated as next-round feedback.
+    fields = ('generated_node_id', 'source_rule_ids', 'difference', 'why_it_matters', 'rule')
+    return {'corrections': [{key: item[key] for key in fields} for item in data['corrections']]}
 
 
 def export_rules(data, round_number):
