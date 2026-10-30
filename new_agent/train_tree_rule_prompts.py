@@ -64,6 +64,14 @@ examined to explain when a local correction applies.
 Example rule: "When req requires ack in the same cycle, but the generated
 assertion uses req |=> ack, replace |=> with |-> for that response."
 
+LOCAL CORRECTION SCOPE
+
+In difference and rule, describe only the smallest expression or coordinated
+set of expressions that must change. Identify each location by its semantic
+role and a short SVA fragment, such as the antecedent, consequent, comparison
+operand, function argument, or a distinguishable conditional branch.
+Use assertion syntax to describe expressions, not tree structures or node IDs.
+
 Grouping parentheses are represented by tree connections, not separate nodes.
 Use source_assertion for textual parentheses differences. A text-only correction
 may use an existing subtree as its location; preserve required SVA syntax.
