@@ -777,7 +777,7 @@ def save_summaries(summary_dir, record: dict) -> None:
         "round_evidence": record["round_evidence"],
     }
     if record["settings"].get("flat_training_output"):
-        # Full per-round outputs live in rules/case_NNNN.jsonl exactly once.
+        # Full per-round outputs live in rules/case_NNNN.json exactly once.
         # Keep the existing rule index for the unchanged inference reader.
         learning.pop("round_evidence", None)
         learning["trace_file"] = record.get("rule_trace_file")
@@ -931,7 +931,7 @@ def print_summary(run_dir, record: dict) -> None:
     if record["trace_error"]:
         print("Trace save error:", record["trace_error"])
     if record.get("round_failures"):
-        target = (record.get("rule_trace_file", "rules/case_NNNN.jsonl") + " errors"
+        target = (record.get("rule_trace_file", "rules/case_NNNN.json") + " errors"
                   if record["settings"].get("flat_training_output") else "result.json round_failures")
         print(f"Round-stage errors: {len(record['round_failures'])}; see {target}.")
     if record["summary_error"]:

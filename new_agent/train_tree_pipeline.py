@@ -18,7 +18,7 @@ from new_agent.pipeline import (
 
 @contextmanager
 def _save_round_trace(directory, record, round_number):
-    """Lazy per-case JSONL: case/reference once, diagnosis once per round."""
+    """Lazy indented JSON, atomically updated after each round/interruption."""
     from new_agent.train_tree_rule_generator import compact_tree
     try:
         yield
@@ -56,24 +56,20 @@ def _save_round_trace(directory, record, round_number):
             entry["interruption"] = {"type": error_type.__name__, "message": str(error)}
         inputs = record["inputs"]
         root = Path(record.get("summary_directory", directory)) / "rules"
-        path = root / f"case_{inputs['case_number']:04d}.jsonl"
-        pending = record.setdefault("_pending_rule_trace", [])
-        pending.append(entry)
+        path = root / f"case_{inputs['case_number']:04d}.json"
+        document = record.setdefault("_rule_trace_document", {
+            "case": {key: inputs[key] for key in ("case_number", "design_name", "task_id")},
+            "reference_assertion": inputs.get("reference_assertion"),
+            "rounds": [],
+        })
+        document["rounds"].append(entry)
+        if trees and "reference" in trees and "reference_tree" not in document:
+            document["reference_tree"] = compact_tree(trees["reference"], include_source=False)
+        # Keep early rounds in memory until a trace is needed. Initial successes
+        # create neither a file nor a rules directory. Once created, save all rounds.
         if path.exists() or raw is not None or output is not None or trees is not None or failures:
             root.mkdir(parents=True, exist_ok=True)
-            if not record.get("_rule_trace_initialized"):
-                first = pending[0]
-                first["case"] = {key: inputs[key] for key in ("case_number", "design_name", "task_id")}
-                first["reference_assertion"] = inputs.get("reference_assertion")
-                record["_rule_trace_initialized"] = True
-            if trees and "reference" in trees and not record.get("_reference_tree_saved"):
-                pending[-1]["reference_tree"] = compact_tree(trees["reference"], include_source=False)
-                record["_reference_tree_saved"] = True
-            with path.open("a", encoding="utf-8") as stream:
-                for row in pending:
-                    stream.write(json.dumps(row, ensure_ascii=False) + "\n")
-                stream.flush()
-            pending.clear()
+            run_io._atomic_write(path, json.dumps(document, ensure_ascii=False, indent=2) + "\n")
             record["rule_trace_file"] = f"rules/{path.name}"
 
 
