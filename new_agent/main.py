@@ -16,11 +16,12 @@ from new_agent.pipeline import run_pipeline
 
 
 def select_workflow():
-    """Keep inference on the original pipeline; route training to tree rules."""
+    """Select the independent training or inference tree workflow."""
     if config.MODE == "train":
         from new_agent.train_tree_pipeline import run_training_pipeline
         return run_training_pipeline
-    return run_pipeline
+    from new_agent.infer_tree_pipeline import run_inference_pipeline
+    return run_inference_pipeline
 
 
 def validate_config() -> None:
@@ -60,8 +61,6 @@ def validate_config() -> None:
 def validate_credentials() -> None:
     """Reject absent credentials before paying for assertion-generation calls."""
     required = ["OPENAI_API_KEY"]
-    if config.MODE == "inference" and config.MAX_ROUNDS > 1:
-        required.append("TYPESAFE_API_KEY")
     missing = [name for name in required if not os.environ.get(name, "").strip()]
     if missing:
         raise ValueError("Missing environment variables: " + ", ".join(missing)
@@ -141,6 +140,10 @@ def main() -> int:
 
     if phase == "infer":
         settings.update(
+            inference_workflow="bottom_up_tree_rule_selection",
+            inference_diagnosis_model=config.RULE_MODEL,
+            inference_feedback="complete_latest_response_only",
+            training_evidence_masking="after_unmasked_cosine; requirements_rules_revision_traces; role_based_unique_per_case",
             source_training_run=str(source_dir),
             inference_case_selection="all_dataset_cases_minus_source_selected_cases",
             training_case_ids=[c["case_number"] for c in source_metadata["selected_cases"]],

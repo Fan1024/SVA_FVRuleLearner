@@ -39,33 +39,56 @@ def build_generation_prompt(
     assertion_template: str = "asrt: assert property (@(posedge clk) BODY);",
     case_history: list[dict] | None = None,
     examples: list[dict] | None = None,
+    diagnosis_response: str | None = None,
+    previous_tree: dict | None = None,
 ) -> str:
     """Build a fresh initial or revision prompt; never accept a reference."""
     revision = ""
     if previous_assertion is not None:
         if not previous_assertion.strip():
             raise ValueError("A revision requires a nonempty previous assertion.")
-        guidance = []
-        for number, entry in enumerate(rules or [], 1):
-            rule = entry.get("rule")
-            if not isinstance(rule, str) or not rule.strip():
-                raise ValueError("Every selected rule must contain nonempty rule text.")
-            guidance.append(f"{number}. {rule.strip()}")
-        guidance_text = "\n".join(guidance) or (
-            "No specific correction rule is available. Re-derive the assertion "
-            "from the requirement and testbench, reviewing its clock, disable "
-            "condition, trigger, response, signal relationships, and timing."
-        )
-        revision = (
-            "\nRevise the previous assertion using the latest correction guidance.\n"
-            "Check the guidance against the requirement and testbench; preserve required behavior.\n"
-            "If no specific correction is available, review the behavioral checks above.\n"
-            "Always return one complete assertion.\n"
-            "\nPREVIOUS ASSERTION\n" + previous_assertion
-            + "\n\nCORRECTION GUIDANCE\n" + guidance_text + "\n"
-        )
-    elif rules:
-        raise ValueError("Rules require a previous assertion for this experiment.")
+        if diagnosis_response is not None:
+            revision = (
+                "\nPREVIOUS ASSERTION\n" + previous_assertion
+                + "\n\nLATEST DIAGNOSIS RESPONSE\n" + diagnosis_response
+                + "\nEND LATEST DIAGNOSIS RESPONSE\n"
+                "Apply only the corrections selected in the latest diagnosis response, "
+                "using each correction's difference, explanation and target-specific rule. "
+                "If corrections is empty, preserve the previous assertion. "
+                "source_rule_ids record provenance; they are not instructions to fetch or "
+                "apply additional retrieved training rules. Check corrections against the CURRENT "
+                "requirement and testbench. Training examples illustrate translation patterns; "
+                "do not introduce extra edits from their assertion bodies. Preserve unrelated "
+                "branches, signals and timing, and defer ancestors excluded by the bottom-up "
+                "diagnosis. The current requirement, testbench and generated tree are unmasked; "
+                "use their actual declared signal names, never training placeholders or IDs. "
+                "Return one complete assertion.\n"
+            )
+            if previous_tree is not None:
+                revision += ("\nPREVIOUS GENERATED TREE\n"
+                             + json.dumps(previous_tree, ensure_ascii=False) + "\n")
+        else:
+            guidance = []
+            for number, entry in enumerate(rules or [], 1):
+                rule = entry.get("rule")
+                if not isinstance(rule, str) or not rule.strip():
+                    raise ValueError("Every selected rule must contain nonempty rule text.")
+                guidance.append(f"{number}. {rule.strip()}")
+            guidance_text = "\n".join(guidance) or (
+                "No specific correction rule is available. Re-derive the assertion "
+                "from the requirement and testbench, reviewing its clock, disable "
+                "condition, trigger, response, signal relationships, and timing."
+            )
+            revision = (
+                "\nRevise the previous assertion using the latest correction guidance.\n"
+                "Check the guidance against the requirement and testbench; preserve required behavior.\n"
+                "If no specific correction is available, review the behavioral checks above.\n"
+                "Always return one complete assertion.\n"
+                "\nPREVIOUS ASSERTION\n" + previous_assertion
+                + "\n\nCORRECTION GUIDANCE\n" + guidance_text + "\n"
+            )
+    elif rules or diagnosis_response is not None or previous_tree is not None or case_history:
+        raise ValueError("Rule feedback, trees and history require a previous assertion.")
 
     history = [{
         "round": entry.get("round"),

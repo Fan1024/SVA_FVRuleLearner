@@ -12,6 +12,9 @@ class RuleRetriever:
                  top_k: int, model_name: str):
         self.directory = Path(training_run_dir).resolve()
         self.top_k = top_k
+        # Private training source context used only to discover names for masking.
+        # These dictionaries are never serialized into inference model prompts.
+        self.masking_contexts = {case["case_number"]: case for case in training_cases}
         # Examples come from the source run's complete selected training pool in
         # the verified CSV, independently of rule availability or generation success.
         self.examples = [{
@@ -29,6 +32,8 @@ class RuleRetriever:
         data = path.read_bytes()
         self.sha256 = hashlib.sha256(data).hexdigest()
         self.cases = []
+        self._trace_sources = {}
+        self._trace_cache = {}
         seen = set()
         for line_number, line in enumerate(data.decode("utf-8-sig").splitlines(), 1):
             if not line.strip():
@@ -48,6 +53,10 @@ class RuleRetriever:
                      if isinstance(value, str) and value.strip()}
             if not rules:
                 continue
+            self._trace_sources[number] = {
+                'trace_file': case.get('trace_file'),
+                'round_evidence': case.get('round_evidence', []),
+            }
             groups = case.get("rule_groups", {})
             if not isinstance(groups, dict):
                 raise ValueError(f"Invalid rule_groups for case {number}.")
@@ -101,8 +110,18 @@ class RuleRetriever:
         query = self.model.encode([requirement])
         scores = self._cosine_similarity(query, self.embeddings)[0]
         order = sorted(range(len(scores)), key=lambda i: (-float(scores[i]), self.cases[i]["case_number"]))
-        return [{**self.cases[i], "similarity": float(scores[i])}
-                for i in order[:self.top_k]]
+        from new_agent.infer_training_traces import load_case_trace
+        selected = []
+        for i in order[:self.top_k]:
+            case = self.cases[i]
+            number = case['case_number']
+            if number not in self._trace_cache:
+                self._trace_cache[number] = load_case_trace(
+                    self.directory, number, self._trace_sources[number])
+            trace, status = self._trace_cache[number]
+            selected.append({**case, 'similarity': float(scores[i]),
+                             'revision_trace': trace, 'trace_status': status})
+        return selected
 
     def retrieve_examples(self, requirement: str) -> list[dict]:
         """Return up to three training pairs, regardless of their rules or pass status."""

@@ -426,6 +426,8 @@ def final_record(record: dict) -> dict:
     saved["error"] = None if error is None else {
         name: error[name] for name in ("stage", "type", "message") if name in error
     }
+    if record["settings"].get("inference_workflow"):
+        saved["inference_trace_file"] = record.get("inference_trace_file")
     saved["summary_directory"] = record.get("summary_directory")
     return saved
 
@@ -492,6 +494,12 @@ def _debug_event_text(record: dict, event: str, data: dict) -> str:
     """Render only the outputs and decisions useful when inspecting a case."""
     if event == "assertion_request":
         number = record["pending_attempt"]["round"]
+        if record["settings"].get("inference_workflow"):
+            source = record.get("inference_feedback_round")
+            feedback = (f"complete diagnosis from round {source}" if source is not None
+                        else "none available from the preceding round")
+            return (f"\nROUND {number}\n=======\nDiagnosis feedback: {feedback}\n\n"
+                    "ASSERTION GENERATOR OUTPUT")
         groups = "; ".join(
             ", ".join(rule["group"]) for rule in data.get("rules_used", [])
         ) or "none"
@@ -784,6 +792,9 @@ def save_summaries(summary_dir, record: dict) -> None:
         learning["round_failure_count"] = len(record.get("round_failures", []))
         learning["error"] = (None if record.get("error") is None else {
             key: record["error"].get(key) for key in ("stage", "type", "message")})
+    if record["settings"].get("inference_workflow"):
+        learning.pop("round_evidence", None)
+        learning["trace_file"] = record.get("inference_trace_file")
     _update_case_collection(directory / "learned_rules.jsonl", learning)
 
 
