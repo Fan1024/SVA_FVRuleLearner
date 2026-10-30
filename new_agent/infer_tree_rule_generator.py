@@ -127,7 +127,7 @@ def build_rule_prompt(requirement, testbench, tree, candidates, *, comparison_sc
 
 
 def parse_response(raw, tree, candidates):
-    """Basic JSON/ID checks for indexing; the full response still becomes feedback."""
+    """Validate corrections and exclude trace-only decisions from feedback."""
     data = json.loads(raw)
     if not isinstance(data, dict) or not isinstance(data.get('corrections'), list):
         raise ValueError('Expected a JSON object with a corrections array')
@@ -151,6 +151,34 @@ def parse_response(raw, tree, candidates):
     # in the bank rather than being repeated as next-round feedback.
     fields = ('generated_node_id', 'source_rule_ids', 'difference', 'why_it_matters', 'rule')
     return {'corrections': [{key: item[key] for key in fields} for item in data['corrections']]}
+
+
+def parse_rule_evaluations(raw, candidates, diagnosis):
+    """Check complete per-rule decisions separately from actionable corrections."""
+    data = json.loads(raw)
+    evaluations = data.get('rule_evaluations')
+    if not isinstance(evaluations, list):
+        raise ValueError('Expected a rule_evaluations array with one decision per supplied rule')
+    sources = candidate_rule_ids(candidates)
+    selected = {rule_id for item in diagnosis['corrections']
+                for rule_id in item['source_rule_ids']}
+    seen, result = set(), []
+    for item in evaluations:
+        if not isinstance(item, dict):
+            raise ValueError('Each rule evaluation must be an object')
+        rule_id = item.get('rule_id')
+        if not isinstance(rule_id, str) or rule_id not in sources or rule_id in seen:
+            raise ValueError('Unknown or duplicate rule evaluation ID')
+        if type(item.get('selected')) is not bool or item['selected'] != (rule_id in selected):
+            raise ValueError(f'Rule evaluation selection disagrees with corrections: {rule_id}')
+        reason = item.get('reason')
+        if not isinstance(reason, str) or not reason.strip():
+            raise ValueError(f'Rule evaluation requires a nonempty reason: {rule_id}')
+        seen.add(rule_id)
+        result.append({'rule_id': rule_id, 'selected': item['selected'], 'reason': reason.strip()})
+    if seen != sources:
+        raise ValueError('Missing rule evaluations: ' + ', '.join(sorted(sources - seen)))
+    return result
 
 
 def export_rules(data, round_number):

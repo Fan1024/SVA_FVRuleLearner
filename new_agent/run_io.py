@@ -554,6 +554,8 @@ def _debug_event_text(record: dict, event: str, data: dict) -> str:
             return json.dumps(json.loads(raw), indent=2, ensure_ascii=False)
         except ValueError:
             return raw  # Preserve malformed output before parsing reports the error.
+    if event == 'rule_evaluations_error':
+        return '\nRULE EVALUATION WARNING\n' + data['reason']
     if event == "rule_update":
         return "\nDECISION\nContinue: candidate not accepted; guidance is available for the next round."
     if event == "case_finished":

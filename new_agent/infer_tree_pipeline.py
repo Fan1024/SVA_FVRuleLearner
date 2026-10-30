@@ -41,6 +41,9 @@ def _save_inference_trace(directory, record, round_number):
             entry["diagnosis_skipped"] = (
                 "candidate_accepted" if (evidence.get("evaluation") or {}).get("accepted")
                 else record.get("diagnosis_skipped_reason", "not_run"))
+        for key in ('rule_evaluations', 'rule_evaluations_error'):
+            if key in evidence:
+                entry[key] = deepcopy(evidence[key])
         errors = [row for row in record.get("round_failures", []) if row["round"] == round_number]
         if errors:
             entry["errors"] = errors
@@ -296,17 +299,27 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
                     evidence = record["round_evidence"][-1]
                     evidence["inference_raw_response"] = rule_response
                     run_io.save_debug_event(directory, record, "rule_response", raw_response=rule_response)
-                    # Pass the FULL unmodified model response, independent of parsing/export.
-                    latest_diagnosis_response = rule_response
-                    latest_generated_tree = rule_generator.compact_tree(tree, include_source=False)
-                    latest_diagnosis_round = round_number
+                    # Raw output includes trace-only decisions. Forward validated
+                    # corrections only; malformed output remains debug evidence.
+                    latest_diagnosis_response = latest_generated_tree = latest_diagnosis_round = None
                     stage = "response_format"
                     run_io.update_run(directory, record, stage=stage)
-                    diagnosis = rule_generator.parse_response(rule_response, tree,
-                        [{'rules': [{'id': rule_id} for rule_id in
-                                    rule_generator.bank_rule_ids(record['retrieved_rule_bank'])]}])
+                    source_candidates = [{'rules': [{'id': rule_id} for rule_id in
+                                        rule_generator.bank_rule_ids(record['retrieved_rule_bank'])]}]
+                    diagnosis = rule_generator.parse_response(rule_response, tree, source_candidates)
                     evidence["inference_diagnosis"] = deepcopy(diagnosis)
                     latest_diagnosis_response = json.dumps(diagnosis, ensure_ascii=False)
+                    latest_generated_tree = rule_generator.compact_tree(tree, include_source=False)
+                    latest_diagnosis_round = round_number
+                    # Missing/invalid debug reasons must not discard useful corrections.
+                    evidence['rule_evaluations'] = json.loads(rule_response).get('rule_evaluations')
+                    try:
+                        evidence['rule_evaluations'] = rule_generator.parse_rule_evaluations(
+                            rule_response, source_candidates, diagnosis)
+                    except ValueError as error:
+                        evidence['rule_evaluations_error'] = str(error)
+                        print(f"Round {round_number}: incomplete rule selection reasons: {error}", flush=True)
+                        run_io.save_debug_event(directory, record, 'rule_evaluations_error', reason=str(error))
                     selected = {rule_id for item in diagnosis["corrections"] for rule_id in item["source_rule_ids"]}
                     task_derived = sum(not item['source_rule_ids'] for item in diagnosis['corrections'])
                     print(f"Round {round_number}: {len(diagnosis['corrections'])} independent corrections; "
@@ -328,7 +341,7 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
                         return 0
                 except Exception as error:
                     _remember_round_error(directory, record, round_number, stage, error)
-                    reason = ("Response format check failed; full response still goes to the next round."
+                    reason = ("Response format check failed; validated corrections still go to the next round."
                               if latest_diagnosis_round == round_number else f"{stage} failed; continuing next round.")
                     run_io.update_run(directory, record, diagnosis_skipped_reason=reason)
                 continue

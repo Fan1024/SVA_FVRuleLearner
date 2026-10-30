@@ -86,6 +86,12 @@ Use one analysis with three main actions:
 3. Adapt that guidance into one case-specific rule per independent correction,
    using the current signal roles, expressions, conditions and timing.
 
+For every supplied rule, give one brief reason why you selected it or did not
+select it for a correction in this round. Relate the reason to the target issue
+and the rule's principle. If none are selected, distinguish finding no target
+issue from finding no applicable rule. Record these decisions even when the
+corrections array is empty.
+
 CORRECTION LOCATION
 Content changes, missing/extra constructs, moves and regrouping are possible.
 Locate each correction using an EXISTING current node or affected subtree root.
@@ -111,7 +117,8 @@ is present, diagnose from the source at its opaque anchor; do not invent interna
 nodes or claim a parsed bottom-up analysis.
 
 OUTPUT JSON
-Return {"corrections": [...]} only. Each entry contains:
+Return {"corrections": [...], "rule_evaluations": [...]} only.
+Each corrections entry contains:
 {
   "generated_node_id": "existing current node or affected subtree root ID",
   "source_rule_ids": ["selected candidate rule IDs"],
@@ -128,5 +135,17 @@ by the current context; do not invent a formal counterexample.
 Generate exactly ONE rule for each selected independent correction unit. Do not
 output the requirement, testbench, complete assertions, unchanged nodes or
 mechanical-edit inventories. Return an empty corrections array if no supported
-correction is identified. No extra JSON fields.
+correction is identified.
+
+Each rule_evaluations entry contains:
+{
+  "rule_id": "supplied candidate rule ID",
+  "selected": true,
+  "reason": "Brief target-specific reason for selecting or not selecting this rule."
+}
+Include each supplied rule ID exactly once. Set selected to true only when its
+ID appears in a correction's source_rule_ids; otherwise set it to false. Use an
+empty rule_evaluations array when the rule bank is empty. These decisions are
+saved for debugging; only corrections go to the next assertion-generation round.
+No extra JSON fields.
 """
