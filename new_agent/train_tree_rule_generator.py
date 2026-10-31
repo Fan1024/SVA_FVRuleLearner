@@ -4,7 +4,7 @@ import json
 
 from new_agent import assertion_tree
 from new_agent.correction_locations import location_for
-from new_agent.formal_check import COMPARISON_SCOPE
+from new_agent.training_prompt_context import evaluation_feedback
 from new_agent.train_tree_rule_prompts import SYSTEM_PROMPT, TASK_INSTRUCTIONS
 
 
@@ -26,11 +26,14 @@ def build_trees(reference_assertion, generated_assertion):
 
 
 def build_rule_prompt(requirement, generated_assertion, reference_assertion,
-                      testbench, *, trees, comparison_scope=COMPARISON_SCOPE,
-                      formal_feedback=""):
+                      testbench, *, trees, evaluation_status):
+    """Whitelist task data plus one fixed coarse result; never include logs/scores."""
+    for side, source in (("generated", generated_assertion), ("reference", reference_assertion)):
+        if trees[side].get("source_assertion") != source:
+            raise ValueError(f"The {side} tree does not belong to the current source assertion.")
     data = dict(requirement=requirement, testbench=testbench,
                 trees={side: compact_tree(trees[side]) for side in ("generated", "reference")},
-                comparison_scope=comparison_scope, formal_feedback=formal_feedback)
+                evaluation_feedback=evaluation_feedback(evaluation_status))
     return TASK_INSTRUCTIONS + "\nINPUT DATA\n" + json.dumps(data, ensure_ascii=False, indent=2)
 
 
@@ -63,7 +66,9 @@ def compact_tree(tree, *, include_source=True):
         result["context"] = {name: {"root": compact(value["root"])}
                              for name, value in tree["context"].items()}
     if "parse_error" in tree:
-        result["parse_error"] = tree["parse_error"]
+        # Raw parser diagnostics remain in the inspection archive. Model inputs
+        # get only the availability marker, never a parser/tool log excerpt.
+        result["parse_error"] = "Tree unavailable; use the source at its opaque anchor."
     return result
 
 

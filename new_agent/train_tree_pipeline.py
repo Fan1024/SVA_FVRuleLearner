@@ -1,7 +1,8 @@
 """Training-only tree/rule loop; the original pipeline remains the inference path.
 
-PEC/BLEU evaluation, acceptance, retries and round budgets use the existing
-checker and policies. Only the training diagnosis/rule stages are replaced.
+Native evaluation, acceptance and round budgets retain the existing checker.
+Training prompts use complete assertion history, latest-only located guidance,
+and behavior-first diagnosis with coarse outcomes only.
 """
 from copy import deepcopy
 from contextlib import contextmanager
@@ -39,6 +40,7 @@ def _save_round_trace(directory, record, round_number):
             "round": round_number,
             "assertion": evidence.get("generated_assertion"),
             "evaluation": evaluation,
+            "pec_input_preparation": evidence.get("pec_input_preparation"),
             "diagnosis_from_round": evidence.get("diagnosis_from_round"),
         }
         if trees and "generated" in trees:
@@ -89,12 +91,22 @@ def run_training_pipeline(directory, record: dict, *, retriever=None) -> int:
         raise ValueError("Training does not accept an inference retriever.")
     from new_agent import train_assertion_generator as assertion_generator
     from new_agent import train_tree_rule_generator as rule_generator
+    from new_agent.training_prompt_context import (
+        PROMPT_VERSION, assertion_history, statement_template,
+    )
     inputs = record["inputs"]
     policy = formal_check.get_evaluation_policy(inputs.get("dataset", config.DATASET))
-    comparison_scope = policy["scope"]
+    dataset = inputs.get("dataset", config.DATASET)
+    template = statement_template(dataset)
+    record["settings"].update(
+        training_prompt_version=PROMPT_VERSION,
+        training_assertion_history="all_previous_assertions_coarse_results",
+        training_feedback="latest_located_corrections_only",
+        training_rule_feedback="coarse_reference_equivalence_only",
+        training_rule_schema="behavior_first_bottom_up_corrections_v3",
+    )
     registry = {}
     previous_assertion = None
-    revision_feedback = None
     client = None
     latest_diagnosis_response = None
     latest_diagnosis_round = None
@@ -126,10 +138,11 @@ def run_training_pipeline(directory, record: dict, *, retriever=None) -> int:
                     stage = "generation"
                     generation_inputs = {
                         "requirement": inputs["requirement"], "testbench": inputs["testbench"],
-                        "previous_assertion": previous_assertion,
+                        "assertion_history": assertion_history(
+                            record["round_evidence"], before_round=round_number),
                         "diagnosis_response": latest_diagnosis_response,
-                        "comparison_scope": comparison_scope, "revision_feedback": revision_feedback,
-                        "assertion_template": policy.get("assertion_template", "asrt: assert property (@(posedge clk) BODY);"),
+                        "diagnosis_round": latest_diagnosis_round,
+                        "assertion_template": template,
                     }
                     user_prompt = assertion_generator.build_generation_prompt(**generation_inputs)
                     if previous_assertion is not None:
@@ -140,7 +153,7 @@ def run_training_pipeline(directory, record: dict, *, retriever=None) -> int:
                         else:
                             print(f"Round {round_number}: no diagnosis response from the preceding round; "
                                   "no rule feedback is available.", flush=True)
-                    # Consume only the immediately preceding round's response; no history/readback.
+                    # Assertion history is cumulative; correction guidance is latest-round only.
                     latest_diagnosis_response = latest_diagnosis_round = None
                     attempt["prompts"]["user"] = user_prompt
                     run_io.update_run(directory, record, stage=stage)
@@ -160,11 +173,6 @@ def run_training_pipeline(directory, record: dict, *, retriever=None) -> int:
                     attempt["generation"]["assertion"] = generated_assertion
                     record["round_evidence"][-1]["generated_assertion"] = generated_assertion
                     previous_assertion = generated_assertion
-                    stage = 'tree_recording'
-                    with run_io.measure_stage(record, 'diagnosis') as capture_tree_usage:
-                        inspection_trees = tree_archive.record_generated(
-                            directory, record, round_number, generated_assertion)
-                        capture_tree_usage({'input_tokens': 0, 'output_tokens': 0})
                     stage = "formal_check"
                     run_io.update_run(directory, record, stage=stage)
                     with run_io.measure_stage(record, "tool"):
@@ -193,6 +201,21 @@ def run_training_pipeline(directory, record: dict, *, retriever=None) -> int:
                 }
                 formal_check.apply_acceptance_policy(formal_result)
                 run_io.record_formal_result(directory, record, attempt, formal_result)
+                # Inspection trees are built only after native evaluation returns.
+                # Attempt this for every extracted assertion, even SYN/PEC failures.
+                # A tree/archive failure must never replace an obtained tool verdict.
+                inspection_trees = None
+                if generated_assertion is not None:
+                    stage = "tree_recording"
+                    try:
+                        with run_io.measure_stage(record, "diagnosis") as capture_tree_usage:
+                            inspection_trees = tree_archive.record_generated(
+                                directory, record, round_number, generated_assertion)
+                            capture_tree_usage({"input_tokens": 0, "output_tokens": 0})
+                    except Exception as error:
+                        _remember_round_error(directory, record, round_number, stage, error)
+                if formal_result.get("pec_input_preparation") is not None:
+                    record["round_evidence"][-1]["pec_input_preparation"] = formal_result["pec_input_preparation"]
                 run_io.update_run(directory, record, stage="cleanup")
                 run_io.cleanup_formal_work(directory, record, formal_check.cleanup_work)
                 status = formal_result["status"]
@@ -213,30 +236,14 @@ def run_training_pipeline(directory, record: dict, *, retriever=None) -> int:
                     )
                     return 0
 
-                # Feedback for generation never includes the reference or PEC's expressions.
-                if status == "INPUT_ERROR" and formal_result.get("error_origin") == "candidate":
-                    revision_feedback = formal_result["tool_output"]
-                elif status in {"FORMAT_ERROR", "INPUT_ERROR", "SYNTAX_ERROR"}:
-                    revision_feedback = (
-                        "The previous candidate could not be accepted as a complete SVA assertion. "
-                        f"Use {policy.get('assertion_template', 'asrt: assert property (@(posedge clk) [optional disable iff (...)] BODY);')} "
-                        "with the label before assert and the whole property inside parentheses. "
-                        "Enclose the statement in one systemverilog code block."
-                    )
-                elif status == "PEC_COMPILE_ERROR":
-                    # Diagnosis can refine the assertion without a PEC verdict.
-                    revision_feedback = None
-                elif status in {"TOOL_ERROR", "TIMEOUT", "INCONCLUSIVE", "GENERATION_ERROR"}:
-                    revision_feedback = (
-                        "The preceding attempt did not obtain an equivalence verdict. "
-                        "Re-derive a complete assertion from the requirement and testbench; "
-                        "preserve the declared signal types, widths and valid bit selections."
-                    )
-                else:
-                    revision_feedback = None
-
+                # Next-round feedback comes only from whitelisted history outcomes.
+                # Native logs, metrics and evaluation-policy text stay in experiment records.
                 if round_number == config.MAX_ROUNDS:
                     run_io.update_run(directory, record, diagnosis_skipped_reason="Round budget exhausted.")
+                    continue
+                if inspection_trees is None:
+                    run_io.update_run(directory, record,
+                                      diagnosis_skipped_reason="Tree archive unavailable after evaluation.")
                     continue
                 if status not in {"IMPLIES", "NO_EQUIVALENCE", "PEC_COMPILE_ERROR"}:
                     run_io.update_run(
@@ -268,8 +275,9 @@ def run_training_pipeline(directory, record: dict, *, retriever=None) -> int:
                         requirement=inputs["requirement"], testbench=inputs["testbench"],
                         generated_assertion=generated_assertion,
                         reference_assertion=inputs["reference_assertion"], trees=trees,
-                        comparison_scope=comparison_scope, formal_feedback=formal_result["feedback"],
+                        evaluation_status=status,
                     )
+                    record["round_evidence"][-1]["rule_prompt"] = rule_prompt
                     run_io.save_debug_event(directory, record, "rule_request")
                     with run_io.measure_stage(record, "rule") as capture_usage:
                         rule_response = model_io.request_text(
