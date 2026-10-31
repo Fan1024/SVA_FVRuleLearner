@@ -1,14 +1,15 @@
 """Call this repository's native evaluation.py directly, in the current process.
 
-The native evaluator prepares the properties and invokes its original Jasper
-launcher/Tcl/PEC. This module supplies LMResult records and records results; it
-contains no SVA parser, signal extractor, expression adapter, or Jasper command.
+The native evaluator invokes its original Jasper launcher/Tcl/PEC. Immediately
+before launch, our source-boundary adapter replaces only the two property
+expression arguments. Native signal lists, tool commands and scores are retained.
 """
 
 from dataclasses import asdict
 from contextlib import contextmanager, redirect_stdout, redirect_stderr
 import hashlib
 import importlib
+import inspect
 import json
 import math
 from pathlib import Path
@@ -19,6 +20,7 @@ import tempfile
 from time import perf_counter
 import traceback
 from types import SimpleNamespace
+from new_agent.pec_input_adapter import ExtractionError, prepare_pec_inputs
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -56,7 +58,7 @@ def get_evaluation_policy(dataset: str) -> dict:
                 "Use the actual clock signal and edge required by the requirement/interface; "
                 "do not invent a signal named clk or tb_reset. Replace EDGE and CLOCK_SIGNAL "
                 "in the statement template with the required edge and actual clock. "
-                "The native extract_assertion_formula removes the clock event from a wrapped "
+                "Our PEC input adapter removes the leading clock event from a wrapped "
                 "assertion; remaining reset/disable iff logic stays in the formula. "
                 "Do not add reset disabling absent from the requirement. "
                 "The native Tcl checks candidate against itself, then candidate against reference; "
@@ -69,14 +71,14 @@ def get_evaluation_policy(dataset: str) -> dict:
         }
     human = dataset == "nl2sva_human"
     scope = (
-        "Use the native NL2SVA-Human evaluator. It compares the property text "
-        "after the literal tb_reset), excluding the standard clock and disable "
+        "Use the native NL2SVA-Human evaluator with source-boundary extraction. "
+        "It compares the property body, excluding the standard clock and disable "
         "iff wrapper. Use @(posedge clk) disable iff (tb_reset), as required by "
         "this benchmark. Do not edit an excluded wrapper solely to fix a PEC "
         "mismatch. Reset-related logic inside the body remains in scope."
         if human else
-        "Use the native NL2SVA-Machine evaluator. It compares the expression "
-        "after the literal clk), excluding the clock event. Remaining disable "
+        "Use the native NL2SVA-Machine evaluator with source-boundary extraction. "
+        "It compares the expression after the leading clock event. Remaining disable "
         "iff text is included. Use @(posedge clk); do not introduce reset "
         "conditions absent from the requirement/testbench."
     )
@@ -237,7 +239,7 @@ def evaluate_assertion(generated_assertion: str, reference_assertion: str, testb
                        requirement: str, run_dir=None, timeout_seconds: float = 300,
                        task_id: str = "case", dataset: str = "nl2sva_human", *,
                        model_name: str = "experiment") -> dict:
-    """Directly supply original strings to this checkout's native evaluator."""
+    """Use native evaluation, replacing only property extraction before launch."""
     started = perf_counter()
     policy = get_evaluation_policy(dataset)
     for name, value in (("generated_assertion", generated_assertion), ("reference_assertion", reference_assertion),
@@ -281,10 +283,32 @@ def evaluate_assertion(generated_assertion: str, reference_assertion: str, testb
     outputs = []
 
     def observed_launcher(*args, **kwargs):
-        # Only record the actual call. The original launcher executes unchanged.
-        _write_json(directory / "native_pec_inputs.json", {"args": list(args), "kwargs": kwargs})
+        # The native evaluator still prepares its own signal list and context.
+        # Override only the two property expressions from the original sources,
+        # before either reaches the unmodified native Jasper launcher.
+        bound = inspect.signature(original_launcher).bind(*args, **kwargs)
+        native_formulas = {name: bound.arguments.get(name) for name in
+                           ("lm_assertion_text", "ref_assertion_text")}
         try:
-            output = original_launcher(*args, **kwargs)
+            preparation = prepare_pec_inputs(generated_assertion, reference_assertion, dataset)
+        except ExtractionError as error:
+            result["pec_input_preparation"] = {
+                "dataset": dataset, "error": str(error),
+                "generated_source": generated_assertion,
+                "reference_source": reference_assertion,
+                "native_formulas": native_formulas,
+            }
+            raise
+        preparation["native_formulas"] = native_formulas
+        result["pec_input_preparation"] = preparation
+        bound.arguments["lm_assertion_text"] = preparation["generated"]["formula"]
+        bound.arguments["ref_assertion_text"] = preparation["reference"]["formula"]
+        _write_json(directory / "native_pec_inputs.json", {
+            "args": list(bound.args), "kwargs": bound.kwargs,
+            "preparation": preparation,
+        })
+        try:
+            output = original_launcher(*bound.args, **bound.kwargs)
         except Exception as error:
             outputs.append(str(error))
             raise
@@ -314,6 +338,9 @@ def evaluate_assertion(generated_assertion: str, reference_assertion: str, testb
         result["tool_output"] = "\n".join(outputs) or str(error)
         observed = _execution_status(result["tool_output"])
         result["status"] = observed if observed in {"TIMEOUT", "PEC_COMPILE_ERROR", "SYNTAX_ERROR"} else "TOOL_ERROR"
+        if isinstance(error, ExtractionError):
+            result["status"] = "INPUT_ERROR"
+            result["error_origin"] = "pec_extraction"
         result["evaluation_error"] = f"{type(error).__name__}: {error}"
         (directory / "evaluation_error.log").write_text(traceback.format_exc(), encoding="utf-8")
     finally:
@@ -337,6 +364,12 @@ def evaluate_assertion(generated_assertion: str, reference_assertion: str, testb
             "Continue reference-based textual diagnosis and rule refinement. "
             "Do not infer a candidate syntax or semantic defect from this tool failure. "
             "Do not rewrite assertions to repair the PEC implementation.\n"
+            + result["feedback"]
+        )
+    if result.get("error_origin") == "pec_extraction":
+        result["feedback"] = (
+            "PEC input extraction failed before Jasper was launched. No SYN or PEC "
+            "verdict was obtained; do not treat this as a measured syntax failure.\n"
             + result["feedback"]
         )
     _write_json(directory / "result.json", result)
