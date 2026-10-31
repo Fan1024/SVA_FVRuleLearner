@@ -1,7 +1,7 @@
-"""Inference-only tree diagnosis and retrieval-rule selection loop.
+"""Inference with existing-rule ranking and independent issue locations.
 
-PEC/BLEU evaluation, acceptance, retries and round budgets use the existing
-checker and policies. Only the inference diagnosis/rule stages are replaced.
+Native extraction/checking/scoring and the installed tree implementation stay
+unchanged. The active selector never generates or rewrites rules.
 """
 from copy import deepcopy
 from contextlib import contextmanager
@@ -12,16 +12,15 @@ from tempfile import TemporaryDirectory
 from openai import OpenAI
 from new_agent import config, formal_check, model_io, run_io
 from new_agent import tree_archive
-from new_agent.correction_locations import feedback_json
 from new_agent.pipeline import (
-    _failed_round, _remember_round_error, retained_rules, update_rule_registry,
+    _failed_round, _remember_round_error,
 )
 
 
 @contextmanager
 def _save_inference_trace(directory, record, round_number):
     """Readable lazy per-case JSON; no target reference in diagnosis evidence."""
-    from new_agent.infer_tree_rule_generator import compact_tree
+    from new_agent.infer_rule_selector import compact_tree
     try:
         yield
     finally:
@@ -29,21 +28,21 @@ def _save_inference_trace(directory, record, round_number):
                          if row["round"] == round_number), {})
         tree_archive.finish_round(directory, record, round_number, evidence)
         entry = {key: evidence.get(key) for key in
-                 ("round", "generated_assertion", "evaluation", "diagnosis_from_round")}
+                 ("round", "generated_assertion", "evaluation", "diagnosis_from_round",
+                  "pec_input_preparation")}
         tree = evidence.get("generated_tree")
         if tree is not None:
             entry["generated_tree"] = compact_tree(tree, include_source=False)
-        output, raw = evidence.get("inference_diagnosis"), evidence.get("inference_raw_response")
+        output, raw = evidence.get("inference_selection"), evidence.get("selector_raw_response")
         if output is not None:
-            entry["diagnosis"] = output
+            entry["selector"] = output
         elif raw is not None:
-            entry["diagnosis_raw"] = raw
+            entry["selector_raw"] = raw
         else:
             entry["diagnosis_skipped"] = (
                 "candidate_accepted" if (evidence.get("evaluation") or {}).get("accepted")
                 else record.get("diagnosis_skipped_reason", "not_run"))
-        for key in ('rule_evaluations', 'rule_evaluations_error',
-                    'diagnosis_checker_status', 'diagnosis_retries'):
+        for key in ('selector_checker_status', 'selector_guidance'):
             if key in evidence:
                 entry[key] = deepcopy(evidence[key])
         errors = [row for row in record.get("round_failures", []) if row["round"] == round_number]
@@ -82,25 +81,33 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
     if retriever is None:
         raise ValueError("Inference requires the selected training-run retriever.")
     from new_agent import infer_assertion_generator as assertion_generator
-    from new_agent import infer_tree_rule_generator as rule_generator
+    from new_agent import infer_rule_selector as selector
+    from new_agent.training_prompt_context import statement_template
     from new_agent.infer_rule_masking import prepare_candidates
     inputs = record["inputs"]
     policy = formal_check.get_evaluation_policy(inputs.get("dataset", config.DATASET))
-    comparison_scope = policy["scope"]
-    registry = {}
+    template = statement_template(inputs.get("dataset", config.DATASET))
+    record["settings"].update(
+        inference_workflow="existing_rule_selector_independent_locations",
+        inference_rule_stages="rank_existing_rules_and_locate_issues_only",
+        inference_feedback="latest_ranked_rules_and_independent_locations",
+        inference_example_source="accepted_generated_training_assertions",
+        inference_retrieval="once_per_target_case",
+        inference_max_selected_rules=selector.MAX_SELECTED_RULES,
+    )
     example_cases = None
     candidates = None
     previous_assertion = None
-    revision_feedback = None
     client = None
-    latest_diagnosis_response = None
-    latest_diagnosis_round = None
+    latest_selector_guidance = None
+    latest_selector_round = None
+    previous_round = None
 
     for round_number in range(1, config.MAX_ROUNDS + 1):
         with _save_inference_trace(directory, record, round_number):
             run_io.start_usage_round(record, round_number)
             # Record the feedback source before start_attempt writes its debug event.
-            record["inference_feedback_round"] = latest_diagnosis_round
+            record["inference_feedback_round"] = latest_selector_round
             # A failed call before extraction must never associate old text with new scores.
             attempt = run_io.start_attempt(
                 directory, record, round_number,
@@ -110,7 +117,7 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
             evidence = record["round_evidence"][-1]
             evidence.pop("rules_used", None)
             evidence.pop("rules_generated", None)
-            evidence["diagnosis_from_round"] = latest_diagnosis_round
+            evidence["diagnosis_from_round"] = latest_selector_round
             # Persistent formal diagnostics disabled. To restore later, import
             # nullcontext from contextlib, restore check_dir below, and replace
             # TemporaryDirectory with nullcontext(str(check_dir)). Also restore
@@ -133,22 +140,14 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
                     stage = "generation"
                     generation_inputs = {
                         "requirement": inputs["requirement"], "testbench": inputs["testbench"],
-                        "previous_assertion": previous_assertion, "examples": example_cases,
-                        "diagnosis_response": latest_diagnosis_response,
-                        "comparison_scope": comparison_scope, "revision_feedback": revision_feedback,
-                        "assertion_template": policy.get("assertion_template", "asrt: assert property (@(posedge clk) BODY);"),
+                        "examples": example_cases, "previous_assertion": previous_assertion,
+                        "previous_round": previous_round, "selector_guidance": latest_selector_guidance,
+                        "assertion_template": template,
                     }
                     user_prompt = assertion_generator.build_generation_prompt(**generation_inputs)
-                    if previous_assertion is not None:
-                        if latest_diagnosis_response is not None:
-                            print(f"Round {round_number}: forwarding complete diagnosis from round "
-                                  f"{latest_diagnosis_round} to assertion generator "
-                                  f"({len(latest_diagnosis_response)} characters).", flush=True)
-                        else:
-                            print(f"Round {round_number}: no diagnosis response from the preceding round; "
-                                  "no rule feedback is available.", flush=True)
-                    # Consume only the immediately preceding round's response; no history/readback.
-                    latest_diagnosis_response = latest_diagnosis_round = None
+                    # Only the latest selector response is used. No assertion history,
+                    # old rules, native logs, scores or reference enters this prompt.
+                    latest_selector_guidance = latest_selector_round = None
                     attempt["prompts"]["user"] = user_prompt
                     run_io.update_run(directory, record, stage=stage)
                     if client is None:
@@ -167,11 +166,7 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
                     attempt["generation"]["assertion"] = generated_assertion
                     record["round_evidence"][-1]["generated_assertion"] = generated_assertion
                     previous_assertion = generated_assertion
-                    stage = 'tree_recording'
-                    with run_io.measure_stage(record, 'diagnosis') as capture_tree_usage:
-                        inspection_trees = tree_archive.record_generated(
-                            directory, record, round_number, generated_assertion)
-                        capture_tree_usage({'input_tokens': 0, 'output_tokens': 0})
+                    previous_round = round_number
                     stage = "formal_check"
                     run_io.update_run(directory, record, stage=stage)
                     with run_io.measure_stage(record, "tool"):
@@ -200,6 +195,20 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
                 }
                 formal_check.apply_acceptance_policy(formal_result)
                 run_io.record_formal_result(directory, record, attempt, formal_result)
+                # Build inspection trees after native SYN/PEC evaluation, even on failure.
+                # Tree/archive errors must never replace an obtained tool verdict.
+                inspection_trees = None
+                if generated_assertion is not None:
+                    stage = "tree_recording"
+                    try:
+                        with run_io.measure_stage(record, "diagnosis") as capture_tree_usage:
+                            inspection_trees = tree_archive.record_generated(
+                                directory, record, round_number, generated_assertion)
+                            capture_tree_usage({"input_tokens": 0, "output_tokens": 0})
+                    except Exception as error:
+                        _remember_round_error(directory, record, round_number, stage, error)
+                if formal_result.get("pec_input_preparation") is not None:
+                    record["round_evidence"][-1]["pec_input_preparation"] = formal_result["pec_input_preparation"]
                 run_io.update_run(directory, record, stage="cleanup")
                 run_io.cleanup_formal_work(directory, record, formal_check.cleanup_work)
                 status = formal_result["status"]
@@ -220,163 +229,73 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
                     )
                     return 0
 
-                # Feedback for generation never includes the reference or PEC's expressions.
-                if status in {"FORMAT_ERROR", "INPUT_ERROR", "SYNTAX_ERROR"}:
-                    revision_feedback = (
-                        "The previous candidate could not be accepted as a complete SVA assertion. "
-                        f"Use {policy.get('assertion_template', 'asrt: assert property (@(posedge clk) [optional disable iff (...)] BODY);')} "
-                        "with the label before assert and the whole property inside parentheses. "
-                        "Enclose the statement in one systemverilog code block."
-                    )
-                elif status == "PEC_COMPILE_ERROR":
-                    # Diagnosis can refine the assertion without a PEC verdict.
-                    revision_feedback = None
-                elif status in {"TOOL_ERROR", "TIMEOUT", "INCONCLUSIVE", "GENERATION_ERROR"}:
-                    revision_feedback = (
-                        "The preceding attempt did not obtain an equivalence verdict. "
-                        "Re-derive a complete assertion from the requirement and testbench; "
-                        "preserve the declared signal types, widths and valid bit selections."
-                    )
-                else:
-                    revision_feedback = None
-
+                # No detailed checker feedback is sent to assertion generation.
                 if round_number == config.MAX_ROUNDS:
                     run_io.update_run(directory, record, diagnosis_skipped_reason="Round budget exhausted.")
+                    continue
+                if inspection_trees is None:
+                    run_io.update_run(directory, record,
+                                      diagnosis_skipped_reason="Tree archive unavailable after evaluation.")
                     continue
                 if status not in {"IMPLIES", "NO_EQUIVALENCE", "PEC_COMPILE_ERROR"}:
                     run_io.update_run(
                         directory, record,
-                        diagnosis_skipped_reason="No completed semantic comparison; retry without semantic rule learning.",
+                        diagnosis_skipped_reason="No eligible comparison outcome; retry assertion generation without selector guidance.",
                     )
                     continue
 
                 if status == "PEC_COMPILE_ERROR":
                     print(
                         f"Round {round_number}: PEC verdict unavailable; continuing "
-                        "with requirement-based tree diagnosis and rule selection.", flush=True,
+                        "with requirement-based rule ranking and independent issue localization.", flush=True,
                     )
-                stage = "tree_construction"
+                stage = "retrieval"
                 try:
                     if candidates is None:
-                        stage = "retrieval"
                         retrieved = retriever.retrieve(inputs["requirement"])
                         candidates = prepare_candidates(retrieved, getattr(retriever, "masking_contexts", {}))
-                        record['retrieved_rule_bank'] = rule_generator.compact_rule_bank(candidates)
+                        record["retrieved_rule_bank"] = selector.compact_rule_bank(candidates)
                         run_io.update_run(directory, record, retrieved_cases=[
                             {"case_number": case["case_number"], "similarity": case["similarity"]}
                             for case in retrieved])
-                        run_io.save_debug_event(directory, record, 'retrieval',
-                                                rule_bank=record['retrieved_rule_bank'])
-                        print("Retrieved rule case IDs:", [c["case_number"] for c in candidates], flush=True)
-                        for case in candidates:
-                            print(f"  Training case {case['case_number']}: "
-                                  f"{len(case['revision_trace'])} revision rounds; "
-                                  f"{case['trace_status']}", flush=True)
-                    stage = "tree_construction"
+                        run_io.save_debug_event(directory, record, "retrieval",
+                                                rule_bank=record["retrieved_rule_bank"])
+                    tree = inspection_trees["generated"]
+                    evidence = record["round_evidence"][-1]
+                    evidence["generated_tree"] = tree
+                    stage = "rule_selection"
                     run_io.update_run(directory, record, stage=stage)
-                    with run_io.measure_stage(record, "diagnosis") as capture_tree_usage:
-                        tree = inspection_trees['generated']
-                        capture_tree_usage({"input_tokens": 0, "output_tokens": 0})
-                    record["round_evidence"][-1]["generated_tree"] = tree
-                    if "parse_error" in tree:
-                        print(f"Round {round_number}: unsupported tree syntax; using explicit source anchor: "
-                              f"{tree['parse_error']}", flush=True)
-                    stage = 'rule_generation'
-                    print(f"Round {round_number}: running LLM bottom-up diagnosis, rule selection "
-                          "and adaptation.", flush=True)
-                    run_io.update_run(directory, record, stage=stage)
-                    rule_prompt = rule_generator.build_rule_prompt(
-                        inputs['requirement'], inputs['testbench'], tree, candidates,
-                        comparison_scope=comparison_scope, rule_bank=record['retrieved_rule_bank'],
-                        checker_status=status)
-                    evidence = record['round_evidence'][-1]
-                    evidence['diagnosis_checker_status'] = status
-                    source_candidates = [{'rules': [{'id': rule_id} for rule_id in
-                                        rule_generator.bank_rule_ids(record['retrieved_rule_bank'])]}]
-                    run_io.save_debug_event(directory, record, "rule_request")
-                    # One normal call; repair an empty answer once with the same model.
-                    # A single measurement captures the usage of both calls when needed.
-                    latest_diagnosis_response = latest_diagnosis_round = None
+                    prompt = selector.build_selector_prompt(
+                        inputs["requirement"], inputs["testbench"], tree,
+                        record["retrieved_rule_bank"], evaluation_status=status)
+                    evidence["selector_checker_status"] = status
+                    run_io.save_debug_event(directory, record, "selector_request")
+                    # Reuse the existing 'rule' usage column for selector cost only.
+                    # Empty outputs are valid; no forced-rule retry or generator fallback.
                     with run_io.measure_stage(record, "rule") as capture_usage:
-                        for diagnosis_attempt in range(2):
-                            stage = 'rule_generation'
-                            rule_response = model_io.request_text(
-                                client=client, model=config.RULE_MODEL,
-                                instructions=rule_generator.SYSTEM_PROMPT, user_prompt=rule_prompt,
-                                json_output=True, usage_callback=capture_usage,
-                            )
-                            evidence['inference_raw_response'] = rule_response
-                            run_io.save_debug_event(directory, record, 'rule_response', raw_response=rule_response)
-                            for key in ('inference_diagnosis', 'rule_evaluations', 'rule_evaluations_error'):
-                                evidence.pop(key, None)
-                            stage = 'response_format'
-                            run_io.update_run(directory, record, stage=stage)
-                            diagnosis = rule_generator.parse_response(rule_response, tree, source_candidates)
-                            evidence['inference_diagnosis'] = deepcopy(diagnosis)
-                            # Missing debug reasons do not discard otherwise useful corrections.
-                            evidence['rule_evaluations'] = json.loads(rule_response).get('rule_evaluations')
-                            try:
-                                evidence['rule_evaluations'] = rule_generator.parse_rule_evaluations(
-                                    rule_response, source_candidates, diagnosis)
-                            except ValueError as error:
-                                evidence['rule_evaluations_error'] = str(error)
-                                print(f'Round {round_number}: incomplete rule selection reasons: {error}', flush=True)
-                                run_io.save_debug_event(directory, record, 'rule_evaluations_error', reason=str(error))
-                            if diagnosis['corrections']:
-                                break
-                            evidence.setdefault('diagnosis_retries', []).append({
-                                'attempt': diagnosis_attempt + 1, 'reason': 'empty_corrections',
-                                'raw_response': rule_response,
-                                **({'rule_evaluations_error': evidence['rule_evaluations_error']}
-                                   if 'rule_evaluations_error' in evidence else {}),
-                            })
-                            if diagnosis_attempt == 1:
-                                raise ValueError('Rule model returned no correction after one repair attempt; '
-                                                 'continuing the assertion round budget without accepting it')
-                            reason = ('The rule model returned no correction. Retrying once: generate at least '
-                                      'one concrete task-derived rule if no retrieved principle applies.')
-                            print(f'Round {round_number}: {reason}', flush=True)
-                            run_io.save_debug_event(directory, record, 'rule_retry', reason=reason)
-                            rule_prompt += (
-                                '\nOUTPUT REPAIR\nYour preceding response had an empty corrections array. '
-                                'Return at least one concrete target-grounded correction in the defined format. '
-                                'When no retrieved rule applies, derive a rule from the current requirement, '
-                                'testbench, tree and checker status with source_rule_ids: []. '
-                                'Keep per-rule selection reasons and bottom-up correction independence.\n'
-                            )
-                    # Raw output includes trace-only decisions. Forward validated
-                    # corrections only; malformed output remains debug evidence.
-                    latest_diagnosis_response = feedback_json(diagnosis, tree=tree)
-                    latest_diagnosis_round = round_number
-                    run_io.save_debug_event(directory, record, 'correction_locations',
-                                            corrections=diagnosis['corrections'])
-                    selected = {rule_id for item in diagnosis["corrections"] for rule_id in item["source_rule_ids"]}
-                    task_derived = sum(not item['source_rule_ids'] for item in diagnosis['corrections'])
-                    print(f"Round {round_number}: {len(diagnosis['corrections'])} independent corrections; "
-                          f"{len(selected)} retrieved training rules selected; "
-                          f"{task_derived} task-derived corrections.", flush=True)
-                    new_rules = rule_generator.export_rules(diagnosis, round_number)
-                    replacement = deepcopy(registry)
-                    update_rule_registry(replacement, new_rules, round_number)
-                    registry = replacement
-                    run_io.update_run(directory, record, diagnosis=diagnosis,
-                                      diagnosis_model=config.RULE_MODEL,
-                                      rule_registry=retained_rules(registry))
+                        response = model_io.request_text(
+                            client=client, model=config.RULE_MODEL,
+                            instructions=selector.SYSTEM_PROMPT, user_prompt=prompt,
+                            json_output=True, usage_callback=capture_usage)
+                    evidence["selector_raw_response"] = response
+                    run_io.save_debug_event(directory, record, "selector_response", raw_response=response)
+                    stage = "selector_response_format"
+                    selection = selector.parse_response(response, tree, record["retrieved_rule_bank"])
+                    evidence["inference_selection"] = deepcopy(selection)
+                    latest_selector_guidance = selector.make_generator_guidance(
+                        selection, record["retrieved_rule_bank"], tree, source_round=round_number)
+                    latest_selector_round = round_number
+                    evidence["selector_guidance"] = deepcopy(latest_selector_guidance)
+                    run_io.update_run(directory, record, diagnosis=selection,
+                                      diagnosis_model=config.RULE_MODEL)
                     run_io.save_diagnosis_model(record, config.RULE_MODEL)
+                    print(f"Round {round_number}: {len(selection['ranked_rules'])} existing rules ranked; "
+                          f"{len(selection['locations'])} independent issue locations.", flush=True)
                 except Exception as error:
+                    latest_selector_guidance = latest_selector_round = None
                     _remember_round_error(directory, record, round_number, stage, error)
-                    if latest_diagnosis_response is None:
-                        verdict = ('No semantic verdict was obtained.' if status == 'PEC_COMPILE_ERROR'
-                                   else 'Full equivalence has not been established.')
-                        revision_feedback = (
-                            f'Checker status: {status}. {verdict} The rule stage did not provide usable '
-                            'corrections. Independently re-derive the assertion from the requirement and '
-                            'testbench, checking required scenarios, history validity, guards and timing. '
-                            'An empty diagnosis is not evidence that the previous assertion was accepted.'
-                        )
-                    reason = ("Response format check failed; validated corrections still go to the next round."
-                              if latest_diagnosis_round == round_number else f"{stage} failed; continuing next round.")
-                    run_io.update_run(directory, record, diagnosis_skipped_reason=reason)
+                    run_io.update_run(directory, record,
+                        diagnosis_skipped_reason="Selector unavailable; next attempt independently reviews the task.")
                 continue
 
     # No earlier pass is possible here. Keep the latest attempt and its scores.

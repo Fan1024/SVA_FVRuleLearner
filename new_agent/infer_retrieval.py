@@ -1,8 +1,48 @@
 """Separate example and rule indexes for one selected training run."""
 
+import csv
 import hashlib
 import json
 from pathlib import Path
+
+
+def _accepted_csv_assertions(directory, allowed_ids):
+    """Read final generated source, never the reference column, from a TRAIN run."""
+    path = Path(directory) / "evaluation.csv"
+    if not path.is_file():
+        return {}
+    result, seen = {}, set()
+    with path.open(encoding="utf-8-sig", newline="") as stream:
+        for row in csv.DictReader(stream):
+            try:
+                number = int(row["case_number"])
+            except (KeyError, TypeError, ValueError) as error:
+                raise ValueError("Invalid training evaluation case ID.") from error
+            if number not in allowed_ids or number in seen:
+                raise ValueError("Training evaluation contains an excluded or duplicate case ID.")
+            seen.add(number)
+            result[number] = None
+            source = row.get("generated_assertion")
+            if row.get("passed", "").strip().lower() == "true" and isinstance(source, str) and source.strip():
+                result[number] = source
+    return result
+
+
+def _legacy_generated_assertion(directory, number, case):
+    """Legacy generated-source fallback; an absent source never falls back to gold."""
+    source = case.get("generated_assertion")
+    if isinstance(source, str) and source.strip():
+        return source
+    from new_agent.infer_training_traces import load_case_trace
+    rounds, _ = load_case_trace(directory, number, {
+        "trace_file": case.get("trace_file"), "round_evidence": case.get("round_evidence", [])})
+    for entry in reversed(rounds):
+        source = entry.get("assertion")
+        evaluation = entry.get("evaluation") or {}
+        accepted = evaluation.get("accepted") is True or evaluation.get("status") == "FULL_EQUIVALENCE"
+        if accepted and isinstance(source, str) and source.strip():
+            return source
+    return None
 
 
 class RuleRetriever:
@@ -12,22 +52,17 @@ class RuleRetriever:
                  top_k: int, model_name: str):
         self.directory = Path(training_run_dir).resolve()
         self.top_k = top_k
-        # Private training source context used only to discover names for masking.
-        # These dictionaries are never serialized into inference model prompts.
-        self.masking_contexts = {case["case_number"]: case for case in training_cases}
-        # Examples come from the source run's complete selected training pool in
-        # the verified CSV, independently of rule availability or generation success.
-        self.examples = [{
-            "case_number": case["case_number"],
-            "requirement": case["requirement"],
-            "reference_assertion": case["reference_assertion"],
-        } for case in training_cases]
-        if (not self.examples or len({c["case_number"] for c in self.examples}) != len(self.examples)
-                or {c["case_number"] for c in self.examples} != set(training_case_ids)):
-            raise ValueError("Example pool must contain exactly the selected training cases.")
-        if any(not isinstance(case[key], str) or not case[key].strip()
-               for case in self.examples for key in ("requirement", "reference_assertion")):
-            raise ValueError("Every training example needs a requirement and reference assertion.")
+        # Only source requirements/declarations assist masking; no references
+        # are copied into retrieval objects or inference model payloads.
+        source_cases = {case["case_number"]: case for case in training_cases}
+        if len(source_cases) != len(training_cases) or set(source_cases) != set(training_case_ids):
+            raise ValueError("Training source pool must match the selected training case IDs.")
+        self.masking_contexts = {number: {
+            "requirement": case.get("requirement", ""), "testbench": case.get("testbench", "")}
+            for number, case in source_cases.items()}
+        self.examples = []
+        self.missing_generated_example_case_ids = []
+        accepted_rows = _accepted_csv_assertions(self.directory, set(training_case_ids))
         path = self.directory / "learned_rules.jsonl"
         data = path.read_bytes()
         self.sha256 = hashlib.sha256(data).hexdigest()
@@ -49,6 +84,16 @@ class RuleRetriever:
             if case.get('passed') is not True:
                 self.excluded_unpassed_case_ids.append(number)
                 continue
+            example_source = accepted_rows.get(number)
+            if number not in accepted_rows:
+                example_source = _legacy_generated_assertion(self.directory, number, case)
+            example_requirement = source_cases[number].get("requirement")
+            if (isinstance(example_source, str) and example_source.strip()
+                    and isinstance(example_requirement, str) and example_requirement.strip()):
+                self.examples.append({"case_number": number, "requirement": example_requirement,
+                                      "solved_assertion": example_source})
+            else:
+                self.missing_generated_example_case_ids.append(number)
             requirement = case.get("requirement")
             rules = case.get("rules")
             if not isinstance(requirement, str) or not requirement.strip() or not isinstance(rules, dict):
@@ -67,9 +112,8 @@ class RuleRetriever:
             locations = case.get('rule_locations', {})
             if not isinstance(locations, dict):
                 locations = {}
-            # Only these fields can later enter inference prompts. References,
-            # assertions and scores below belong only to selected TRAINING cases.
-            # Tool logs, runtime prompts and arbitrary JSON fields stay excluded.
+            # Only selected TRAINING generated revisions can enter selector
+            # evidence. The selector's allowlist removes scores and diagnostics.
             round_evidence = []
             for evidence in case.get("round_evidence", []):
                 evaluation = evidence.get("evaluation")
@@ -97,10 +141,14 @@ class RuleRetriever:
                 "rule_groups": {key: groups.get(key, []) for key in rules},
                 "rule_locations": {key: locations[key] for key in rules
                                    if isinstance(locations.get(key), str) and locations[key].strip()},
-                "reference_assertion": case.get("reference_assertion"),
                 "rule_rounds": {key: case.get("rule_rounds", {}).get(key) for key in rules},
                 "round_evidence": round_evidence,
             })
+        self.examples.sort(key=lambda case: case["case_number"])
+        if not self.examples and not self.cases:
+            self.model = self._cosine_similarity = None
+            self.example_embeddings = self.embeddings = []
+            return
         # Training mode does not import or load the embedding dependency.
         from sentence_transformers import SentenceTransformer
         from sklearn.metrics.pairwise import cosine_similarity
@@ -133,7 +181,9 @@ class RuleRetriever:
         return selected
 
     def retrieve_examples(self, requirement: str) -> list[dict]:
-        """Return up to three training pairs, regardless of their rules or pass status."""
+        """Return up to three accepted generated pairs; never substitute a golden assertion."""
+        if not self.examples:
+            return []
         query = self.model.encode([requirement])
         scores = self._cosine_similarity(query, self.example_embeddings)[0]
         order = sorted(range(len(scores)), key=lambda i: (-float(scores[i]), self.examples[i]["case_number"]))

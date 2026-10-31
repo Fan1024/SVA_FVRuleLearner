@@ -142,11 +142,13 @@ def main() -> int:
 
     if phase == "infer":
         settings.update(
-            inference_workflow="bottom_up_tree_rule_selection",
+            inference_workflow="existing_rule_selector_independent_locations",
             inference_diagnosis_model=config.RULE_MODEL,
-            inference_feedback="complete_latest_response_only",
-            inference_rule_stages='one_call_diagnose_then_select_and_adapt',
-            inference_rule_context='deduplicated_requirements_rules_linked_examples_no_scores',
+            inference_feedback="latest_ranked_rules_and_independent_locations",
+            inference_rule_stages='rank_existing_rules_and_locate_issues_only',
+            inference_rule_context='training_rules_generated_before_after_no_references_or_scores',
+            inference_rule_generation_enabled=False,
+            inference_max_selected_rules=5,
             training_evidence_masking="after_unmasked_cosine; requirements_rules_revision_traces; role_based_unique_per_case",
             source_training_run=str(source_dir),
             inference_case_selection="all_dataset_cases_minus_source_selected_cases",
@@ -154,7 +156,8 @@ def main() -> int:
             retrieval_top_k=config.TOP_K_CASES, embedding_model=config.EMBEDDING_MODEL,
             retrieval_eligible_cases=len(retriever.cases),
             retrieval_passed_cases_only=True,
-            example_retrieval="top_three_training_requirements_by_cosine",
+            example_retrieval="top_three_accepted_generated_training_pairs_by_requirement_cosine",
+            missing_generated_example_case_ids=list(retriever.missing_generated_example_case_ids),
             example_pool_size=len(retriever.examples),
             source_rules_sha256=retriever.sha256,
         )
