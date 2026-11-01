@@ -23,6 +23,10 @@ Use it to recognize repetitions and unsupported reversals. Revisit an earlier
 form only for a specific behavioral or syntax reason; novelty alone does not
 justify a change.
 
+Only the latest behavior review, high-level diagnoses and located corrections
+supply proposed guidance. A diagnosis describes the suspected behavioral issue;
+its linked rule proposes an action. Treat both as fallible suggestions, not facts.
+Use the diagnosis to review scope and the complete obligation before local edits.
 Only the latest correction guidance supplies proposed edits. Each Location
 identifies an occurrence in the indicated latest assertion using its structural
 path and exact expression. Identical text elsewhere is a different occurrence.
@@ -107,3 +111,4 @@ def build_generation_prompt(requirement, testbench, *, assertion_history=None,
         "```systemverilog and ```. Output no other text."
     )
     return "\n\n".join(sections)
+

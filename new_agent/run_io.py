@@ -548,6 +548,14 @@ def _debug_event_text(record: dict, event: str, data: dict) -> str:
         return "\nRETRIEVED TRAINING CASES\n" + json.dumps(data["cases"], indent=2)
     if event == "rule_request":
         return "\nRULE GENERATOR OUTPUT"
+    if event == "selector_request":
+        return "\nRULE SELECTOR OUTPUT"
+    if event == "selector_response":
+        raw = data["raw_response"]
+        try:
+            return json.dumps(json.loads(raw), indent=2, ensure_ascii=False)
+        except ValueError:
+            return raw
     if event == "rule_response":
         raw = data["raw_response"]
         try:
@@ -656,6 +664,7 @@ def record_formal_result(run_dir, record: dict, attempt: dict, formal: dict) -> 
         "raw_scores": deepcopy(formal.get("raw_scores", {})),
         "accepted": formal.get("accepted", False),
         "acceptance_reason": formal.get("acceptance_reason"),
+        "pec_context_preparation": deepcopy(formal.get("pec_context_preparation")),
     }
     if record.get("usage_rounds"):
         record["usage_rounds"][-1]["passed"] = (
@@ -779,6 +788,7 @@ def save_summaries(summary_dir, record: dict) -> None:
     rules = {}
     rule_rounds = {}
     rule_locations = {}
+    rule_diagnoses = {}
     for number, entry in enumerate(record["rule_registry"], start=1):
         rule_id = f"rule_{number}"
         rule_groups[rule_id] = entry["group"]
@@ -786,6 +796,8 @@ def save_summaries(summary_dir, record: dict) -> None:
         rule_rounds[rule_id] = entry["updated_round"]
         if entry.get('location'):
             rule_locations[rule_id] = entry['location']
+        if entry.get('diagnoses'):
+            rule_diagnoses[rule_id] = deepcopy(entry['diagnoses'])
 
     learning = {
         "case_number": row["case_number"], "design_name": row["design_name"],
@@ -797,6 +809,7 @@ def save_summaries(summary_dir, record: dict) -> None:
         "rules": rules,
         "rule_rounds": rule_rounds,
         "rule_locations": rule_locations,
+        "rule_diagnoses": rule_diagnoses,
         "round_evidence": record["round_evidence"],
     }
     if record["settings"].get("flat_training_output"):
@@ -967,6 +980,7 @@ def print_summary(run_dir, record: dict) -> None:
         print("Evaluation:", Path(run_dir) / "evaluation.csv")
     else:
         print("Result:", Path(run_dir) / "result.json")
+
 
 
 

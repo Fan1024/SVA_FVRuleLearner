@@ -30,6 +30,10 @@ def _save_inference_trace(directory, record, round_number):
         entry = {key: evidence.get(key) for key in
                  ("round", "generated_assertion", "evaluation", "diagnosis_from_round",
                   "pec_input_preparation")}
+        entry["pec_context_preparation"] = (evidence.get("evaluation") or {}).get("pec_context_preparation")
+        if isinstance(entry.get("evaluation"), dict):
+            entry["evaluation"] = {key: value for key, value in entry["evaluation"].items()
+                                   if key != "pec_context_preparation"}
         tree = evidence.get("generated_tree")
         if tree is not None:
             entry["generated_tree"] = compact_tree(tree, include_source=False)
@@ -308,3 +312,4 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
         passed=False, stage="finished", stop_reason="max_rounds",
     )
     return 0 if resolved else 1
+

@@ -1,8 +1,9 @@
 """Call this repository's native evaluation.py directly, in the current process.
 
 The native evaluator invokes its original Jasper launcher/Tcl/PEC. Immediately
-before launch, our source-boundary adapter replaces only the two property
-expression arguments. Native signal lists, tool commands and scores are retained.
+before launch, our source-boundary adapter replaces the two property-expression
+arguments. The context adapter adds declared TB names to SIGNAL_LIST. Native
+tool commands, property extraction policy and scoring definitions are retained.
 """
 
 from dataclasses import asdict
@@ -21,6 +22,7 @@ from time import perf_counter
 import traceback
 from types import SimpleNamespace
 from new_agent.pec_input_adapter import ExtractionError, prepare_pec_inputs
+from new_agent.pec_context_adapter import prepare_signal_list, inspect_checker_context
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -283,9 +285,8 @@ def evaluate_assertion(generated_assertion: str, reference_assertion: str, testb
     outputs = []
 
     def observed_launcher(*args, **kwargs):
-        # The native evaluator still prepares its own signal list and context.
-        # Override only the two property expressions from the original sources,
-        # before either reaches the unmodified native Jasper launcher.
+        # Keep native preparation, replace intact source expressions, and expand
+        # names immediately before the unchanged native Jasper launcher runs.
         bound = inspect.signature(original_launcher).bind(*args, **kwargs)
         native_formulas = {name: bound.arguments.get(name) for name in
                            ("lm_assertion_text", "ref_assertion_text")}
@@ -299,6 +300,12 @@ def evaluate_assertion(generated_assertion: str, reference_assertion: str, testb
                 "native_formulas": native_formulas,
             }
             raise
+        from new_agent import config
+        effective_names, context_preparation = prepare_signal_list(
+            testbench, bound.arguments.get("signal_list_text", ""),
+            module_name=getattr(config, "PEC_CONTEXT_MODULE", None))
+        bound.arguments["signal_list_text"] = effective_names
+        result["pec_context_preparation"] = context_preparation
         preparation["native_formulas"] = native_formulas
         result["pec_input_preparation"] = preparation
         bound.arguments["lm_assertion_text"] = preparation["generated"]["formula"]
@@ -312,6 +319,8 @@ def evaluate_assertion(generated_assertion: str, reference_assertion: str, testb
         except Exception as error:
             outputs.append(str(error))
             raise
+        context_preparation["checker_context"] = inspect_checker_context(
+            bound.arguments.get("sv_dir", directory / "_work"))
         outputs.append(output)
         return output
 
@@ -389,4 +398,5 @@ def cleanup_work(result: dict, keep_work=False, *, preserve_unresolved=True) -> 
         return {"retained": True, "reason": "Ownership check failed; no files deleted."}
     shutil.rmtree(work)
     return {"retained": False, "reason": "Removed owned native evaluation work."}
+
 

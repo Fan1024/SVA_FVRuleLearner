@@ -8,7 +8,8 @@ Use the current requirement, complete testbench and both assertions to interpret
 their behavior. The trees locate source occurrences; differences between tree
 operators, depths or spellings do not by themselves establish a functional defect.
 
-First understand the complete reference and generated behaviors. Then identify
+First output a short behavior_review and high-level diagnoses. Review the
+whole obligation independently of individual operator differences. Then identify
 a supported behavioral difference, locate its cause, and propose a correction.
 Use existing generated node IDs for localization only. Python converts the IDs
 into textual locations for the assertion generator; no tree patch is requested.
@@ -23,7 +24,21 @@ it applies, the generated behavioral defect, and a concrete corrective action.
 """ + "\n" + TESTBENCH_GUIDANCE + "\n" + GUIDANCE_STATUS
 
 
-TASK_INSTRUCTIONS = """BEHAVIOR-FIRST DIAGNOSIS
+TASK_INSTRUCTIONS = """HIGH-LEVEL BEHAVIOR REVIEW
+In the SAME response, first describe the required behavior and the generated
+behavior briefly. Identify task-supported diagnoses before locating corrections.
+Check scope (first versus subsequent operations), missing required behavior,
+additional obligations, unjustified exemptions, overly broad activation, response
+relationships, timing, history/state, context interpretation, polarity and
+quantification, widths/boundaries, vacuity and invalid source structure.
+These are review categories, not claims that every category contains a defect.
+For each diagnosis, state what the generated assertion requires, permits or
+exempts differently and why that matters. No formal proof or confidence score
+is requested. Do not invent a finding just to populate the lists.
+If the requirement and reference disagree, explicitly describe that conflict;
+do not turn a benchmark-specific discrepancy into a universal correction rule.
+
+BEHAVIOR-FIRST DIAGNOSIS
 1. Interpret the complete reference and generated properties: trigger, response,
    guards, timing, relevant state/history, polarity and any required X/Z behavior.
    Use the requirement and testbench to establish the roles of their signals,
@@ -47,6 +62,8 @@ one correction unit and do not also select its ancestors in this round.
 Independent sibling branches may each receive a correction. Combine interdependent
 edits into one correction anchored at their smallest meaningful containing
 subtree. Bottom-up limits edits, not the full-property context examined first.
+The root is a valid location when scope, applicability or the overall obligation
+needs correction. Do not choose a deeper node merely to make the edit smaller.
 
 For a missing wrapper, anchor its existing child; for a missing operand, anchor
 its existing parent. For a move spanning branches, anchor their common affected
@@ -87,15 +104,32 @@ repair from a behavioral correction. Compilation failure alone is not a semantic
 counterexample. If no supported correction is identified, return corrections: [].
 
 OUTPUT JSON
-Return {"corrections": [...]} only. Every correction contains:
+Return one JSON object with behavior_review, diagnoses and corrections:
 {
-  "generated_node_id": "existing generated node or affected subtree root ID",
-  "reference_node_ids": ["relevant existing reference IDs"],
-  "difference": "Expected/reference behavior versus generated behavior.",
-  "why_it_matters": "Brief supported consequence of that difference.",
-  "rule": "When [condition] requires [expected behavior], but [generated defect], [action]."
+  "behavior_review": {
+    "required_behavior": "Brief relevant required/reference behavior.",
+    "generated_behavior": "Brief complete generated obligation and exemptions."
+  },
+  "diagnoses": [
+    {"id": "D1", "category": "scope_mismatch",
+     "statement": "Concise supported high-level behavioral diagnosis."}
+  ],
+  "corrections": [
+    {
+      "diagnosis_ids": ["D1"],
+      "generated_node_id": "existing generated node or affected subtree root ID",
+      "reference_node_ids": ["relevant existing reference IDs"],
+      "difference": "Specific expected versus generated behavior at this location.",
+      "why_it_matters": "Brief supported consequence.",
+      "rule": "When [condition] requires [expected behavior], but [defect], [action]."
+    }
+  ]
 }
-Use [] for reference_node_ids when no counterpart exists. Keep each field brief.
-Do not add JSON fields, a separate analysis report, complete assertions, the
-testbench, unchanged-node lists or mechanical-edit inventories.
+Use short local diagnosis IDs and link corrections to their relevant diagnoses.
+One diagnosis may explain several corrections; store its statement only once.
+Use [] for reference_node_ids when no counterpart exists. Keep all fields brief.
+Do not copy the reference assertion into a diagnosis or behavior_review. No
+separate analysis report, complete assertions or mechanical-edit inventory.
+Return empty diagnoses/corrections when no supported issue/correction is found;
+still provide the brief behavior_review. These outputs are fallible guidance.
 """

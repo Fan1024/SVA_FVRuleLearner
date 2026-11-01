@@ -107,6 +107,7 @@ def main() -> int:
               f"{len(retriever.excluded_unpassed_case_ids)} unpassed cases excluded.", flush=True)
     dataset_path = Path(cases[0]["dataset_path"])
     models = {"assertion": config.ASSERTION_MODEL, "rule": config.RULE_MODEL}
+    from new_agent.pec_context_adapter import context_mode, VERSION as PEC_CONTEXT_VERSION
     settings = {
         "phase": phase,
         "mode": config.MODE,
@@ -117,6 +118,8 @@ def main() -> int:
         "evaluator_python": sys.executable,
         "metric_source": "native evaluation.py; original_setting=False",
         "checker_input_policy": "native_per_round",
+        "pec_context_mode": context_mode(),
+        "pec_context_adapter_version": PEC_CONTEXT_VERSION,
         "comparison_scope": policy["scope"],
         "revision_rules": "previous_round_only",
         "round_policy": "pec_or_bleu_or_max_rounds",
@@ -137,7 +140,7 @@ def main() -> int:
                         tree_parser="raw-tree-prototype-1.2",
                         tree_parse_failure_policy="explicit_opaque_source_anchor",
                         training_diagnosis_model=config.RULE_MODEL,
-                        training_rule_schema="bottom_up_corrections_v2",
+                        training_rule_schema="behavior_review_diagnoses_corrections_v4",
                         training_feedback="complete_latest_response_only")
 
     if phase == "infer":
@@ -236,3 +239,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

@@ -6,6 +6,7 @@ Operators, function names, numeric literals and temporal bounds are preserved.
 """
 import re
 from new_agent import assertion_tree
+from new_agent.diagnosis_context import diagnosis_view
 from new_agent.infer_training_traces import compact_rounds
 
 # Exclude language words, including declaration/control words, from name masking.
@@ -211,6 +212,11 @@ def prepare_candidates(cases, contexts=None):
         trace = compact_rounds(case.get('revision_trace', []))
         context['_source_assertions'] = [r['assertion'] for r in trace if r['assertion']]
         descriptions = dict(case['rules'])
+        indexed_diagnoses = case.get('rule_diagnoses', {})
+        for rule_id, diagnoses in indexed_diagnoses.items():
+            for number, diagnosis in enumerate(diagnoses):
+                if isinstance(diagnosis, dict) and diagnosis.get('statement'):
+                    descriptions[f'diagnosis_{rule_id}_{number}'] = diagnosis['statement']
         indexed_locations = case.get('rule_locations', {})
         indexed_locations = indexed_locations if isinstance(indexed_locations, dict) else {}
         for key, location in indexed_locations.items():
@@ -218,19 +224,30 @@ def prepare_candidates(cases, contexts=None):
                 descriptions[f'location_{key}'] = location
         for i, entry in enumerate(trace):
             for j, correction in enumerate(entry['corrections']):
+                for number, diagnosis in enumerate(correction.get('diagnoses', [])):
+                    if diagnosis.get('statement'):
+                        descriptions[f'trace_{i}_{j}_diagnosis_{number}'] = diagnosis['statement']
                 for field in ('difference', 'why_it_matters', 'rule', 'location'):
                     if correction.get(field):
                         descriptions[f'trace_{i}_{j}_{field}'] = correction[field]
         masker = CaseMasker(source_names(case['requirement'], descriptions, context))
         requirement = masker.mask(case['requirement'])
+        def mask_diagnoses(values):
+            return [{key: masker.mask(value) if key == 'statement' else value
+                     for key, value in diagnosis_view(item).items()}
+                    for item in values if isinstance(item, dict)]
         rules = [{'id': f"C{case['case_number']:04d}:{key}", 'rule': masker.mask(text),
+                  'diagnoses': mask_diagnoses(indexed_diagnoses.get(key, [])),
                   **({'location': masker.mask(indexed_locations[key])}
                      if isinstance(indexed_locations.get(key), str) and indexed_locations[key].strip() else {})}
                  for key, text in case['rules'].items()]
         for entry in trace:
+            entry['behavior_review'] = {key: masker.mask(value)
+                                        for key, value in entry.get('behavior_review', {}).items()}
             if entry['assertion']:
                 entry['assertion'] = masker.mask(entry['assertion'])
             for j, correction in enumerate(entry['corrections'], 1):
+                correction['diagnoses'] = mask_diagnoses(correction.get('diagnoses', []))
                 for field in ('difference', 'why_it_matters', 'rule', 'location'):
                     if field in correction:
                         correction[field] = masker.mask(correction[field])
@@ -247,3 +264,4 @@ def prepare_candidates(cases, contexts=None):
             'trace_status': case.get('trace_status', 'available' if trace else 'unavailable_missing_trace'),
         })
     return result
+

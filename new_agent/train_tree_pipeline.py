@@ -39,8 +39,10 @@ def _save_round_trace(directory, record, round_number):
         entry = {
             "round": round_number,
             "assertion": evidence.get("generated_assertion"),
-            "evaluation": evaluation,
+            "evaluation": ({key: value for key, value in evaluation.items()
+                            if key != "pec_context_preparation"} if evaluation else None),
             "pec_input_preparation": evidence.get("pec_input_preparation"),
+            "pec_context_preparation": (evaluation or {}).get("pec_context_preparation"),
             "diagnosis_from_round": evidence.get("diagnosis_from_round"),
         }
         if trees and "generated" in trees:
@@ -103,7 +105,7 @@ def run_training_pipeline(directory, record: dict, *, retriever=None) -> int:
         training_assertion_history="all_previous_assertions_coarse_results",
         training_feedback="latest_located_corrections_only",
         training_rule_feedback="coarse_reference_equivalence_only",
-        training_rule_schema="behavior_first_bottom_up_corrections_v3",
+        training_rule_schema="behavior_review_diagnoses_corrections_v4",
     )
     registry = {}
     previous_assertion = None
@@ -309,7 +311,7 @@ def run_training_pipeline(directory, record: dict, *, retriever=None) -> int:
                     run_io.save_diagnosis_model(record, config.RULE_MODEL)
                 except Exception as error:
                     _remember_round_error(directory, record, round_number, stage, error)
-                    reason = ("Validated location and rule feedback goes to the next round."
+                    reason = ("Diagnosis, location and rule feedback goes to the next round."
                               if latest_diagnosis_round == round_number else f"{stage} failed; continuing next round.")
                     run_io.update_run(directory, record, diagnosis_skipped_reason=reason)
                 continue
@@ -324,3 +326,4 @@ def run_training_pipeline(directory, record: dict, *, retriever=None) -> int:
         passed=False, stage="finished", stop_reason="max_rounds",
     )
     return 0 if resolved else 1
+

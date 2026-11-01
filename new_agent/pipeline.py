@@ -23,6 +23,7 @@ def update_rule_registry(registry: dict, new_rules: dict, round_number: int) -> 
             ),
             "updated_round": round_number,
             **({'location': entry['location']} if entry.get('location') else {}),
+            **({'diagnoses': deepcopy(entry['diagnoses'])} if 'diagnoses' in entry else {}),
         }
 
 
@@ -353,5 +354,6 @@ def run_pipeline(directory, record: dict, *, retriever=None) -> int:
         passed=False, stage="finished", stop_reason="max_rounds",
     )
     return 0 if resolved else 1
+
 
 

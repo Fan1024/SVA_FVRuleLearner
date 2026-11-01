@@ -119,6 +119,7 @@ class RuleRetriever:
                 evaluation = evidence.get("evaluation")
                 round_evidence.append({
                     "round": evidence["round"],
+                    "tree_rule_diagnosis": evidence.get("tree_rule_diagnosis", evidence.get("diagnosis")),
                     "generated_assertion": evidence.get("generated_assertion"),
                     "evaluation": None if evaluation is None else {
                         key: evaluation.get(key) for key in (
@@ -130,7 +131,7 @@ class RuleRetriever:
                         "group", "rule", "updated_round",
                     )} for rule in evidence.get("rules_used", [])],
                     "rules_generated": {
-                        rule_id: {"group": rule["group"], "rule": rule["rule"]}
+                        rule_id: {"group": rule["group"], "rule": rule["rule"], "diagnoses": rule.get("diagnoses", [])}
                         for rule_id, rule in evidence.get("rules_generated", {}).items()
                     },
                 })
@@ -139,6 +140,7 @@ class RuleRetriever:
                 "task_id": case.get("task_id"), "requirement": requirement.strip(),
                 "passed": case.get("passed"), "rules": rules,
                 "rule_groups": {key: groups.get(key, []) for key in rules},
+                "rule_diagnoses": {key: case.get("rule_diagnoses", {}).get(key, []) for key in rules},
                 "rule_locations": {key: locations[key] for key in rules
                                    if isinstance(locations.get(key), str) and locations[key].strip()},
                 "rule_rounds": {key: case.get("rule_rounds", {}).get(key) for key in rules},
@@ -188,3 +190,4 @@ class RuleRetriever:
         scores = self._cosine_similarity(query, self.example_embeddings)[0]
         order = sorted(range(len(scores)), key=lambda i: (-float(scores[i]), self.examples[i]["case_number"]))
         return [{**self.examples[i], "similarity": float(scores[i])} for i in order[:3]]
+

@@ -3,6 +3,7 @@
 import json
 
 from new_agent import assertion_tree
+from new_agent.diagnosis_context import linked_diagnoses
 from new_agent.correction_locations import location_for
 from new_agent.training_prompt_context import evaluation_feedback
 from new_agent.train_tree_rule_prompts import SYSTEM_PROMPT, TASK_INSTRUCTIONS
@@ -73,7 +74,7 @@ def compact_tree(tree, *, include_source=True):
 
 
 def parse_response(response_text, trees):
-    """Basic JSON/field/ID checks only. This does not validate graph edits or SVA.
+    """Read model output and resolve locations; no semantic diagnosis validation.
 
     Node IDs remain in inspection records; textual locations become generator
     feedback and can later be masked with the source examples for retrieval.
@@ -104,4 +105,7 @@ def export_rules(response, round_number):
         "group": ["tree_correction", f"round_{round_number:04d}", f"correction_{i:04d}"],
         "rule": entry["rule"].strip(),
         **({'location': entry['location']} if entry.get('location') else {}),
+        **({'diagnoses': linked_diagnoses(entry, response)}
+           if 'diagnosis_ids' in entry or 'diagnoses' in entry else {}),
     } for i, entry in enumerate(response["corrections"], 1)}
+

@@ -2,6 +2,7 @@
 import json
 from pathlib import Path
 from new_agent.correction_locations import recover_location
+from new_agent.diagnosis_context import linked_diagnoses, review_view
 
 
 EVALUATION_FIELDS = ('status', 'syntax', 'pec', 'relax_pec', 'bleu', 'rouge',
@@ -45,6 +46,7 @@ def compact_rounds(rounds):
                         location = recover_location(assertion, correction.get('generated_node_id'), tree)
                         if location:
                             compact['location'] = location
+                    compact['diagnoses'] = linked_diagnoses(correction, diagnosis)
                     corrections.append(compact)
         else:
             # Older runs store generated rules directly in round_evidence.
@@ -56,6 +58,7 @@ def compact_rounds(rounds):
                         compact = {'rule': text.strip()}
                         if isinstance(rule, dict) and isinstance(rule.get('location'), str):
                             compact['location'] = rule['location'].strip()
+                        compact['diagnoses'] = linked_diagnoses(rule) if isinstance(rule, dict) else []
                         corrections.append(compact)
         feedback_round = entry.get('diagnosis_from_round')
         if type(feedback_round) is not int:
@@ -68,7 +71,8 @@ def compact_rounds(rounds):
             feedback_round = None
         result.append({'round': number, 'assertion': assertion,
                        'diagnosis_from_round': feedback_round,
-                       'corrections': corrections, 'evaluation': evaluation})
+                       'corrections': corrections, 'evaluation': evaluation,
+                       'behavior_review': review_view(diagnosis.get('behavior_review')) if isinstance(diagnosis, dict) else {}})
     return sorted(result, key=lambda item: item['round'])
 
 
@@ -99,3 +103,4 @@ def load_case_trace(directory, case_number, source):
     legacy = source.get('round_evidence', [])
     compact = compact_rounds(legacy) if isinstance(legacy, list) else []
     return compact, 'available_legacy' if compact else 'unavailable_missing_trace'
+

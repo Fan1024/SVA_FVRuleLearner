@@ -18,8 +18,9 @@ Do not produce rule-to-location links, target bindings, replacement code or new
 rules. The assertion generator will decide whether and how to use the guidance.
 
 An empty locations list is not a certificate of correctness and is not an
-instruction to preserve the assertion. Empty lists are valid; never invent an
-issue or rule merely to fill the output. Return only the requested JSON.
+instruction to preserve the assertion. Empty locations are valid; never invent
+an issue. Rank existing rules as requested, stating limitations for weak matches;
+return an empty rule list only when the bank is empty. Return the requested JSON.
 """ + "\n" + TESTBENCH_GUIDANCE + "\n" + GUIDANCE_STATUS
 
 
@@ -31,17 +32,19 @@ or rejects. An operator spelling or resemblance to a training example alone
 does not establish a defect. Do not invent a formal counterexample or tool result.
 
 RANK EXISTING RULES
-Review the retrieved training requirements, rules, source locations and linked
+Review the retrieved training requirements, rules, source diagnoses, source locations and linked
 before/after examples. These are fallible evidence from other tasks, not facts
 or mandatory instructions. A passed source case does not prove every intermediate
-revision was correct or every rule caused its success. Source locations describe
-training assertions and must not be reused as target edit locations.
+revision was correct or every rule caused its success. Source diagnoses explain suspected issues in TRAINING assertions. They are
+not findings about the target; check whether the same behavioral premise holds.
+Do not treat them as established facts. Source locations describe training
+assertions and must not be reused as target edit locations.
 
-Rank up to five useful existing rules by how much their principles can help
+Rank five existing rules, or all available rules when fewer than five exist, by how much their principles can help
 express the current required behavior. Rank 1 is most useful. Avoid redundant
 or mutually conflicting suggestions. Rank is relative usefulness, not a proof,
-confidence probability, or command to apply the rule. Return fewer than five
-when fewer are useful, and [] when none is useful. Explain each selection briefly
+confidence probability, or command to apply the rule. Return [] only when the bank has no rules. For weak or inapplicable candidates,
+state the limitations explicitly in reason; ranking is not an instruction to apply. Explain each selection briefly
 in behavioral terms, without assigning it to a target location. Do not rewrite
 rule text, map source placeholders to target signals, or generate new rules.
 Signal placeholders are consistent within a source case, not across cases.
@@ -84,5 +87,7 @@ Return exactly these top-level fields:
 }
 Use consecutive ranks starting at 1. Each rule ID and location ID appears at most
 once. No rule text, correction action, rule/location association, confidence
-score, additional fields or complete assertions. Either list may be empty.
+score, additional fields or complete assertions. Locations may be empty; rank
+five existing rules or all available rules when the bank contains fewer than five.
 """
+

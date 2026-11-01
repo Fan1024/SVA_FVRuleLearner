@@ -4,6 +4,7 @@ import json
 import re
 
 from new_agent.correction_locations import location_for
+from new_agent.diagnosis_context import diagnosis_view
 from new_agent.training_prompt_context import evaluation_feedback
 from new_agent.infer_rule_selector_prompts import SYSTEM_PROMPT, TASK_INSTRUCTIONS
 
@@ -32,13 +33,13 @@ def compact_tree(tree, *, include_source=True):
 def safe_candidate(case):
     """Only training requirement/rules/generated revisions; no refs or scores."""
     result = {"case_number": case["case_number"], "requirement": case["requirement"],
-              "rules": [{key: rule[key] for key in ("id", "rule", "location") if key in rule}
+              "rules": [{key: rule[key] for key in ("id", "rule", "location", "diagnoses") if key in rule}
                         for rule in case["rules"]], "revision_trace": []}
     for entry in case.get("revision_trace", []):
         result["revision_trace"].append({
             "round": entry["round"], "assertion": entry.get("assertion"),
             "diagnosis_from_round": entry.get("diagnosis_from_round"),
-            "corrections": [{key: correction[key] for key in ("id", "rule", "location") if key in correction}
+            "corrections": [{key: correction[key] for key in ("id", "rule", "location", "diagnoses") if key in correction}
                             for correction in entry.get("corrections", [])],
         })
     return result
@@ -48,6 +49,7 @@ def compact_rule_bank(candidates):
     """One source requirement/text per occurrence; no scores or full histories."""
     requirements, requirement_ids, cases = {}, {}, []
     examples, example_ids = {}, {}
+    diagnoses, diagnosis_ids = {}, {}
     for candidate in candidates:
         case = safe_candidate(candidate)
         requirement = case['requirement']
@@ -73,6 +75,19 @@ def compact_rule_bank(candidates):
                 rules.append(item)
             elif location:
                 item['location'] = location
+            for diagnosis in rule.get('diagnoses', []):
+                value = {key: text for key, text in diagnosis_view(diagnosis).items()
+                         if key in {'category', 'statement'}}
+                if not value:
+                    continue
+                key = (case['case_number'], value.get('category'), value.get('statement'))
+                if key not in diagnosis_ids:
+                    diagnosis_id = f'D{len(diagnoses) + 1}'
+                    diagnosis_ids[key] = diagnosis_id
+                    diagnoses[diagnosis_id] = value
+                linked = item.setdefault('diagnosis_ids', [])
+                if diagnosis_ids[key] not in linked:
+                    linked.append(diagnosis_ids[key])
             return item
 
         for rule in case['rules']:
@@ -101,7 +116,7 @@ def compact_rule_bank(candidates):
                 item['example_id'] = example_ids[key]
         cases.append({'case_number': case['case_number'],
                       'requirement_id': requirement_ids[requirement], 'rules': rules})
-    return {'requirements': requirements, 'examples': examples, 'cases': cases}
+    return {'requirements': requirements, 'examples': examples, 'diagnoses': diagnoses, 'cases': cases}
 
 
 def bank_rule_ids(bank):
@@ -113,10 +128,12 @@ def build_selector_prompt(requirement, testbench, tree, rule_bank, *, evaluation
     # Re-project cached data rather than trusting arbitrary bank metadata.
     bank = {
         "requirements": dict(rule_bank["requirements"]),
+        "diagnoses": {key: {field: item[field] for field in ('category', 'statement') if field in item}
+                      for key, item in rule_bank.get("diagnoses", {}).items()},
         "examples": {key: {field: example.get(field) for field in ("before", "after")}
                      for key, example in rule_bank["examples"].items()},
         "cases": [{"case_number": case["case_number"], "requirement_id": case["requirement_id"],
-                   "rules": [{key: rule[key] for key in ("id", "rule", "location", "example_id") if key in rule}
+                   "rules": [{key: rule[key] for key in ("id", "rule", "location", "example_id", "diagnosis_ids") if key in rule}
                              for rule in case["rules"]]} for case in rule_bank["cases"]],
     }
     data = {"requirement": requirement, "testbench": testbench,
@@ -188,7 +205,11 @@ def make_generator_guidance(selection, rule_bank, tree, *, source_round):
         "for_round": source_round,
         "assertion_sha256": hashlib.sha256(tree["source_assertion"].encode("utf-8")).hexdigest(),
         "ranked_rules": [{"rank": entry["rank"], "rule": by_id[entry["rule_id"]]["rule"],
-                          "reason": entry["reason"]} for entry in selection["ranked_rules"]],
+                          "reason": entry["reason"],
+                          "source_diagnoses": [dict(rule_bank.get('diagnoses', {})[key])
+                              for key in by_id[entry['rule_id']].get('diagnosis_ids', [])
+                              if key in rule_bank.get('diagnoses', {})]}
+                         for entry in selection["ranked_rules"]],
         "locations": [{"location": location_for(tree, entry["generated_node_id"]),
                        **{key: entry[key] for key in ("expected_behavior", "observed_behavior", "why_it_matters")}}
                       for entry in selection["locations"]],
@@ -207,10 +228,14 @@ def generator_view(guidance, assertion, source_round):
         if rank > MAX_SELECTED_RULES or entry.get("rank") != rank:
             raise ValueError("Invalid ranked rule list.")
         ranked.append({"rank": rank, "rule": _text(entry.get("rule"), "rule"),
-                       "reason": _text(entry.get("reason"), "reason")})
+                       "reason": _text(entry.get("reason"), "reason"),
+                       "source_diagnoses": [
+                           {key: item[key] for key in ('category', 'statement') if isinstance(item.get(key), str)}
+                           for item in entry.get('source_diagnoses', []) if isinstance(item, dict)]})
     locations = [{key: _text(entry.get(key), key) for key in
                   ("location", "expected_behavior", "observed_behavior", "why_it_matters")}
                  for entry in guidance.get("locations", [])]
     return {"ranked_rules": ranked, "locations": locations}
+
 
 

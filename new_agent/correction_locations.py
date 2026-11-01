@@ -1,5 +1,6 @@
 """Resolve diagnosis IDs to textual occurrence locations; never edit an AST."""
 import json
+from new_agent.diagnosis_context import diagnosis_payload
 
 from new_agent import assertion_tree
 
@@ -107,6 +108,9 @@ def feedback_json(diagnosis, *, assertion=None, tree=None):
         for field in ('difference', 'why_it_matters'):
             if isinstance(item.get(field), str) and item[field].strip():
                 correction[field] = item[field].strip()
+        if 'diagnosis_ids' in item:
+            correction['diagnosis_ids'] = list(item['diagnosis_ids'])
         correction['rule'] = rule.strip()
         corrections.append(correction)
-    return json.dumps({'corrections': corrections}, ensure_ascii=False)
+    return json.dumps({**diagnosis_payload(data), 'corrections': corrections}, ensure_ascii=False)
+
