@@ -1,4 +1,4 @@
-"""Server-side reference self-checks through the REAL native PEC; no LLM calls.
+"""Reference self-checks through original native PEC with a prepared signal list; no LLM calls.
 
 Example: python new_agent/check_pec_context.py --dataset nl2sva_human --case-ids 15 37 68
 """
@@ -63,9 +63,7 @@ def main():
             passed = (result['status'] == 'FULL_EQUIVALENCE' and
                       result.get('native_metrics', {}).get('functionality') == 1.0)
             native = Path(temporary)
-            files = [native / 'jasper.log', native / 'native_pec_inputs.json',
-                     native / 'typed_pec' / 'typed_context.json',
-                     native / 'typed_pec' / 'typed_context.applied.json']
+            files = [native / name for name in ('jasper.log', 'native_pec_inputs.json', 'evaluation_error.log')]
             files += sorted((native / '_work').glob('jg/*/pec/pec*.sve'))
             for path in files:
                 if path.is_file():
@@ -75,8 +73,12 @@ def main():
             (case_dir / 'result.json').write_text(json.dumps(result, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
         summary.append({'case_number': number, 'design_name': row['design_name'], 'task_id': row['task_id'],
                         'status': result['status'], 'self_check_passed': passed,
-                        'typed_context_applied': result.get('pec_context_preparation', {}).get('typed_context_applied', False)})
+                        'signal_count': len(result.get('pec_context_preparation', {}).get('effective_signal_list', []))})
         print(f"Case {number}: {result['status']} | self_check_passed={passed}", flush=True)
+        if not passed:
+            detail = result.get('evaluation_error') or (result.get('tool_output') or '')[-2000:]
+            if detail:
+                print(detail, flush=True)
         (output / 'summary.json').write_text(json.dumps(summary, indent=2) + '\n', encoding='utf-8')
     with (output / 'summary.csv').open('w', newline='', encoding='utf-8') as file:
         writer = csv.DictWriter(file, fieldnames=list(summary[0]))

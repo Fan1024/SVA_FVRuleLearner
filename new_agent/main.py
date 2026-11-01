@@ -12,7 +12,6 @@ from tempfile import TemporaryDirectory
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from new_agent import config, dataset_loader, formal_check, run_io
-from new_agent.pipeline import run_pipeline
 
 
 def select_workflow():
@@ -55,6 +54,10 @@ def validate_config() -> None:
         raise ValueError("CONFIDENCE_THRESHOLD must be a number between 0 and 1.")
     if type(config.SAVE_DEBUG_TRACES) is not bool:
         raise ValueError("SAVE_DEBUG_TRACES must be True or False.")
+    try:
+        import pyslang
+    except ImportError as error:
+        raise RuntimeError('pyslang is required; run python -m pip install -r requirements_new_agent.txt') from error
     formal_check.validate_backend()
 
 
@@ -124,7 +127,7 @@ def main() -> int:
         "comparison_scope": policy["scope"],
         "revision_rules": "previous_round_only",
         "round_policy": "pec_or_bleu_or_max_rounds",
-        "pec_compile_error_policy": "typed_context_then_block_if_unresolved",
+        "pec_compile_error_policy": "block_on_native_pec_compile_failure",
         "case_ids": ([case["case_number"] for case in cases]
                      if phase == "infer" else list(config.TRAIN_CASE_IDS)),
         "dataset_split": dataset_split,

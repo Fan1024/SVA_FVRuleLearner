@@ -1,173 +1,79 @@
-"""Collect TB signals and constants for native PEC declaration adaptation.
+"""Prepare only the signal_list_text argument for FVRuleLearner's native PEC.
 
-Typed mode applies evaluated packed ranges, signedness and constants through
-new_agent.typed_pec. Legacy modes remain available for baseline comparisons.
+Never open, parse or rewrite PEC artifacts, declarations or Tcl scripts.
 """
 from copy import deepcopy
 from functools import lru_cache
-from pathlib import Path
 import os
 import re
 
-VERSION = "typed_tb_context_v4_byte_preserving"
+VERSION = 'native_signal_list_v5'
 
 
-def context_mode():
+def context_mode(value=None):
     from new_agent import config
-    return os.environ.get("FVRULE_PEC_CONTEXT_MODE",
-                          getattr(config, "PEC_CONTEXT_MODE", "typed"))
-
-
-def _type_info(typ):
-    result = {"type": str(typ), "signed": bool(typ.isSigned),
-              "four_state": bool(typ.isFourState),
-              "unpacked_array": bool(typ.isUnpackedArray),
-              "integral": bool(typ.isIntegral), "type_error": bool(typ.isError)}
-    if typ.isIntegral and not typ.isError:
-        result["bit_width"] = int(typ.bitWidth)
-    dimensions = []
-    current = typ.canonicalType
-    while current.isPackedArray or current.isUnpackedArray:
-        dimensions.append({"kind": "unpacked" if current.isUnpackedArray else "packed",
-                           "range": str(getattr(current, "range", "dynamic_or_associative"))})
-        current = current.elementType.canonicalType
-    if dimensions:
-        result["dimensions"] = dimensions
-    # Unpacked arrays themselves are not integral; their packed element can be.
-    # Its signedness/width belong before the name, unpacked ranges after it.
-    element = typ.canonicalType
-    while element.isUnpackedArray:
-        element = element.elementType.canonicalType
-    result.update(element_integral=bool(element.isIntegral),
-                  element_signed=bool(element.isSigned),
-                  element_four_state=bool(element.isFourState))
-    if element.isIntegral and not element.isError:
-        result['packed_bit_width'] = int(element.bitWidth)
-    structured = bool(getattr(current, 'isStruct', False) or
-                      getattr(current, 'isUnion', False) or
-                      getattr(current, 'isEnum', False))
-    fixed_ranges = all(re.fullmatch(r'\[-?\d+:-?\d+\]', item['range'])
-                       for item in dimensions)
-    result['declaration_supported'] = bool(
-        element.isIntegral and not element.isError and fixed_ranges and not structured)
-    return result
-
-
-def supported_context_type(item):
-    return item.get('declaration_supported',
-                    bool(item.get('integral') and not item.get('unpacked_array') and not item.get('type_error')))
+    value = value or os.environ.get('FVRULE_PEC_CONTEXT_MODE',
+                                   getattr(config, 'PEC_CONTEXT_MODE', 'expanded_names'))
+    # An old user config/environment must not reactivate the removed adapter.
+    if value == 'typed':
+        value = 'expanded_names'
+    if value not in {'legacy', 'expanded_names'}:
+        raise ValueError('PEC_CONTEXT_MODE must be legacy or expanded_names')
+    return value
 
 
 @lru_cache(maxsize=128)
 def _collect(source, module_name):
     import pyslang
-    from pyslang import syntax
-    tree = syntax.SyntaxTree.fromText(source)
+    tree = pyslang.syntax.SyntaxTree.fromText(source)
     compilation = pyslang.ast.Compilation()
     compilation.addSyntaxTree(tree)
     instances = list(compilation.getRoot().topInstances)
     if module_name:
         instances = [item for item in instances if item.name == module_name]
     if len(instances) != 1:
-        raise ValueError("Expected one top module; set PEC_CONTEXT_MODULE for a multi-top context.")
-    instance = instances[0]
-    signals, constants = {}, {}
-    for symbol in instance.body:
-        kind = symbol.kind.name
-        if kind not in {"Port", "Net", "Variable", "Parameter"} or not symbol.name:
+        raise ValueError('Expected one TB top module; set PEC_CONTEXT_MODULE for multiple tops.')
+    signals, parameters = [], []
+    for symbol in instances[0].body:
+        if not symbol.name:
             continue
-        entry = {"name": symbol.name, "kind": kind, **_type_info(symbol.type)}
-        if kind == "Parameter":
-            entry.update(value=str(symbol.value), declaration=str(symbol.syntax).strip(),
-                         localparam=bool(symbol.isLocalParam))
-            constants[symbol.name] = entry
-        else:
-            signals[symbol.name] = entry
-    return {"module": instance.name, "parser": "pyslang",
-            "parser_version": pyslang.__version__,
-            "signals": list(signals.values()), "parameters": list(constants.values()),
-            "syntax_diagnostic_count": len(tree.diagnostics)}
+        kind = symbol.kind.name
+        target = signals if kind in {'Port', 'Net', 'Variable'} else parameters if kind == 'Parameter' else None
+        if target is not None and symbol.name not in target:
+            target.append(symbol.name)
+    return {'module': instances[0].name, 'parser_version': pyslang.__version__,
+            'signals': signals, 'parameters': parameters}
 
 
-def collect_context(source, module_name=None):
-    return deepcopy(_collect(source, module_name))
+def collect_signal_names(testbench, module_name=None):
+    return deepcopy(_collect(testbench, module_name))
 
 
-def prepare_signal_list(testbench, native_signal_list, *, mode=None, module_name=None,
-                        assertion_texts=()):
-    """Expand names and prepare scalar, packed and fixed unpacked declarations.
+def prepare_signal_list(testbench, native_signal_list, *, mode=None, module_name=None):
+    """Replace a quoted-name list with its union with declared TB signal names.
 
-    Fixed unpacked dimensions are retained in typed mode. Unsupported types and
-    identifiers are recorded; a referenced unsupported declaration blocks typed
-    launch instead of silently using a scalar approximation.
+    Known parameters/localparams are excluded: they are constants, not signals.
+    Widths and declarations remain entirely under the native PEC implementation.
     """
-    mode = mode or context_mode()
-    if mode not in {"legacy", "expanded_names", "typed"}:
-        raise ValueError("PEC_CONTEXT_MODE must be legacy, expanded_names or typed")
-    original = list(dict.fromkeys(x.strip() for x in native_signal_list.split(",") if x.strip()))
-    result = {"adapter_version": VERSION, "mode": mode,
-              "native_signal_list": original, "effective_signal_list": list(original),
-              "added_names": [], "not_added": [],
-              "typed_context_applied": False,
-              "note": "Only names are passed to native PEC; source types/constants are audit metadata."}
-    if mode == "legacy":
-        result["status"] = "legacy"
-        return native_signal_list, result
-    try:
-        result["source_context"] = collect_context(testbench, module_name)
-    except Exception as error:
-        result.update(status="context_unavailable_native_names_retained",
-                      error=f"{type(error).__name__}: {error}")
-        return native_signal_list, result
-    constants = {item['name'] for item in result['source_context']['parameters']}
-    names = [name for name in original if mode != 'typed' or name not in constants]
-    items = result["source_context"]["signals"]
-    if mode != 'typed':
-        items = items + result["source_context"]["parameters"]
-    for item in items:
-        name = item["name"]
-        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_$]*", name):
-            reason = "unsupported_native_identifier"
-        elif not (supported_context_type(item) if mode == 'typed' else
-                  item['integral'] and not item['unpacked_array'] and not item['type_error']):
-            reason = "unsupported_or_unresolved_native_type"
-        else:
-            reason = None
-        if reason:
-            result["not_added"].append({"name": name, "reason": reason})
+    mode = context_mode(mode)
+    original = list(dict.fromkeys(name.strip() for name in native_signal_list.split(',') if name.strip()))
+    audit = {'adapter_version': VERSION, 'mode': mode, 'native_signal_list': original,
+             'effective_signal_list': list(original), 'added_names': [],
+             'removed_parameters': [], 'not_added': [],
+             'note': 'Names only. Original native Tcl/PEC files and launcher path are unchanged.'}
+    if mode == 'legacy':
+        audit['status'] = 'native_names_unchanged'
+        return native_signal_list, audit
+    collected = collect_signal_names(testbench, module_name)
+    parameters = set(collected['parameters'])
+    names = [name for name in original if name not in parameters]
+    audit.update(module=collected['module'], parser_version=collected['parser_version'],
+                 removed_parameters=[name for name in original if name in parameters])
+    for name in collected['signals']:
+        if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_$]*', name):
+            audit['not_added'].append({'name': name, 'reason': 'unsupported_native_identifier'})
         elif name not in names:
             names.append(name)
-            result["added_names"].append(name)
-    result.update(status="expanded", effective_signal_list=names)
-    if mode == 'typed':
-        from new_agent.pec_input_adapter import _tokens
-        referenced = {token.text for source in assertion_texts for token in _tokens(source)}
-        required = referenced | set(original)
-        unsupported = [item for item in result['source_context']['signals']
-                       if item['name'] in required and not supported_context_type(item)]
-        result.update(status='typed_context_prepared',
-                      constant_names=sorted(constants),
-                      referenced_tb_names=sorted(referenced & {
-                          item['name'] for item in result['source_context']['signals'] +
-                          result['source_context']['parameters']}),
-                      unsupported_required_declarations=unsupported,
-                      note='TB signals retain packed and fixed unpacked ranges; '
-                           'parameters become evaluated localparams. '
-                           'No TB assignments, assumptions or state updates are copied.')
-    return ",".join(names), result
-
-
-def inspect_checker_context(sv_dir):
-    """Read generated declarations when native PEC leaves a readable module."""
-    paths = sorted((Path(sv_dir) / "jg").glob("*/pec/pec.sve"))
-    if not paths:
-        return {"status": "unavailable"}
-    try:
-        from new_agent.typed_pec import read_checker_source
-        _, source, codec = read_checker_source(paths[-1])
-        return {"status": "available", "context": collect_context(source),
-                "native_file_decoding": 'utf-8' if codec == 'utf-8' else 'latin-1-byte-map'}
-    except Exception as error:
-        return {"status": "unavailable", "error": f"{type(error).__name__}: {error}"}
-
-
+            audit['added_names'].append(name)
+    audit.update(status='signal_names_expanded', effective_signal_list=names)
+    return ','.join(names), audit

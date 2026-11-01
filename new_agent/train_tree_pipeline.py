@@ -14,7 +14,6 @@ from openai import OpenAI
 from new_agent import config, formal_check, model_io, run_io
 from new_agent import tree_archive
 from new_agent.revision_context import reconsider_repeat, evaluate_once, last_transition, retain_checker_failure
-from new_agent.typed_pec import ContextPreparationError
 from new_agent.correction_locations import feedback_json
 from new_agent.pipeline import (
     _failed_round, _remember_round_error, retained_rules, update_rule_registry,
@@ -205,8 +204,6 @@ def run_training_pipeline(directory, record: dict, *, retriever=None) -> int:
                 except Exception as error:
                     _remember_round_error(directory, record, round_number, stage, error)
                     status = {"generation": "GENERATION_ERROR", "extraction": "FORMAT_ERROR"}.get(stage, "TOOL_ERROR")
-                    if isinstance(error, ContextPreparationError):
-                        status = 'PEC_CONTEXT_ERROR' 
                     formal_result = _failed_round(
                         check_dir, round_number, status, f"{stage}: {type(error).__name__}: {error}", policy,
                     )
@@ -257,12 +254,12 @@ def run_training_pipeline(directory, record: dict, *, retriever=None) -> int:
                     )
                     return 0
 
-                if status in {'PEC_COMPILE_ERROR', 'PEC_CONTEXT_ERROR'}:
+                if status == 'PEC_COMPILE_ERROR':
                     run_io.update_run(
-                        directory, record, status='BLOCKED_PEC_CONTEXT', passed=False,
-                        stage='finished', stop_reason='pec_context_error',
-                        diagnosis_skipped_reason='PEC declarations/context failed; no semantic verdict. '
-                                                 'Retain the candidate and repair the checker context.')
+                        directory, record, status='BLOCKED_PEC_COMPILE', passed=False,
+                        stage='finished', stop_reason='pec_compile_error',
+                        diagnosis_skipped_reason='Native PEC compilation failed; no semantic verdict. '
+                                                 'Inspect native diagnostics before assertion revision.')
                     return 1
 
                 # Next-round feedback comes only from whitelisted history outcomes.

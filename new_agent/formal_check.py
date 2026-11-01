@@ -2,7 +2,8 @@
 
 The native evaluator invokes its original Jasper launcher/Tcl/PEC. Immediately
 before launch, our source-boundary adapter replaces the two property-expression
-arguments. Typed context adapts generated PEC declarations before analysis.
+arguments and supplies a prepared signal-name list. Native PEC files and Tcl
+remain untouched; there is no analyze-command interception or Tcl overlay.
 Human/Machine SYN checking includes the full candidate in the TB. Missing PEC
 verdicts remain unavailable and cannot be accepted through text similarity.
 """
@@ -23,8 +24,7 @@ from time import perf_counter
 import traceback
 from types import SimpleNamespace
 from new_agent.pec_input_adapter import ExtractionError, prepare_pec_inputs
-from new_agent.pec_context_adapter import prepare_signal_list, inspect_checker_context
-from new_agent.typed_pec import ContextPreparationError, prepare_launcher, read_applied, candidate_testbench
+from new_agent.pec_context_adapter import prepare_signal_list
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -212,8 +212,6 @@ def _execution_status(output: str) -> str:
     lines = [line for line in output.splitlines() if not re.match(r"^\s*(?:%\s*)?#", line)]
     text = "\n".join(lines)
     lower = text.lower()
-    if 'fvrule_pec_context_error' in lower:
-        return 'PEC_CONTEXT_ERROR'
     if "jasper_timeout:" in lower or "timeout: jaspergold" in lower:
         return "TIMEOUT"
     if any(word in lower for word in ("license checkout failed", "failed to checkout license",
@@ -240,6 +238,22 @@ def _execution_status(output: str) -> str:
     if verdict == "INCONCLUSIVE" and re.search(r"\bsyntax error\b", text, re.I):
         return "SYNTAX_ERROR"
     return verdict
+
+
+def _candidate_testbench(testbench, assertion, module_name=None):
+    """Insert the candidate into the plaintext TB for existing native SYN checking."""
+    import pyslang
+    tree = pyslang.syntax.SyntaxTree.fromText(testbench)
+    root = tree.root
+    modules = [root] if root.kind.name == 'ModuleDeclaration' else [
+        item for item in root.members if item.kind.name == 'ModuleDeclaration']
+    if module_name:
+        modules = [item for item in modules if item.header.name.valueText == module_name]
+    if len(modules) != 1:
+        raise ValueError('Candidate SYN checking requires one TB module; set PEC_CONTEXT_MODULE.')
+    position = modules[0].endmodule.location.offset
+    raw = testbench.encode('utf-8')
+    return raw[:position].decode() + '\n// Candidate for native SYN checking\n' + assertion + '\n' + raw[position:].decode()
 
 
 def evaluate_assertion(generated_assertion: str, reference_assertion: str, testbench: str,
@@ -285,7 +299,7 @@ def evaluate_assertion(generated_assertion: str, reference_assertion: str, testb
     from new_agent import config
     packaged_tb = testbench
     if dataset in {'nl2sva_human', 'nl2sva_machine'}:
-        packaged_tb = candidate_testbench(testbench, generated_assertion,
+        packaged_tb = _candidate_testbench(testbench, generated_assertion,
                                          getattr(config, 'PEC_CONTEXT_MODULE', None))
     lm_result = _SESSION.data.LMResult(experiment_id=dataset, task_id=tool_id, model_name=model_name,
         response=generated_assertion, ref_solution=reference_assertion,
@@ -313,15 +327,13 @@ def evaluate_assertion(generated_assertion: str, reference_assertion: str, testb
         from new_agent import config
         effective_names, context_preparation = prepare_signal_list(
             testbench, bound.arguments.get("signal_list_text", ""),
-            module_name=getattr(config, "PEC_CONTEXT_MODULE", None),
-            assertion_texts=(preparation['generated']['formula'], preparation['reference']['formula']))
+            module_name=getattr(config, "PEC_CONTEXT_MODULE", None))
         bound.arguments["signal_list_text"] = effective_names
         result["pec_context_preparation"] = context_preparation
         preparation["native_formulas"] = native_formulas
         result["pec_input_preparation"] = preparation
         bound.arguments["lm_assertion_text"] = preparation["generated"]["formula"]
         bound.arguments["ref_assertion_text"] = preparation["reference"]["formula"]
-        prepare_launcher(bound, context_preparation, directory / 'typed_pec')
         _write_json(directory / "native_pec_inputs.json", {
             "args": list(bound.args), "kwargs": bound.kwargs,
             "preparation": preparation,
@@ -331,13 +343,6 @@ def evaluate_assertion(generated_assertion: str, reference_assertion: str, testb
         except Exception as error:
             outputs.append(str(error))
             raise
-        read_applied(context_preparation)
-        if (context_preparation['mode'] == 'typed'
-                and not context_preparation.get('typed_context_applied')
-                and _execution_status(output) in SEMANTIC_STATUSES):
-            output += '\nFVRULE_PEC_CONTEXT_ERROR: typed declaration hook was not applied; verdict unavailable.'
-        context_preparation["checker_context"] = inspect_checker_context(
-            bound.arguments.get("sv_dir", directory / "_work"))
         outputs.append(output)
         return output
 
@@ -365,10 +370,7 @@ def evaluate_assertion(generated_assertion: str, reference_assertion: str, testb
     except Exception as error:
         result["tool_output"] = "\n".join(outputs) or str(error)
         observed = _execution_status(result["tool_output"])
-        result["status"] = observed if observed in {"TIMEOUT", "PEC_COMPILE_ERROR", "PEC_CONTEXT_ERROR", "SYNTAX_ERROR"} else "TOOL_ERROR"
-        if isinstance(error, ContextPreparationError):
-            result['status'] = 'PEC_CONTEXT_ERROR'
-            result['error_origin'] = 'pec_context'
+        result["status"] = observed if observed in {"TIMEOUT", "PEC_COMPILE_ERROR", "SYNTAX_ERROR"} else "TOOL_ERROR"
         if isinstance(error, ExtractionError):
             result["status"] = "INPUT_ERROR"
             result["error_origin"] = "pec_extraction"
@@ -384,8 +386,6 @@ def evaluate_assertion(generated_assertion: str, reference_assertion: str, testb
         if native_input.is_file():
             shutil.copyfile(native_input, result["input_path"])
         Path(result["log_path"]).write_text(result["tool_output"] + "\n", encoding="utf-8")
-    if result['status'] == 'PEC_CONTEXT_ERROR':
-        result['error_origin'] = 'pec_context'
     apply_acceptance_policy(result)
     result["native_timing"]["total_seconds"] = perf_counter() - started
     result["feedback"] = (f"Formal status: {result['status']}\nSyntax: {result['syntax']}; strict PEC: {result['pec']}; "

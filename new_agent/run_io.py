@@ -426,11 +426,11 @@ def final_record(record: dict) -> dict:
         context = formal['pec_context_preparation']
         saved['formal']['pec_context_preparation'] = {
             key: deepcopy(context[key]) for key in (
-                'adapter_version', 'mode', 'status', 'error', 'typed_context_applied',
-                'native_file_decoding', 'unsupported_required_declarations',
+                'adapter_version', 'mode', 'status', 'module', 'parser_version',
+                'native_signal_list', 'effective_signal_list', 'added_names', 'removed_parameters', 'not_added',
             ) if key in context
         }
-    if formal is not None and formal.get('status') in {'PEC_CONTEXT_ERROR', 'PEC_COMPILE_ERROR'}:
+    if formal is not None and formal.get('status') == 'PEC_COMPILE_ERROR':
         output = formal.get('tool_output')
         if isinstance(output, str):
             saved['formal']['tool_output'] = output[-6000:]
@@ -603,7 +603,7 @@ def _debug_event_text(record: dict, event: str, data: dict) -> str:
             "passed": "The supplied FVRuleLearner PEC checker reported full equivalence.",
             "bleu_match": "BLEU is 1.0; accepted under FVRuleLearner's PEC-or-BLEU policy. Reported PEC/relaxed PEC are 1.0; raw scores remain in the formal result.",
             "max_rounds": "Maximum assertion attempts reached.",
-            "pec_context_error": "PEC context compilation failed after declaration adaptation; no equivalence verdict.",
+            "pec_compile_error": "Native PEC compilation failed; no equivalence verdict.",
             "no_guidance": "Rule generator returned no rules.",
             "interrupted": "Execution was interrupted by the user.",
         }.get(reason, f"Processing ended with {reason}.")

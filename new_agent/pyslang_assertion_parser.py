@@ -11,7 +11,7 @@ def parse_assertion(assertion):
     try:
         import pyslang
     except ImportError as error:
-        raise ParseError('pyslang is required; install requirements_pec_update.txt') from error
+        raise ParseError('pyslang is required; install requirements_new_agent.txt') from error
     text = assertion.strip()
     wrapped = bool(re.search(r'\bassert\s+property\s*\(', text))
     statement = text if wrapped else 'assert property (' + text + ');'
@@ -143,3 +143,4 @@ def parse_assertion(assertion):
         raise
     except (AttributeError, TypeError, ValueError) as error:
         raise ParseError('Unsupported pyslang localization structure: ' + str(error)) from error
+
