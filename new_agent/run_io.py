@@ -416,7 +416,7 @@ def final_record(record: dict) -> dict:
         name: formal[name]
         for name in SCORE_FIELDS + (
             "status", "comparison_scope", "backend", "native_source", "native_metrics",
-            "raw_scores", "accepted", "acceptance_reason",
+            "raw_scores", "accepted", "acceptance_reason", "retained_diagnostics", "evaluation_reused_from_round",
             "native_similarity", "native_timing", "similarity_error", "evaluation_error",
             "returncode", "source_task_id", "tool_task_id", "log_path", "input_path", "cleanup",
         )
@@ -495,8 +495,8 @@ def _debug_event_text(record: dict, event: str, data: dict) -> str:
     """Render only the outputs and decisions useful when inspecting a case."""
     if event == "assertion_request":
         number = record["pending_attempt"]["round"]
-        if record["settings"].get("inference_workflow"):
-            source = record.get("inference_feedback_round")
+        if record["settings"].get("inference_workflow") or record["settings"].get("training_workflow"):
+            source = record.get("inference_feedback_round") if record["settings"].get("inference_workflow") else record.get('training_feedback_round')
             feedback = (f"complete diagnosis from round {source}" if source is not None
                         else "none available from the preceding round")
             return (f"\nROUND {number}\n=======\nDiagnosis feedback: {feedback}\n\n"
@@ -508,11 +508,24 @@ def _debug_event_text(record: dict, event: str, data: dict) -> str:
             f"\nROUND {number}\n=======\nRule groups used: {groups}\n\n"
             "ASSERTION GENERATOR OUTPUT"
         )
+    if event == 'guidance_context':
+        payload = data.get('payload')
+        if isinstance(payload, str):
+            try:
+                payload = json.loads(payload)
+            except ValueError:
+                pass
+        return ('\nGENERATOR GUIDANCE — FROM ROUND ' + str(data.get('source_round')) + '\n'
+                + json.dumps(payload, ensure_ascii=False, indent=2))
+    if event == 'revision_retry':
+        return '\nREVISION REASSESSMENT\nRepeated a known non-equivalent attempt from rounds ' + str(data['rounds'])
     if event == "assertion_response":
         return data["raw_response"]
     if event == "formal_check":
         formal = data["formal_result"]
         lines = ["\nFORMAL RESULT", f"Status: {formal['status']}"]
+        if formal.get('evaluation_reused_from_round') is not None:
+            lines.append('Completed comparison reused from round: ' + str(formal['evaluation_reused_from_round']))
         for label, key in (
             ("Syntax", "syntax"), ("Strict PEC", "pec"), ("Relaxed PEC", "relax_pec"),
             ("BLEU", "bleu"), ("ROUGE-L", "rouge"), ("Exact match", "exact_match"),
@@ -578,6 +591,7 @@ def _debug_event_text(record: dict, event: str, data: dict) -> str:
             "passed": "The supplied FVRuleLearner PEC checker reported full equivalence.",
             "bleu_match": "BLEU is 1.0; accepted under FVRuleLearner's PEC-or-BLEU policy. Reported PEC/relaxed PEC are 1.0; raw scores remain in the formal result.",
             "max_rounds": "Maximum assertion attempts reached.",
+            "pec_context_error": "PEC context compilation failed after declaration adaptation; no equivalence verdict.",
             "no_guidance": "Rule generator returned no rules.",
             "interrupted": "Execution was interrupted by the user.",
         }.get(reason, f"Processing ended with {reason}.")
@@ -607,6 +621,7 @@ def save_debug_event(run_dir, record: dict, event: str, **data) -> None:
     if not text:
         return
     path = Path(run_dir) / "debug_trace.txt"
+    path.parent.mkdir(parents=True, exist_ok=True)
     first_write = not path.exists()
     with path.open("a", encoding="utf-8", newline="\n") as file:
         new_flat_case = (record["settings"].get("flat_training_output") and
@@ -665,11 +680,11 @@ def record_formal_result(run_dir, record: dict, attempt: dict, formal: dict) -> 
         "accepted": formal.get("accepted", False),
         "acceptance_reason": formal.get("acceptance_reason"),
         "pec_context_preparation": deepcopy(formal.get("pec_context_preparation")),
+        "evaluation_reused_from_round": formal.get('evaluation_reused_from_round'),
+        "retained_diagnostics": formal.get('retained_diagnostics', []),
     }
     if record.get("usage_rounds"):
-        record["usage_rounds"][-1]["passed"] = (
-            formal.get("pec") == 1.0 or formal.get("bleu") == 1.0
-        )
+        record["usage_rounds"][-1]["passed"] = formal.get('accepted', False)
     update_run(
         run_dir, record,
         generation=deepcopy(attempt["generation"]),
@@ -980,6 +995,7 @@ def print_summary(run_dir, record: dict) -> None:
         print("Evaluation:", Path(run_dir) / "evaluation.csv")
     else:
         print("Result:", Path(run_dir) / "result.json")
+
 
 
 

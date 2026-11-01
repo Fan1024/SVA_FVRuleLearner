@@ -123,7 +123,8 @@ def bank_rule_ids(bank):
     return {rule['id'] for case in bank['cases'] for rule in case['rules']}
 
 
-def build_selector_prompt(requirement, testbench, tree, rule_bank, *, evaluation_status):
+def build_selector_prompt(requirement, testbench, tree, rule_bank, *, evaluation_status,
+                          previous_transition=None):
     """No reference argument, raw result, policy, metrics, logs or template."""
     # Re-project cached data rather than trusting arbitrary bank metadata.
     bank = {
@@ -139,6 +140,8 @@ def build_selector_prompt(requirement, testbench, tree, rule_bank, *, evaluation
     data = {"requirement": requirement, "testbench": testbench,
             "generated_tree": compact_tree(tree), "retrieved_training_guidance": bank,
             "evaluation_feedback": evaluation_feedback(evaluation_status)}
+    if previous_transition is not None:
+        data['last_revision'] = previous_transition
     return TASK_INSTRUCTIONS + "\nINPUT DATA\n" + json.dumps(data, ensure_ascii=False, indent=2)
 
 
@@ -236,6 +239,7 @@ def generator_view(guidance, assertion, source_round):
                   ("location", "expected_behavior", "observed_behavior", "why_it_matters")}
                  for entry in guidance.get("locations", [])]
     return {"ranked_rules": ranked, "locations": locations}
+
 
 
 

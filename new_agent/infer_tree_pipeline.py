@@ -12,6 +12,9 @@ from tempfile import TemporaryDirectory
 from openai import OpenAI
 from new_agent import config, formal_check, model_io, run_io
 from new_agent import tree_archive
+from new_agent.revision_context import reconsider_repeat, evaluate_once, last_transition, retain_checker_failure
+from new_agent.typed_pec import ContextPreparationError
+from new_agent.training_prompt_context import evaluation_feedback
 from new_agent.pipeline import (
     _failed_round, _remember_round_error,
 )
@@ -30,6 +33,8 @@ def _save_inference_trace(directory, record, round_number):
         entry = {key: evidence.get(key) for key in
                  ("round", "generated_assertion", "evaluation", "diagnosis_from_round",
                   "pec_input_preparation")}
+        entry['guidance_payload'] = evidence.get('guidance_payload')
+        entry['generation_prompts'] = evidence.get('generation_prompts')
         entry["pec_context_preparation"] = (evidence.get("evaluation") or {}).get("pec_context_preparation")
         if isinstance(entry.get("evaluation"), dict):
             entry["evaluation"] = {key: value for key, value in entry["evaluation"].items()
@@ -146,9 +151,14 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
                         "requirement": inputs["requirement"], "testbench": inputs["testbench"],
                         "examples": example_cases, "previous_assertion": previous_assertion,
                         "previous_round": previous_round, "selector_guidance": latest_selector_guidance,
+                        "previous_evaluation": evaluation_feedback((record.get('formal') or {}).get('status')),
                         "assertion_template": template,
                     }
                     user_prompt = assertion_generator.build_generation_prompt(**generation_inputs)
+                    evidence['guidance_payload'] = deepcopy(latest_selector_guidance)
+                    run_io.save_debug_event(directory, record, 'guidance_context',
+                                            source_round=latest_selector_round,
+                                            payload=latest_selector_guidance)
                     # Only the latest selector response is used. No assertion history,
                     # old rules, native logs, scores or reference enters this prompt.
                     latest_selector_guidance = latest_selector_round = None
@@ -167,6 +177,13 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
                     stage = "extraction"
                     run_io.update_run(directory, record, stage=stage)
                     generated_assertion = model_io.extract_assertion(response_text)
+                    response_text, generated_assertion = reconsider_repeat(
+                        directory=directory, record=record, attempt=attempt,
+                        assertion=generated_assertion, response_text=response_text,
+                        user_prompt=user_prompt, instructions=assertion_generator.SYSTEM_PROMPT,
+                        client=client, model=config.ASSERTION_MODEL)
+                    attempt['generation']['raw_response'] = response_text
+                    evidence['generation_prompts'] = deepcopy(attempt['prompts'])
                     attempt["generation"]["assertion"] = generated_assertion
                     record["round_evidence"][-1]["generated_assertion"] = generated_assertion
                     previous_assertion = generated_assertion
@@ -174,7 +191,7 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
                     stage = "formal_check"
                     run_io.update_run(directory, record, stage=stage)
                     with run_io.measure_stage(record, "tool"):
-                        formal_result = formal_check.evaluate_assertion(
+                        formal_result = evaluate_once(record, round_number,
                             generated_assertion=generated_assertion,
                             reference_assertion=inputs["reference_assertion"],
                             testbench=inputs["testbench"], requirement=inputs["requirement"],
@@ -185,6 +202,8 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
                 except Exception as error:
                     _remember_round_error(directory, record, round_number, stage, error)
                     status = {"generation": "GENERATION_ERROR", "extraction": "FORMAT_ERROR"}.get(stage, "TOOL_ERROR")
+                    if isinstance(error, ContextPreparationError):
+                        status = 'PEC_CONTEXT_ERROR' 
                     formal_result = _failed_round(
                         check_dir, round_number, status, f"{stage}: {type(error).__name__}: {error}", policy,
                     )
@@ -192,10 +211,11 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
                 # Persistent diagnostics disabled: the surrounding temporary-directory
                 # context owns every native tool file, including failures/interruption.
                 # Comment out this block when restoring persistent formal diagnostics.
+                retain_checker_failure(directory, record, round_number, formal_result)
                 formal_result["log_path"] = formal_result["input_path"] = None
                 formal_result["cleanup"] = {
                     "retained": False,
-                    "reason": "Formal files are temporary and removed when this round exits.",
+                    "reason": "Temporary native work removed; small checker-failure diagnostics retained when tracing is enabled.",
                 }
                 formal_check.apply_acceptance_policy(formal_result)
                 run_io.record_formal_result(directory, record, attempt, formal_result)
@@ -233,6 +253,14 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
                     )
                     return 0
 
+                if status in {'PEC_COMPILE_ERROR', 'PEC_CONTEXT_ERROR'}:
+                    run_io.update_run(
+                        directory, record, status='BLOCKED_PEC_CONTEXT', passed=False,
+                        stage='finished', stop_reason='pec_context_error',
+                        diagnosis_skipped_reason='PEC declarations/context failed; no semantic verdict. '
+                                                 'Retain the candidate and repair the checker context.')
+                    return 1
+
                 # No detailed checker feedback is sent to assertion generation.
                 if round_number == config.MAX_ROUNDS:
                     run_io.update_run(directory, record, diagnosis_skipped_reason="Round budget exhausted.")
@@ -241,18 +269,13 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
                     run_io.update_run(directory, record,
                                       diagnosis_skipped_reason="Tree archive unavailable after evaluation.")
                     continue
-                if status not in {"IMPLIES", "NO_EQUIVALENCE", "PEC_COMPILE_ERROR"}:
+                if status not in {"IMPLIES", "NO_EQUIVALENCE"}:
                     run_io.update_run(
                         directory, record,
                         diagnosis_skipped_reason="No eligible comparison outcome; retry assertion generation without selector guidance.",
                     )
                     continue
 
-                if status == "PEC_COMPILE_ERROR":
-                    print(
-                        f"Round {round_number}: PEC verdict unavailable; continuing "
-                        "with requirement-based rule ranking and independent issue localization.", flush=True,
-                    )
                 stage = "retrieval"
                 try:
                     if candidates is None:
@@ -271,7 +294,8 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
                     run_io.update_run(directory, record, stage=stage)
                     prompt = selector.build_selector_prompt(
                         inputs["requirement"], inputs["testbench"], tree,
-                        record["retrieved_rule_bank"], evaluation_status=status)
+                        record["retrieved_rule_bank"], evaluation_status=status,
+                        previous_transition=last_transition(record['round_evidence'], generated_assertion, status))
                     evidence["selector_checker_status"] = status
                     run_io.save_debug_event(directory, record, "selector_request")
                     # Reuse the existing 'rule' usage column for selector cost only.
@@ -312,4 +336,5 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
         passed=False, stage="finished", stop_reason="max_rounds",
     )
     return 0 if resolved else 1
+
 

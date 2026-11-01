@@ -38,6 +38,22 @@ is requested. Do not invent a finding just to populate the lists.
 If the requirement and reference disagree, explicitly describe that conflict;
 do not turn a benchmark-specific discrepancy into a universal correction rule.
 
+REVISION REVIEW
+When last_revision is supplied, assess the actual before/after transition and
+the prior guidance before proposing another correction. State in the high-level
+diagnosis whether its behavioral premise still applies, was resolved, was not
+implemented, or was unsupported. A failed/unchanged revision is a reason to
+reconsider scope and the complete obligation, not restate the same suggestion.
+Keep the current assertion as the source of all current locations. Do not
+invent a defect when no supported behavioral difference can be identified.
+
+FOUR-STATE SEMANTICS
+Distinguish logical inequality (!=) from case inequality (!==). An expression
+P !== 1'b1 is true when P is 0, X or Z and false only when P is 1. It therefore
+rejects only a definitely true bad condition. Do not claim the outer comparison
+rejects an unknown P. Whether a language-level distinction matters to the
+checker requires evidence about that model; do not invent a formal verdict.
+
 BEHAVIOR-FIRST DIAGNOSIS
 1. Interpret the complete reference and generated properties: trigger, response,
    guards, timing, relevant state/history, polarity and any required X/Z behavior.
@@ -133,3 +149,4 @@ separate analysis report, complete assertions or mechanical-edit inventory.
 Return empty diagnoses/corrections when no supported issue/correction is found;
 still provide the brief behavior_review. These outputs are fallible guidance.
 """
+

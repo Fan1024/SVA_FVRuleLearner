@@ -4,7 +4,7 @@ Never serialize raw formal results into a model request. Evaluation settings,
 metrics, logs and input-extraction policy stay outside the training prompts.
 """
 
-PROMPT_VERSION = "training_behavior_first_v1"
+PROMPT_VERSION = "training_independent_revision_v2"
 
 NOT_EQUIVALENT = (
     "JasperGold completed the functional-equivalence comparison. "
@@ -18,6 +18,10 @@ NO_VERDICT = (
     "No functional-equivalence verdict was obtained for this attempt. "
     "This is not evidence of a functional mismatch."
 )
+SYNTAX_FAILURE = (
+    'JasperGold could not compile/elaborate the generated candidate in the testbench. '
+    'Review its source syntax, declarations and valid selections; no equivalence verdict was obtained.'
+)
 
 
 def evaluation_feedback(status):
@@ -26,6 +30,8 @@ def evaluation_feedback(status):
         return NOT_EQUIVALENT
     if status == "FULL_EQUIVALENCE":
         return EQUIVALENT
+    if status == 'SYNTAX_ERROR':
+        return SYNTAX_FAILURE
     return NO_VERDICT
 
 
@@ -87,3 +93,4 @@ task and SystemVerilog semantics. Apply supported guidance, or adapt/reject it
 for a specific behavioral or syntax reason. Preserve unrelated required behavior.
 A rule's presence, wording or prior use does not establish its correctness.
 """
+

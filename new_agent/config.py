@@ -64,4 +64,13 @@ EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 # Formal-tool work and native logs remain temporary.
 SAVE_DEBUG_TRACES = True
 
+# Preserve packed ranges, signedness and evaluated TB parameters in native PEC.
+# "legacy" and "expanded_names" remain available for baseline comparisons.
+PEC_CONTEXT_MODE = "typed"
+PEC_CONTEXT_MODULE = None
+
+# Pyslang establishes SVA grouping. Unsupported translations use original source.
+ASSERTION_TREE_PARSER = "pyslang"
+
+
 

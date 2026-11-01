@@ -2,8 +2,9 @@
 
 The native evaluator invokes its original Jasper launcher/Tcl/PEC. Immediately
 before launch, our source-boundary adapter replaces the two property-expression
-arguments. The context adapter adds declared TB names to SIGNAL_LIST. Native
-tool commands, property extraction policy and scoring definitions are retained.
+arguments. Typed context adapts generated PEC declarations before analysis.
+Human/Machine SYN checking includes the full candidate in the TB. Missing PEC
+verdicts remain unavailable and cannot be accepted through text similarity.
 """
 
 from dataclasses import asdict
@@ -23,6 +24,7 @@ import traceback
 from types import SimpleNamespace
 from new_agent.pec_input_adapter import ExtractionError, prepare_pec_inputs
 from new_agent.pec_context_adapter import prepare_signal_list, inspect_checker_context
+from new_agent.typed_pec import ContextPreparationError, prepare_launcher, read_applied, candidate_testbench
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -40,8 +42,9 @@ def apply_acceptance_policy(result: dict) -> dict:
     raw = result.setdefault("raw_scores", {
         name: result.get(name) for name in ("syntax", "pec", "relax_pec")
     })
-    bleu_match = result.get("bleu") == 1.0
-    native_pass = raw.get("pec") == 1.0
+    completed = result.get('status') in SEMANTIC_STATUSES
+    bleu_match = completed and result.get("bleu") == 1.0
+    native_pass = completed and raw.get("pec") == 1.0
     result["accepted"] = native_pass or bleu_match
     result["acceptance_reason"] = "pec" if native_pass else "bleu_match" if bleu_match else None
     if bleu_match:
@@ -85,8 +88,8 @@ def get_evaluation_policy(dataset: str) -> dict:
         "conditions absent from the requirement/testbench."
     )
     return {"scope": scope + " Keep the complete assertion syntactically valid. "
-            "Native per-round training writes the original dataset testbench; "
-            "it does not separately compile an inserted full generated assertion.",
+            "Native Human/Machine SYN checking compiles the full generated assertion "
+            "inserted into the supplied testbench before running PEC.",
             "include_reset": not human, "tcl_file": f"run_jg_{dataset}.tcl",
             "assertion_template": (
                 "asrt: assert property (@(posedge clk) BODY);" if human else
@@ -209,6 +212,8 @@ def _execution_status(output: str) -> str:
     lines = [line for line in output.splitlines() if not re.match(r"^\s*(?:%\s*)?#", line)]
     text = "\n".join(lines)
     lower = text.lower()
+    if 'fvrule_pec_context_error' in lower:
+        return 'PEC_CONTEXT_ERROR'
     if "jasper_timeout:" in lower or "timeout: jaspergold" in lower:
         return "TIMEOUT"
     if any(word in lower for word in ("license checkout failed", "failed to checkout license",
@@ -277,9 +282,14 @@ def evaluate_assertion(generated_assertion: str, reference_assertion: str, testb
     except Exception as error:
         result["similarity_error"] = f"{type(error).__name__}: {error}"
     result["native_timing"]["similarity_seconds"] = perf_counter() - similarity_started
+    from new_agent import config
+    packaged_tb = testbench
+    if dataset in {'nl2sva_human', 'nl2sva_machine'}:
+        packaged_tb = candidate_testbench(testbench, generated_assertion,
+                                         getattr(config, 'PEC_CONTEXT_MODULE', None))
     lm_result = _SESSION.data.LMResult(experiment_id=dataset, task_id=tool_id, model_name=model_name,
         response=generated_assertion, ref_solution=reference_assertion,
-        user_prompt=requirement, output_tb="\n" if dataset == "nl2sva_opencore" else testbench,
+        user_prompt=requirement, output_tb="\n" if dataset == "nl2sva_opencore" else packaged_tb,
         design_rtl="\n", cot_response="\n")
     original_launcher = _SESSION.execution.launch_jg_custom_equiv_check
     outputs = []
@@ -310,6 +320,7 @@ def evaluate_assertion(generated_assertion: str, reference_assertion: str, testb
         result["pec_input_preparation"] = preparation
         bound.arguments["lm_assertion_text"] = preparation["generated"]["formula"]
         bound.arguments["ref_assertion_text"] = preparation["reference"]["formula"]
+        prepare_launcher(bound, context_preparation, directory / 'typed_pec')
         _write_json(directory / "native_pec_inputs.json", {
             "args": list(bound.args), "kwargs": bound.kwargs,
             "preparation": preparation,
@@ -319,6 +330,11 @@ def evaluate_assertion(generated_assertion: str, reference_assertion: str, testb
         except Exception as error:
             outputs.append(str(error))
             raise
+        read_applied(context_preparation)
+        if (context_preparation['mode'] == 'typed'
+                and not context_preparation.get('typed_context_applied')
+                and _execution_status(output) in SEMANTIC_STATUSES):
+            output += '\nFVRULE_PEC_CONTEXT_ERROR: typed declaration hook was not applied; verdict unavailable.'
         context_preparation["checker_context"] = inspect_checker_context(
             bound.arguments.get("sv_dir", directory / "_work"))
         outputs.append(output)
@@ -343,10 +359,15 @@ def evaluate_assertion(generated_assertion: str, reference_assertion: str, testb
                 # supplied native scorer, not that first message, is authoritative.
                 result["status"] = ("FULL_EQUIVALENCE" if scores["functionality"] == 1.0 else
                                     "IMPLIES" if scores["func_relaxed"] == 1.0 else "NO_EQUIVALENCE")
+        if result['status'] not in SEMANTIC_STATUSES:
+            result['pec'] = result['relax_pec'] = None
     except Exception as error:
         result["tool_output"] = "\n".join(outputs) or str(error)
         observed = _execution_status(result["tool_output"])
-        result["status"] = observed if observed in {"TIMEOUT", "PEC_COMPILE_ERROR", "SYNTAX_ERROR"} else "TOOL_ERROR"
+        result["status"] = observed if observed in {"TIMEOUT", "PEC_COMPILE_ERROR", "PEC_CONTEXT_ERROR", "SYNTAX_ERROR"} else "TOOL_ERROR"
+        if isinstance(error, ContextPreparationError):
+            result['status'] = 'PEC_CONTEXT_ERROR'
+            result['error_origin'] = 'pec_context'
         if isinstance(error, ExtractionError):
             result["status"] = "INPUT_ERROR"
             result["error_origin"] = "pec_extraction"
@@ -398,5 +419,6 @@ def cleanup_work(result: dict, keep_work=False, *, preserve_unresolved=True) -> 
         return {"retained": True, "reason": "Ownership check failed; no files deleted."}
     shutil.rmtree(work)
     return {"retained": False, "reason": "Removed owned native evaluation work."}
+
 
 

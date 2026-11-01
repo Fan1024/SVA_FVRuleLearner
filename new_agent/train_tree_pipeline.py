@@ -13,6 +13,8 @@ from tempfile import TemporaryDirectory
 from openai import OpenAI
 from new_agent import config, formal_check, model_io, run_io
 from new_agent import tree_archive
+from new_agent.revision_context import reconsider_repeat, evaluate_once, last_transition, retain_checker_failure
+from new_agent.typed_pec import ContextPreparationError
 from new_agent.correction_locations import feedback_json
 from new_agent.pipeline import (
     _failed_round, _remember_round_error, retained_rules, update_rule_registry,
@@ -44,6 +46,8 @@ def _save_round_trace(directory, record, round_number):
             "pec_input_preparation": evidence.get("pec_input_preparation"),
             "pec_context_preparation": (evaluation or {}).get("pec_context_preparation"),
             "diagnosis_from_round": evidence.get("diagnosis_from_round"),
+            "guidance_payload": evidence.get("guidance_payload"),
+            "generation_prompts": evidence.get('generation_prompts'),
         }
         if trees and "generated" in trees:
             entry["generated_tree"] = compact_tree(trees["generated"], include_source=False)
@@ -117,6 +121,7 @@ def run_training_pipeline(directory, record: dict, *, retriever=None) -> int:
         with _save_round_trace(directory, record, round_number):
             run_io.start_usage_round(record, round_number)
             # A failed call before extraction must never associate old text with new scores.
+            record['training_feedback_round'] = latest_diagnosis_round
             attempt = run_io.start_attempt(
                 directory, record, round_number,
                 system_prompt=assertion_generator.SYSTEM_PROMPT,
@@ -147,6 +152,10 @@ def run_training_pipeline(directory, record: dict, *, retriever=None) -> int:
                         "assertion_template": template,
                     }
                     user_prompt = assertion_generator.build_generation_prompt(**generation_inputs)
+                    evidence['guidance_payload'] = latest_diagnosis_response
+                    run_io.save_debug_event(directory, record, 'guidance_context',
+                                            source_round=latest_diagnosis_round,
+                                            payload=latest_diagnosis_response)
                     if previous_assertion is not None:
                         if latest_diagnosis_response is not None:
                             print(f"Round {round_number}: forwarding complete diagnosis from round "
@@ -172,13 +181,20 @@ def run_training_pipeline(directory, record: dict, *, retriever=None) -> int:
                     stage = "extraction"
                     run_io.update_run(directory, record, stage=stage)
                     generated_assertion = model_io.extract_assertion(response_text)
+                    response_text, generated_assertion = reconsider_repeat(
+                        directory=directory, record=record, attempt=attempt,
+                        assertion=generated_assertion, response_text=response_text,
+                        user_prompt=user_prompt, instructions=assertion_generator.SYSTEM_PROMPT,
+                        client=client, model=config.ASSERTION_MODEL)
+                    attempt['generation']['raw_response'] = response_text
+                    evidence['generation_prompts'] = deepcopy(attempt['prompts'])
                     attempt["generation"]["assertion"] = generated_assertion
                     record["round_evidence"][-1]["generated_assertion"] = generated_assertion
                     previous_assertion = generated_assertion
                     stage = "formal_check"
                     run_io.update_run(directory, record, stage=stage)
                     with run_io.measure_stage(record, "tool"):
-                        formal_result = formal_check.evaluate_assertion(
+                        formal_result = evaluate_once(record, round_number,
                             generated_assertion=generated_assertion,
                             reference_assertion=inputs["reference_assertion"],
                             testbench=inputs["testbench"], requirement=inputs["requirement"],
@@ -189,6 +205,8 @@ def run_training_pipeline(directory, record: dict, *, retriever=None) -> int:
                 except Exception as error:
                     _remember_round_error(directory, record, round_number, stage, error)
                     status = {"generation": "GENERATION_ERROR", "extraction": "FORMAT_ERROR"}.get(stage, "TOOL_ERROR")
+                    if isinstance(error, ContextPreparationError):
+                        status = 'PEC_CONTEXT_ERROR' 
                     formal_result = _failed_round(
                         check_dir, round_number, status, f"{stage}: {type(error).__name__}: {error}", policy,
                     )
@@ -196,10 +214,11 @@ def run_training_pipeline(directory, record: dict, *, retriever=None) -> int:
                 # Persistent diagnostics disabled: the surrounding temporary-directory
                 # context owns every native tool file, including failures/interruption.
                 # Comment out this block when restoring persistent formal diagnostics.
+                retain_checker_failure(directory, record, round_number, formal_result)
                 formal_result["log_path"] = formal_result["input_path"] = None
                 formal_result["cleanup"] = {
                     "retained": False,
-                    "reason": "Formal files are temporary and removed when this round exits.",
+                    "reason": "Temporary native work removed; small checker-failure diagnostics retained when tracing is enabled.",
                 }
                 formal_check.apply_acceptance_policy(formal_result)
                 run_io.record_formal_result(directory, record, attempt, formal_result)
@@ -238,6 +257,14 @@ def run_training_pipeline(directory, record: dict, *, retriever=None) -> int:
                     )
                     return 0
 
+                if status in {'PEC_COMPILE_ERROR', 'PEC_CONTEXT_ERROR'}:
+                    run_io.update_run(
+                        directory, record, status='BLOCKED_PEC_CONTEXT', passed=False,
+                        stage='finished', stop_reason='pec_context_error',
+                        diagnosis_skipped_reason='PEC declarations/context failed; no semantic verdict. '
+                                                 'Retain the candidate and repair the checker context.')
+                    return 1
+
                 # Next-round feedback comes only from whitelisted history outcomes.
                 # Native logs, metrics and evaluation-policy text stay in experiment records.
                 if round_number == config.MAX_ROUNDS:
@@ -247,18 +274,13 @@ def run_training_pipeline(directory, record: dict, *, retriever=None) -> int:
                     run_io.update_run(directory, record,
                                       diagnosis_skipped_reason="Tree archive unavailable after evaluation.")
                     continue
-                if status not in {"IMPLIES", "NO_EQUIVALENCE", "PEC_COMPILE_ERROR"}:
+                if status not in {"IMPLIES", "NO_EQUIVALENCE"}:
                     run_io.update_run(
                         directory, record,
                         diagnosis_skipped_reason="No completed semantic comparison; retry without semantic rule learning.",
                     )
                     continue
 
-                if status == "PEC_COMPILE_ERROR":
-                    print(
-                        f"Round {round_number}: PEC verdict unavailable; continuing "
-                        "with reference-based tree diagnosis and rule generation.", flush=True,
-                    )
                 stage = "tree_construction"
                 try:
                     run_io.update_run(directory, record, stage=stage)
@@ -278,6 +300,7 @@ def run_training_pipeline(directory, record: dict, *, retriever=None) -> int:
                         generated_assertion=generated_assertion,
                         reference_assertion=inputs["reference_assertion"], trees=trees,
                         evaluation_status=status,
+                        previous_transition=last_transition(record['round_evidence'], generated_assertion, status),
                     )
                     record["round_evidence"][-1]["rule_prompt"] = rule_prompt
                     run_io.save_debug_event(directory, record, "rule_request")
@@ -326,4 +349,5 @@ def run_training_pipeline(directory, record: dict, *, retriever=None) -> int:
         passed=False, stage="finished", stop_reason="max_rounds",
     )
     return 0 if resolved else 1
+
 

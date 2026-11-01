@@ -27,7 +27,7 @@ def build_trees(reference_assertion, generated_assertion):
 
 
 def build_rule_prompt(requirement, generated_assertion, reference_assertion,
-                      testbench, *, trees, evaluation_status):
+                      testbench, *, trees, evaluation_status, previous_transition=None):
     """Whitelist task data plus one fixed coarse result; never include logs/scores."""
     for side, source in (("generated", generated_assertion), ("reference", reference_assertion)):
         if trees[side].get("source_assertion") != source:
@@ -35,6 +35,8 @@ def build_rule_prompt(requirement, generated_assertion, reference_assertion,
     data = dict(requirement=requirement, testbench=testbench,
                 trees={side: compact_tree(trees[side]) for side in ("generated", "reference")},
                 evaluation_feedback=evaluation_feedback(evaluation_status))
+    if previous_transition is not None:
+        data['last_revision'] = previous_transition
     return TASK_INSTRUCTIONS + "\nINPUT DATA\n" + json.dumps(data, ensure_ascii=False, indent=2)
 
 
@@ -108,4 +110,5 @@ def export_rules(response, round_number):
         **({'diagnoses': linked_diagnoses(entry, response)}
            if 'diagnosis_ids' in entry or 'diagnoses' in entry else {}),
     } for i, entry in enumerate(response["corrections"], 1)}
+
 

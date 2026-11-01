@@ -16,6 +16,7 @@ def build(source, prefix):
 def inspection_tree(tree):
     """Keep recursive nodes and locations, omit duplicate flat summary arrays."""
     result = {key: tree[key] for key in ('source_assertion', 'root', 'context')}
+    result['parser'] = tree.get('parser', 'original_source_only')
     if tree.get('parse_error'):
         result['parse_error'] = tree['parse_error']
     return result
@@ -61,3 +62,4 @@ def finish_round(directory, record, round_number, evidence):
         entry['evaluation'] = {key: evaluation.get(key) for key in
                                ('status', 'accepted', 'acceptance_reason', 'bleu')}
     _write(directory, record)
+

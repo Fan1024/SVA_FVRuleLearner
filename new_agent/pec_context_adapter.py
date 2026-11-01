@@ -1,8 +1,7 @@
-"""Expand native PEC names from TB declarations; do not rewrite PEC or SVA.
+"""Collect TB signals and constants for native PEC declaration adaptation.
 
-The native interface accepts names, not typed declarations. Desired source
-types/constants and observed checker declarations are recorded separately.
-This module never determines SYN/PEC scores or parses the generated assertion.
+Typed mode applies evaluated packed ranges, signedness and constants through
+new_agent.typed_pec. Legacy modes remain available for baseline comparisons.
 """
 from copy import deepcopy
 from functools import lru_cache
@@ -10,17 +9,18 @@ from pathlib import Path
 import os
 import re
 
-VERSION = "expanded_tb_names_v1"
+VERSION = "typed_tb_context_v2"
 
 
 def context_mode():
     from new_agent import config
     return os.environ.get("FVRULE_PEC_CONTEXT_MODE",
-                          getattr(config, "PEC_CONTEXT_MODE", "expanded_names"))
+                          getattr(config, "PEC_CONTEXT_MODE", "typed"))
 
 
 def _type_info(typ):
     result = {"type": str(typ), "signed": bool(typ.isSigned),
+              "four_state": bool(typ.isFourState),
               "unpacked_array": bool(typ.isUnpackedArray),
               "integral": bool(typ.isIntegral), "type_error": bool(typ.isError)}
     if typ.isIntegral and not typ.isError:
@@ -79,8 +79,8 @@ def prepare_signal_list(testbench, native_signal_list, *, mode=None, module_name
     context is recorded and leaves native evaluation available.
     """
     mode = mode or context_mode()
-    if mode not in {"legacy", "expanded_names"}:
-        raise ValueError("PEC_CONTEXT_MODE must be legacy or expanded_names")
+    if mode not in {"legacy", "expanded_names", "typed"}:
+        raise ValueError("PEC_CONTEXT_MODE must be legacy, expanded_names or typed")
     original = list(dict.fromkeys(x.strip() for x in native_signal_list.split(",") if x.strip()))
     result = {"adapter_version": VERSION, "mode": mode,
               "native_signal_list": original, "effective_signal_list": list(original),
@@ -96,8 +96,12 @@ def prepare_signal_list(testbench, native_signal_list, *, mode=None, module_name
         result.update(status="context_unavailable_native_names_retained",
                       error=f"{type(error).__name__}: {error}")
         return native_signal_list, result
-    names = list(original)
-    for item in result["source_context"]["signals"] + result["source_context"]["parameters"]:
+    constants = {item['name'] for item in result['source_context']['parameters']}
+    names = [name for name in original if mode != 'typed' or name not in constants]
+    items = result["source_context"]["signals"]
+    if mode != 'typed':
+        items = items + result["source_context"]["parameters"]
+    for item in items:
         name = item["name"]
         if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_$]*", name):
             reason = "unsupported_native_identifier"
@@ -111,6 +115,11 @@ def prepare_signal_list(testbench, native_signal_list, *, mode=None, module_name
             names.append(name)
             result["added_names"].append(name)
     result.update(status="expanded", effective_signal_list=names)
+    if mode == 'typed':
+        result.update(status='typed_context_prepared',
+                      constant_names=sorted(constants),
+                      note='TB signals retain types; parameters become evaluated localparams. '
+                           'No TB assignments, assumptions or state updates are copied.')
     return ",".join(names), result
 
 
@@ -123,3 +132,4 @@ def inspect_checker_context(sv_dir):
         return {"status": "available", "context": collect_context(paths[-1].read_text())}
     except Exception as error:
         return {"status": "unavailable", "error": f"{type(error).__name__}: {error}"}
+

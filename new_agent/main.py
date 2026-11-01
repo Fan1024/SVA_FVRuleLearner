@@ -123,7 +123,7 @@ def main() -> int:
         "comparison_scope": policy["scope"],
         "revision_rules": "previous_round_only",
         "round_policy": "pec_or_bleu_or_max_rounds",
-        "pec_compile_error_policy": "continue_retrieved_rule_diagnosis_and_guidance" if phase == "infer" else "continue_reference_diagnosis_and_rule_generation",
+        "pec_compile_error_policy": "typed_context_then_block_if_unresolved",
         "case_ids": ([case["case_number"] for case in cases]
                      if phase == "infer" else list(config.TRAIN_CASE_IDS)),
         "dataset_split": dataset_split,
@@ -132,12 +132,14 @@ def main() -> int:
         "confidence_threshold": config.CONFIDENCE_THRESHOLD,
         "runs_dir": str(config.RUNS_DIR),
         "save_debug_traces": config.SAVE_DEBUG_TRACES,
+        "tree_parser": config.ASSERTION_TREE_PARSER,
+        "candidate_syn_policy": "insert_full_candidate_into_native_human_machine_tb",
     }
 
     if phase == "train":
         settings.update(training_workflow="assertion_pec_tree_llm_rules",
-                        flat_training_output=True,
-                        tree_parser="raw-tree-prototype-1.2",
+                        flat_training_output=False,
+                        tree_parser=config.ASSERTION_TREE_PARSER,
                         tree_parse_failure_policy="explicit_opaque_source_anchor",
                         training_diagnosis_model=config.RULE_MODEL,
                         training_rule_schema="behavior_review_diagnoses_corrections_v4",
@@ -210,8 +212,7 @@ def main() -> int:
                     workflow=partial(select_workflow(), retriever=retriever),
                     cleanup_work=formal_check.cleanup_work,
                     case_id=case["task_id"],
-                    case_dir=(experiment_dir if phase == "train" else
-                              experiment_dir / "cases" / f"case_{case['case_number']:04d}"),
+                    case_dir=experiment_dir / "cases" / f"case_{case['case_number']:04d}",
                     summary_dir=experiment_dir,
                     models=models,
                     inputs={**case, "dataset": config.DATASET},
@@ -239,4 +240,5 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
 

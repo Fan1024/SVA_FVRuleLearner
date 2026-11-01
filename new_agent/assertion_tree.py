@@ -1,9 +1,9 @@
 """Raw SVA trees for training: names, literals and original source are retained.
 
-Grouping parentheses determine ordered child links, not extra nodes. This is
-our checked prototype subset, not a full SV compiler. Unsupported syntax is
-reported explicitly; the caller can send original source with that error.
-Rendered expression strings are diagnostic, not lossless source text.
+Pyslang determines grouping; parentheses do not create extra localization nodes.
+Exact source expressions identify supported nodes. Unsupported translations use
+an explicit original-source anchor. The old custom parser is available only by
+an explicit configuration choice for baseline comparison.
 """
 from __future__ import annotations
 
@@ -29,6 +29,7 @@ class Node:
     category: str = ''
     children: list['Node'] = field(default_factory=list)
     attributes: dict = field(default_factory=dict)
+    source_expression: str = ''
 
 TOKEN = re.compile(
     r"(?P<space>\s+)|(?P<comment>//[^\n]*|/\*[\s\S]*?\*/)|"
@@ -299,7 +300,15 @@ def flatten(root: dict) -> list[dict]:
 
 def build_tree(assertion: str, prefix: str, parameters=()) -> dict:
     """Parse a body/full assertion and export an in-memory, completely unmasked tree."""
-    root, raw_context = unwrap(assertion)
+    from new_agent import config
+    parser = getattr(config, 'ASSERTION_TREE_PARSER', 'pyslang')
+    if parser == 'pyslang':
+        from new_agent.pyslang_assertion_parser import parse_assertion
+        root, raw_context = parse_assertion(assertion)
+    elif parser == 'custom':
+        root, raw_context = unwrap(assertion)
+    else:
+        raise ParseError('Unknown assertion tree parser: ' + str(parser))
     parameters = set(parameters)
 
     def classify(node):
@@ -331,7 +340,7 @@ def build_tree(assertion: str, prefix: str, parameters=()) -> dict:
                 'parent_id': parent_id,
                 'child_index': index,
                 'operand_role': role,
-                'expression': render(node),
+                'expression': node.source_expression or render(node),
             }
             if node.attributes:
                 result['attributes'] = dict(node.attributes)
@@ -365,6 +374,7 @@ def build_tree(assertion: str, prefix: str, parameters=()) -> dict:
     calls = [node for node in operations if node['kind'] == 'function_call']
     return {
         'source_assertion': assertion,
+        'parser': parser,
         'body_expression': render(root),
         'root': tree,
         'context': context,
@@ -394,3 +404,4 @@ def build_pair(reference: str, generated: str, requirement: str = '', parameters
         'reference': build_tree(reference, 'R', parameters),
         'generated': build_tree(generated, 'G', parameters),
     }
+

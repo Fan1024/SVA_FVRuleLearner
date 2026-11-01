@@ -3,7 +3,7 @@ import json
 
 from new_agent.correction_locations import feedback_json
 from new_agent.training_prompt_context import (
-    EQUIVALENT, NO_VERDICT, NOT_EQUIVALENT, TESTBENCH_GUIDANCE, GUIDANCE_STATUS,
+    EQUIVALENT, NO_VERDICT, NOT_EQUIVALENT, SYNTAX_FAILURE, TESTBENCH_GUIDANCE, GUIDANCE_STATUS,
 )
 
 
@@ -26,18 +26,26 @@ justify a change.
 Only the latest behavior review, high-level diagnoses and located corrections
 supply proposed guidance. A diagnosis describes the suspected behavioral issue;
 its linked rule proposes an action. Treat both as fallible suggestions, not facts.
-Use the diagnosis to review scope and the complete obligation before local edits.
+During every revision, independently compare the whole generated obligation
+with the requirement and testbench before considering the supplied diagnosis.
+Identify what the assertion currently requires, permits or exempts differently.
+Then assess the high-level diagnosis and use, adapt or reject its suggestions
+according to that behavioral assessment. Review scope and the whole obligation
+before choosing local edits; a coordinated rewrite is allowed when needed.
 Only the latest correction guidance supplies proposed edits. Each Location
 identifies an occurrence in the indicated latest assertion using its structural
 path and exact expression. Identical text elsewhere is a different occurrence.
-Use that location, not an imagined node ID or a replacement tree. Keep supported
-edits local and independent. Defer unrelated ancestor edits; include a coordinated
-change when necessary to express a supported correction with valid syntax.
+Use that location, not an imagined node ID or a replacement tree. Use locations as observations about the previous assertion, not limits on your
+review. Correct the supported behavioral issue, including a containing expression
+or coordinated change when needed.
 
 Before returning, check trigger, response, guards, timing, relevant history,
 reductions, predicate polarity and required X/Z handling. Preserve all behavior
-required by this task. If no change is justified, do not make a cosmetic rewrite
-merely to produce a different assertion.
+required by this task. Return a corrected complete assertion after this behavioral reassessment.
+Empty or incomplete diagnosis does not instruct you to repeat the previous
+assertion: independently review the requirement and testbench for the unresolved
+issue. Reconsider ineffective previous choices instead of making cosmetic edits.
+Compilation trouble in the separate PEC wrapper is not a behavioral defect.
 
 Return only one complete assertion in the requested SystemVerilog code format.
 Do not output a reasoning report, node IDs, a patch, a module or error messages.
@@ -67,7 +75,7 @@ def build_generation_prompt(requirement, testbench, *, assertion_history=None,
         seen.add(number)
         # Unknown/free-form feedback is deliberately not forwarded.
         outcome = entry.get("evaluation")
-        if not isinstance(outcome, str) or outcome not in {NOT_EQUIVALENT, EQUIVALENT, NO_VERDICT}:
+        if not isinstance(outcome, str) or outcome not in {NOT_EQUIVALENT, EQUIVALENT, NO_VERDICT, SYNTAX_FAILURE}:
             outcome = NO_VERDICT
         history.append({"round": number, "generated_assertion": source, "evaluation": outcome})
     history.sort(key=lambda entry: entry["round"])
@@ -84,14 +92,14 @@ def build_generation_prompt(requirement, testbench, *, assertion_history=None,
         located = feedback_json(diagnosis_response, assertion=latest["generated_assertion"])
         sections.append(
             f"LATEST CORRECTION GUIDANCE — FOR ROUND {diagnosis_round}\n" + located
-            + "\nThese are proposed local corrections to that assertion, not instructions "
+            + "\nThese are proposed corrections to that assertion, not instructions "
             "to apply earlier rounds' rules. Validate each premise and preserve unrelated "
             "required behavior. Use the path and expression together to locate the occurrence."
         )
     elif history:
         sections.append(
             "LATEST CORRECTION GUIDANCE\nNo correction guidance was produced for the latest "
-            "assertion. Review the task and earlier attempts; do not invent a diagnosis "
+            "assertion. Independently diagnose the complete behavior using the task and earlier attempts; do not invent a finding "
             "or treat the absence of guidance as acceptance."
         )
     if "CLOCK_SIGNAL" in assertion_template:
@@ -111,4 +119,5 @@ def build_generation_prompt(requirement, testbench, *, assertion_history=None,
         "```systemverilog and ```. Output no other text."
     )
     return "\n\n".join(sections)
+
 

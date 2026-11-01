@@ -2,9 +2,10 @@
 import json
 
 from new_agent.training_prompt_context import TESTBENCH_GUIDANCE
+from new_agent.training_prompt_context import EQUIVALENT, NO_VERDICT, NOT_EQUIVALENT, SYNTAX_FAILURE
 
 
-PROMPT_VERSION = "inference_independent_behavior_review_v2"
+PROMPT_VERSION = "inference_independent_behavior_review_v3"
 
 SYSTEM_PROMPT = """Generate one complete SystemVerilog assertion for the current
 requirement using the complete supplied testbench or module context.
@@ -48,8 +49,11 @@ behavioral diagnosis supports it. Source-training locations, when described
 inside guidance, are examples from their source assertion, not target addresses.
 
 Empty or missing rules/locations do not imply acceptance or require preservation.
-Do not invent a defect or cosmetic rewrite just to produce different text.
-Preserve behavior required by the task and make only supported corrections.
+Independently identify and correct the unresolved behavioral issue. An empty
+selector response is not an instruction to repeat the previous assertion.
+Reconsider its scope, guards, history and timing directly from the task and TB;
+return the corrected complete assertion, using a coordinated rewrite if needed.
+Base the revision on behavior rather than cosmetic changes or invented defects.
 
 Carry out this review as part of generating the assertion. Return only one
 complete assertion in a systemverilog code block. Do not output a separate
@@ -84,7 +88,7 @@ complete assertion in the requested code block.
 
 def build_generation_prompt(requirement, testbench, *, examples=None,
                             previous_assertion=None, previous_round=None,
-                            selector_guidance=None,
+                            selector_guidance=None, previous_evaluation=None,
                             assertion_template="assert property (@(posedge clk) BODY);"):
     """Same inputs/output contract; revision review precedes optional guidance."""
     if not isinstance(requirement, str) or not requirement.strip():
@@ -106,6 +110,8 @@ def build_generation_prompt(requirement, testbench, *, examples=None,
         if type(previous_round) is not int or previous_round < 1:
             raise ValueError("Previous assertion requires its positive source round.")
         sections.append(f"LATEST GENERATED ASSERTION — ROUND {previous_round}\n" + previous_assertion)
+        if previous_evaluation in {EQUIVALENT, NO_VERDICT, NOT_EQUIVALENT, SYNTAX_FAILURE}:
+            sections.append('PREVIOUS EVALUATION\n' + previous_evaluation)
         sections.append(REVISION_PROCEDURE)
         from new_agent.infer_rule_selector import generator_view
         if selector_guidance is not None:
@@ -135,3 +141,4 @@ def build_generation_prompt(requirement, testbench, *, examples=None,
     output += "\nReturn exactly one complete assertion enclosed in ```systemverilog and ```. Output no other text."
     sections.append(output)
     return "\n\n".join(sections)
+

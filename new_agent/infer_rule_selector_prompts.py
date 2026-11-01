@@ -91,3 +91,15 @@ score, additional fields or complete assertions. Locations may be empty; rank
 five existing rules or all available rules when the bank contains fewer than five.
 """
 
+
+
+TASK_INSTRUCTIONS += """
+REVISION MEMORY
+When last_revision is present, assess whether the previous guidance identified
+the actual issue and whether the revision addressed it. Reconsider the full
+obligation when an unchanged/non-equivalent candidate follows that guidance.
+Rank existing rules and locate current issues using current source; do not
+repeat a previous observation merely because it was supplied.
+For four-state reasoning, P !== 1'b1 permits P equal to 0, X or Z, rejecting
+only P equal to 1. Do not describe it as rejecting an unknown P.
+"""
