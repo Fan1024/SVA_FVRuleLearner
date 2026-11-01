@@ -384,6 +384,8 @@ def evaluate_assertion(generated_assertion: str, reference_assertion: str, testb
         if native_input.is_file():
             shutil.copyfile(native_input, result["input_path"])
         Path(result["log_path"]).write_text(result["tool_output"] + "\n", encoding="utf-8")
+    if result['status'] == 'PEC_CONTEXT_ERROR':
+        result['error_origin'] = 'pec_context'
     apply_acceptance_policy(result)
     result["native_timing"]["total_seconds"] = perf_counter() - started
     result["feedback"] = (f"Formal status: {result['status']}\nSyntax: {result['syntax']}; strict PEC: {result['pec']}; "

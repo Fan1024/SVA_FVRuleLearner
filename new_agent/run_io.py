@@ -418,10 +418,22 @@ def final_record(record: dict) -> dict:
             "status", "comparison_scope", "backend", "native_source", "native_metrics",
             "raw_scores", "accepted", "acceptance_reason", "retained_diagnostics", "evaluation_reused_from_round",
             "native_similarity", "native_timing", "similarity_error", "evaluation_error",
-            "returncode", "source_task_id", "tool_task_id", "log_path", "input_path", "cleanup",
+            "error_origin", "returncode", "source_task_id", "tool_task_id", "log_path", "input_path", "cleanup",
         )
         if name in formal
     }
+    if formal is not None and isinstance(formal.get('pec_context_preparation'), dict):
+        context = formal['pec_context_preparation']
+        saved['formal']['pec_context_preparation'] = {
+            key: deepcopy(context[key]) for key in (
+                'adapter_version', 'mode', 'status', 'error', 'typed_context_applied',
+                'native_file_decoding', 'unsupported_required_declarations',
+            ) if key in context
+        }
+    if formal is not None and formal.get('status') in {'PEC_CONTEXT_ERROR', 'PEC_COMPILE_ERROR'}:
+        output = formal.get('tool_output')
+        if isinstance(output, str):
+            saved['formal']['tool_output'] = output[-6000:]
     error = record["error"]
     saved["error"] = None if error is None else {
         name: error[name] for name in ("stage", "type", "message") if name in error
@@ -995,6 +1007,7 @@ def print_summary(run_dir, record: dict) -> None:
         print("Evaluation:", Path(run_dir) / "evaluation.csv")
     else:
         print("Result:", Path(run_dir) / "result.json")
+
 
 
 

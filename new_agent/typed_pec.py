@@ -15,6 +15,20 @@ class ContextPreparationError(ValueError):
     pass
 
 
+def read_checker_source(path):
+    """Read native bytes without guessing a legacy encoding or dropping bytes.
+
+    Latin-1 is a reversible byte mapping when strict UTF-8 decoding fails; it
+    does not identify the file's original character encoding. Re-encode with
+    the returned codec so retained source bytes round-trip exactly.
+    """
+    raw = Path(path).read_bytes()
+    try:
+        return raw, raw.decode('utf-8'), 'utf-8'
+    except UnicodeDecodeError:
+        return raw, raw.decode('latin-1'), 'latin-1'
+
+
 def sv_type(item):
     from new_agent.pec_context_adapter import supported_context_type
     if not supported_context_type(item):
@@ -40,7 +54,10 @@ def _module(source):
     import pyslang
     tree = pyslang.syntax.SyntaxTree.fromText(source)
     if len(tree.diagnostics):
-        raise ContextPreparationError('Native PEC source has syntax diagnostics before declaration adaptation.')
+        codes = ', '.join(str(d.code) for d in list(tree.diagnostics)[:5])
+        raise ContextPreparationError('Native PEC source has syntax diagnostics before declaration adaptation: '
+                                      + codes + '. Preserve pec.native.sve/pec.sve for inspection; '
+                                      'opaque or protected contents cannot be repaired by decoding.')
     root = tree.root
     modules = [root] if root.kind.name == 'ModuleDeclaration' else [
         item for item in root.members if item.kind.name == 'ModuleDeclaration']
@@ -136,13 +153,15 @@ def rewrite_checker(source, context):
 def adapt_file(checker_path, manifest_path):
     checker = Path(checker_path)
     manifest = json.loads(Path(manifest_path).read_text(encoding='utf-8'))
-    source = checker.read_text(encoding='utf-8')
+    original_bytes, source, codec = read_checker_source(checker)
     adapted = rewrite_checker(source, manifest['source_context'])
-    if source != adapted:
-        checker.with_name('pec.native.sve').write_text(source, encoding='utf-8')
-        checker.write_text(adapted, encoding='utf-8')
+    adapted_bytes = adapted.encode(codec)
+    if original_bytes != adapted_bytes:
+        checker.with_name('pec.native.sve').write_bytes(original_bytes)
+        checker.write_bytes(adapted_bytes)
     audit = Path(manifest_path).with_suffix('.applied.json')
     audit.write_text(json.dumps({'typed_context_applied': True, 'checker': str(checker),
+                                 'native_file_decoding': ('utf-8' if codec == 'utf-8' else 'latin-1-byte-map'),
                                  'constant_names': manifest.get('constant_names', [])}, indent=2), encoding='utf-8')
 
 

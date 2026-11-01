@@ -9,7 +9,7 @@ from pathlib import Path
 import os
 import re
 
-VERSION = "typed_tb_context_v3_fixed_arrays"
+VERSION = "typed_tb_context_v4_byte_preserving"
 
 
 def context_mode():
@@ -163,7 +163,10 @@ def inspect_checker_context(sv_dir):
     if not paths:
         return {"status": "unavailable"}
     try:
-        return {"status": "available", "context": collect_context(paths[-1].read_text())}
+        from new_agent.typed_pec import read_checker_source
+        _, source, codec = read_checker_source(paths[-1])
+        return {"status": "available", "context": collect_context(source),
+                "native_file_decoding": 'utf-8' if codec == 'utf-8' else 'latin-1-byte-map'}
     except Exception as error:
         return {"status": "unavailable", "error": f"{type(error).__name__}: {error}"}
 
