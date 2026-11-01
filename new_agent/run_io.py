@@ -428,6 +428,7 @@ def final_record(record: dict) -> dict:
             key: deepcopy(context[key]) for key in (
                 'adapter_version', 'mode', 'status', 'module', 'parser_version',
                 'native_signal_list', 'effective_signal_list', 'added_names', 'removed_parameters', 'not_added',
+                'parameter_bindings',
             ) if key in context
         }
     if formal is not None and formal.get('status') == 'PEC_COMPILE_ERROR':

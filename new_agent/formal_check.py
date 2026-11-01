@@ -2,7 +2,7 @@
 
 The native evaluator invokes its original Jasper launcher/Tcl/PEC. Immediately
 before launch, our source-boundary adapter replaces the two property-expression
-arguments and supplies a prepared signal-name list. Native PEC files and Tcl
+arguments, binds TB integral parameters, and supplies a prepared signal-name list. Native PEC files and Tcl
 remain untouched; there is no analyze-command interception or Tcl overlay.
 Human/Machine SYN checking includes the full candidate in the TB. Missing PEC
 verdicts remain unavailable and cannot be accepted through text similarity.
@@ -24,7 +24,7 @@ from time import perf_counter
 import traceback
 from types import SimpleNamespace
 from new_agent.pec_input_adapter import ExtractionError, prepare_pec_inputs
-from new_agent.pec_context_adapter import prepare_signal_list
+from new_agent.pec_context_adapter import prepare_signal_list, bind_parameter_constants
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -332,8 +332,18 @@ def evaluate_assertion(generated_assertion: str, reference_assertion: str, testb
         result["pec_context_preparation"] = context_preparation
         preparation["native_formulas"] = native_formulas
         result["pec_input_preparation"] = preparation
-        bound.arguments["lm_assertion_text"] = preparation["generated"]["formula"]
-        bound.arguments["ref_assertion_text"] = preparation["reference"]["formula"]
+        parameter_bindings = {}
+        for side, argument in (('generated', 'lm_assertion_text'), ('reference', 'ref_assertion_text')):
+            formula = preparation[side]['formula']
+            bindings = {}
+            if context_preparation['mode'] == 'expanded_names':
+                formula, bindings = bind_parameter_constants(
+                    formula, testbench, getattr(config, 'PEC_CONTEXT_MODULE', None))
+            preparation[side]['native_formula'] = formula
+            preparation[side]['parameter_bindings'] = bindings
+            parameter_bindings.update(bindings)
+            bound.arguments[argument] = formula
+        context_preparation['parameter_bindings'] = parameter_bindings
         _write_json(directory / "native_pec_inputs.json", {
             "args": list(bound.args), "kwargs": bound.kwargs,
             "preparation": preparation,

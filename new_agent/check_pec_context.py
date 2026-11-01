@@ -75,6 +75,9 @@ def main():
                         'status': result['status'], 'self_check_passed': passed,
                         'signal_count': len(result.get('pec_context_preparation', {}).get('effective_signal_list', []))})
         print(f"Case {number}: {result['status']} | self_check_passed={passed}", flush=True)
+        bindings = result.get('pec_context_preparation', {}).get('parameter_bindings', {})
+        if bindings:
+            print('PEC parameter bindings: ' + json.dumps(bindings, sort_keys=True), flush=True)
         if not passed:
             detail = result.get('evaluation_error') or (result.get('tool_output') or '')[-2000:]
             if detail:

@@ -7,7 +7,7 @@ from functools import lru_cache
 import os
 import re
 
-VERSION = 'native_signal_list_v5'
+VERSION = 'native_signal_list_v6_constant_bindings'
 
 
 def context_mode(value=None):
@@ -33,7 +33,7 @@ def _collect(source, module_name):
         instances = [item for item in instances if item.name == module_name]
     if len(instances) != 1:
         raise ValueError('Expected one TB top module; set PEC_CONTEXT_MODULE for multiple tops.')
-    signals, parameters = [], []
+    signals, parameters, literals = [], [], {}
     for symbol in instances[0].body:
         if not symbol.name:
             continue
@@ -41,12 +41,56 @@ def _collect(source, module_name):
         target = signals if kind in {'Port', 'Net', 'Variable'} else parameters if kind == 'Parameter' else None
         if target is not None and symbol.name not in target:
             target.append(symbol.name)
+        if kind == 'Parameter':
+            literal = None
+            try:
+                if symbol.type.isIntegral and not symbol.type.isError:
+                    value = symbol.value.value
+                    if not value.hasUnknown:
+                        bits = int(symbol.type.bitWidth)
+                        unsigned_value = int(value) & ((1 << bits) - 1)
+                        literal = f"{bits}'{'s' if symbol.type.isSigned else ''}h{unsigned_value:x}"
+            except (AttributeError, TypeError, ValueError, OverflowError):
+                pass
+            literals[symbol.name] = literal
     return {'module': instances[0].name, 'parser_version': pyslang.__version__,
-            'signals': signals, 'parameters': parameters}
+            'signals': signals, 'parameters': parameters, 'parameter_literals': literals}
 
 
 def collect_signal_names(testbench, module_name=None):
     return deepcopy(_collect(testbench, module_name))
+
+
+def bind_parameter_constants(formula, testbench, module_name=None):
+    """Bind bare TB parameter identifiers in a PEC argument, never a checker file.
+
+    Use the same elaborated default TB instance as name collection. Sized signed
+    or unsigned literals preserve integral value, width and signedness. Original
+    assertions stay unchanged; both comparison arguments get identical bindings.
+    """
+    from new_agent.pec_input_adapter import _tokens, ExtractionError
+    literals = collect_signal_names(testbench, module_name)['parameter_literals']
+    tokens = _tokens(formula)
+    replacements, bindings = [], {}
+    for index, token in enumerate(tokens):
+        name = token.text
+        if name not in literals:
+            continue
+        previous = tokens[index - 1].text if index else ''
+        # Keep literal digits, member names, scoped names and macros untouched.
+        scoped_left = index >= 2 and previous == ':' and tokens[index - 2].text == ':'
+        scoped_right = [item.text for item in tokens[index + 1:index + 3]] == [':', ':']
+        if previous in {"'", '.', '`'} or scoped_left or scoped_right:
+            continue
+        literal = literals[name]
+        if literal is None:
+            raise ExtractionError(f'TB parameter {name} cannot be represented by a known integral literal.')
+        replacements.append((token.start, token.end, literal))
+        bindings[name] = literal
+    result = formula
+    for start, end, literal in reversed(replacements):
+        result = result[:start] + literal + result[end:]
+    return result, bindings
 
 
 def prepare_signal_list(testbench, native_signal_list, *, mode=None, module_name=None):
@@ -60,7 +104,7 @@ def prepare_signal_list(testbench, native_signal_list, *, mode=None, module_name
     audit = {'adapter_version': VERSION, 'mode': mode, 'native_signal_list': original,
              'effective_signal_list': list(original), 'added_names': [],
              'removed_parameters': [], 'not_added': [],
-             'note': 'Names only. Original native Tcl/PEC files and launcher path are unchanged.'}
+             'note': 'Signal names only; TB constants are bound in the property arguments. Native Tcl/PEC files stay unchanged.'}
     if mode == 'legacy':
         audit['status'] = 'native_names_unchanged'
         return native_signal_list, audit

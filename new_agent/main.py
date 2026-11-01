@@ -124,6 +124,7 @@ def main() -> int:
         "checker_input_policy": "native_per_round",
         "pec_context_mode": context_mode(),
         "pec_context_adapter_version": PEC_CONTEXT_VERSION,
+        "pec_parameter_policy": "bind_known_integral_tb_parameters_in_both_arguments",
         "comparison_scope": policy["scope"],
         "revision_rules": "previous_round_only",
         "round_policy": "pec_or_bleu_or_max_rounds",

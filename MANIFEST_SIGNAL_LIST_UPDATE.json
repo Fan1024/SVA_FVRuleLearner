@@ -2,7 +2,7 @@
   "repository": "https://github.com/Fan1024/SVA_FVRuleLearner",
   "base_commit": "fb624d5b452a0dbeccea891e310f82ca9728e087",
   "package_kind": "Complete source replacements plus installer-driven cleanup",
-  "adapter_version": "native_signal_list_v5",
+  "adapter_version": "native_signal_list_v6_constant_bindings",
   "source_files": 20,
   "obsolete_files": [
     "new_agent/typed_pec.py",
@@ -17,20 +17,21 @@
   "config_change": "Set PEC_CONTEXT_MODE to expanded_names; preserve all other settings",
   "native_files_modified": [],
   "validation": {
-    "local_tests_passed": 28,
+    "local_tests_passed": 34,
     "pyslang_versions": [
       "11.0.0",
       "12.1.0"
     ],
     "python": "3.12.14",
     "llm_native_calls_mocked": true,
-    "jasper_run": false
+    "jasper_run": false,
+    "human_reference_parameter_binding_inputs_checked": 79
   },
   "files": [
     {
       "path": "README_SIGNAL_LIST_UPDATE.md",
-      "sha256": "9d74136102fd9ccae991d3faac6e4f0b3dec89ec427abcd2008c148849f07b9b",
-      "bytes": 8221
+      "sha256": "0f8a6dc68cf0cf5133ea797d57d305bb03564abd82865330b7af130c39d7f333",
+      "bytes": 9870
     },
     {
       "path": "apply_signal_list_update.py",
@@ -39,8 +40,8 @@
     },
     {
       "path": "new_agent/check_pec_context.py",
-      "sha256": "b4acb48b1a209f44f732eb2a5eb1db2b247465de72599534ea0e0fae94cc33b5",
-      "bytes": 5268
+      "sha256": "7f66e382e376f53135f16fd986a5de3858410ad258c73a5512325b84b3bbf917",
+      "bytes": 5477
     },
     {
       "path": "new_agent/correction_locations.py",
@@ -54,8 +55,8 @@
     },
     {
       "path": "new_agent/formal_check.py",
-      "sha256": "d125cfd3150b1a7c35cabf551af8e7838616f9b7f816a5c8d1a38698c16bf83e",
-      "bytes": 23861
+      "sha256": "5f4634e995e78df7d2849f21f0e946bbe5c44d9188bb0f266ee7b2a15722b00f",
+      "bytes": 24464
     },
     {
       "path": "new_agent/infer_assertion_generator.py",
@@ -89,13 +90,13 @@
     },
     {
       "path": "new_agent/main.py",
-      "sha256": "dcd797ce677333d77ed0d463f6df0c9b0f6a3fca37371e21906bd0db0c12eebd",
-      "bytes": 12506
+      "sha256": "da34b3d7d947bc89056b6c4c82b5b884f161244297c9e319b54c399ab70282c1",
+      "bytes": 12593
     },
     {
       "path": "new_agent/pec_context_adapter.py",
-      "sha256": "e7d325f26ce82165d73435f21bea8adfd34aee506a9cbc055b518699532e5ed4",
-      "bytes": 3552
+      "sha256": "3937cd06612389a106f6e84b6d1e429f65318747cc3044652ba03dd89973c60c",
+      "bytes": 5835
     },
     {
       "path": "new_agent/pyslang_assertion_parser.py",
@@ -109,8 +110,8 @@
     },
     {
       "path": "new_agent/run_io.py",
-      "sha256": "c1c5c43b82ec38de771741a40f964a87dac8d5558336b34a8153067ba619669c",
-      "bytes": 44145
+      "sha256": "b3bf4336a2ad0d55dc93b21cc227e7fe8841105cea34a58d09ff8f8044cfeb57",
+      "bytes": 44183
     },
     {
       "path": "new_agent/train_assertion_generator.py",
@@ -144,8 +145,8 @@
     },
     {
       "path": "tests/test_native_signal_list.py",
-      "sha256": "4aa0995c8c5c0e5ef1517372fe9727362867b9b72e47ff0d201c3e83c91dd214",
-      "bytes": 10168
+      "sha256": "42012f8d933b8093a16230df2f8ac5e87064ce3977589d43031f1e3a02311e76",
+      "bytes": 13660
     },
     {
       "path": "tests/test_pec_revision_update.py",
@@ -158,5 +159,13 @@
       "bytes": 14727
     }
   ],
-  "checksum_note": "Hashes cover every delivered file except this manifest itself."
+  "checksum_note": "Hashes cover every delivered file except this manifest itself.",
+  "parameter_policy": "Bind known integral TB parameters, preserving width/signedness, in both native property arguments only.",
+  "latest_replacement_sources": [
+    "new_agent/pec_context_adapter.py",
+    "new_agent/formal_check.py",
+    "new_agent/run_io.py",
+    "new_agent/main.py",
+    "new_agent/check_pec_context.py"
+  ]
 }
