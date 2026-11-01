@@ -4,7 +4,7 @@ import json
 import re
 
 from new_agent.correction_locations import location_for
-from new_agent.diagnosis_context import diagnosis_view
+from new_agent.diagnosis_context import diagnosis_view, category_label, interpretation_view
 from new_agent.training_prompt_context import evaluation_feedback
 from new_agent.infer_rule_selector_prompts import SYSTEM_PROMPT, TASK_INSTRUCTIONS
 
@@ -166,8 +166,11 @@ def _text(value, label):
 def parse_response(raw, tree, rule_bank):
     """Strictly forbid newly authored rules and rule/location assignments."""
     data = json.loads(raw) if isinstance(raw, str) else raw
-    if not isinstance(data, dict) or set(data) != {"ranked_rules", "locations"}:
-        raise ValueError("Expected only ranked_rules and locations.")
+    if not isinstance(data, dict) or set(data) not in (
+            {'ranked_rules', 'locations'}, {'requirement_interpretation', 'ranked_rules', 'locations'}):
+        raise ValueError('Expected requirement_interpretation, ranked_rules and locations.')
+    if 'requirement_interpretation' in data and not isinstance(data['requirement_interpretation'], dict):
+        raise ValueError('requirement_interpretation must be an object')
     if not isinstance(data["ranked_rules"], list) or not isinstance(data["locations"], list):
         raise ValueError("ranked_rules and locations must be arrays.")
     if len(data["ranked_rules"]) > MAX_SELECTED_RULES:
@@ -187,15 +190,20 @@ def parse_response(raw, tree, rule_bank):
     ids, seen, locations = _node_ids(tree), set(), []
     fields = {"generated_node_id", "expected_behavior", "observed_behavior", "why_it_matters"}
     for item in data["locations"]:
-        if not isinstance(item, dict) or set(item) != fields:
+        if not isinstance(item, dict) or set(item) not in (fields, {'generated_node_id', 'diagnosis'}):
             raise ValueError("Locations contain diagnostic observations only; no rule assignment or action.")
         node_id = item["generated_node_id"]
         if not isinstance(node_id, str) or node_id not in ids or node_id in seen:
             raise ValueError("Unknown or duplicate current node ID.")
         seen.add(node_id)
-        locations.append({key: _text(item[key], key) for key in
-                          ("generated_node_id", "expected_behavior", "observed_behavior", "why_it_matters")})
-    return {"ranked_rules": ranked, "locations": locations}
+        if 'diagnosis' in item:
+            locations.append({'generated_node_id': node_id, 'diagnosis': category_label(item['diagnosis'])})
+        else:
+            locations.append({key: _text(item[key], key) for key in fields})
+    result = {"ranked_rules": ranked, "locations": locations}
+    if 'requirement_interpretation' in data:
+        result['requirement_interpretation'] = interpretation_view(data['requirement_interpretation'])
+    return result
 
 
 def make_generator_guidance(selection, rule_bank, tree, *, source_round):
@@ -204,7 +212,7 @@ def make_generator_guidance(selection, rule_bank, tree, *, source_round):
         raise ValueError("A positive source round is required.")
     selection = parse_response(selection, tree, rule_bank)
     by_id = {rule["id"]: rule for case in rule_bank["cases"] for rule in case["rules"]}
-    return {
+    guidance = {
         "for_round": source_round,
         "assertion_sha256": hashlib.sha256(tree["source_assertion"].encode("utf-8")).hexdigest(),
         "ranked_rules": [{"rank": entry["rank"], "rule": by_id[entry["rule_id"]]["rule"],
@@ -214,9 +222,13 @@ def make_generator_guidance(selection, rule_bank, tree, *, source_round):
                               if key in rule_bank.get('diagnoses', {})]}
                          for entry in selection["ranked_rules"]],
         "locations": [{"location": location_for(tree, entry["generated_node_id"]),
-                       **{key: entry[key] for key in ("expected_behavior", "observed_behavior", "why_it_matters")}}
+                       **{key: entry[key] for key in ('diagnosis', 'expected_behavior', 'observed_behavior', 'why_it_matters')
+                          if key in entry}}
                       for entry in selection["locations"]],
     }
+    if 'requirement_interpretation' in selection:
+        guidance['requirement_interpretation'] = selection['requirement_interpretation']
+    return guidance
 
 
 def generator_view(guidance, assertion, source_round):
@@ -235,10 +247,19 @@ def generator_view(guidance, assertion, source_round):
                        "source_diagnoses": [
                            {key: item[key] for key in ('category', 'statement') if isinstance(item.get(key), str)}
                            for item in entry.get('source_diagnoses', []) if isinstance(item, dict)]})
-    locations = [{key: _text(entry.get(key), key) for key in
-                  ("location", "expected_behavior", "observed_behavior", "why_it_matters")}
-                 for entry in guidance.get("locations", [])]
-    return {"ranked_rules": ranked, "locations": locations}
+    locations = []
+    for entry in guidance.get('locations', []):
+        if 'diagnosis' in entry:
+            locations.append({'location': _text(entry.get('location'), 'location'),
+                              'diagnosis': category_label(entry['diagnosis'])})
+        else:
+            locations.append({key: _text(entry.get(key), key) for key in
+                              ('location', 'expected_behavior', 'observed_behavior', 'why_it_matters')})
+    result = {'ranked_rules': ranked, 'locations': locations}
+    if 'requirement_interpretation' in guidance:
+        result['requirement_interpretation'] = interpretation_view(guidance['requirement_interpretation'])
+    return result
+
 
 
 

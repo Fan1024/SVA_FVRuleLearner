@@ -4,7 +4,7 @@ Never serialize raw formal results into a model request. Evaluation settings,
 metrics, logs and input-extraction policy stay outside the training prompts.
 """
 
-PROMPT_VERSION = "training_independent_revision_v2"
+PROMPT_VERSION = "training_requirement_categories_v3"
 
 NOT_EQUIVALENT = (
     "JasperGold completed the functional-equivalence comparison. "
@@ -93,4 +93,5 @@ task and SystemVerilog semantics. Apply supported guidance, or adapt/reject it
 for a specific behavioral or syntax reason. Preserve unrelated required behavior.
 A rule's presence, wording or prior use does not establish its correctness.
 """
+
 

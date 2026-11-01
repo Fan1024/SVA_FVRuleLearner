@@ -85,7 +85,7 @@ def recover_location(assertion, node_id, tree=None):
 
 
 def feedback_json(diagnosis, *, assertion=None, tree=None):
-    """Only locations and correction text enter the assertion-generator prompt."""
+    """Forward interpretation, category, textual location and correction action."""
     data = json.loads(diagnosis) if isinstance(diagnosis, str) else diagnosis
     if not isinstance(data, dict) or not isinstance(data.get('corrections'), list):
         raise ValueError('Expected a corrections array for located feedback')
@@ -105,6 +105,8 @@ def feedback_json(diagnosis, *, assertion=None, tree=None):
         if not isinstance(rule, str) or not rule.strip():
             raise ValueError('Correction needs a nonempty rule')
         correction = {'location': location}
+        if isinstance(item.get('diagnosis'), str):
+            correction['diagnosis'] = item['diagnosis']
         for field in ('difference', 'why_it_matters'):
             if isinstance(item.get(field), str) and item[field].strip():
                 correction[field] = item[field].strip()
@@ -113,4 +115,5 @@ def feedback_json(diagnosis, *, assertion=None, tree=None):
         correction['rule'] = rule.strip()
         corrections.append(correction)
     return json.dumps({**diagnosis_payload(data), 'corrections': corrections}, ensure_ascii=False)
+
 

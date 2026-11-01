@@ -242,6 +242,8 @@ def prepare_candidates(cases, contexts=None):
                      if isinstance(indexed_locations.get(key), str) and indexed_locations[key].strip() else {})}
                  for key, text in case['rules'].items()]
         for entry in trace:
+            entry['requirement_interpretation'] = {key: masker.mask(value)
+                for key, value in entry.get('requirement_interpretation', {}).items()}
             entry['behavior_review'] = {key: masker.mask(value)
                                         for key, value in entry.get('behavior_review', {}).items()}
             if entry['assertion']:
@@ -264,4 +266,5 @@ def prepare_candidates(cases, contexts=None):
             'trace_status': case.get('trace_status', 'available' if trace else 'unavailable_missing_trace'),
         })
     return result
+
 

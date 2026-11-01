@@ -313,7 +313,8 @@ def evaluate_assertion(generated_assertion: str, reference_assertion: str, testb
         from new_agent import config
         effective_names, context_preparation = prepare_signal_list(
             testbench, bound.arguments.get("signal_list_text", ""),
-            module_name=getattr(config, "PEC_CONTEXT_MODULE", None))
+            module_name=getattr(config, "PEC_CONTEXT_MODULE", None),
+            assertion_texts=(preparation['generated']['formula'], preparation['reference']['formula']))
         bound.arguments["signal_list_text"] = effective_names
         result["pec_context_preparation"] = context_preparation
         preparation["native_formulas"] = native_formulas
@@ -391,7 +392,7 @@ def evaluate_assertion(generated_assertion: str, reference_assertion: str, testb
     if result["status"] == "PEC_COMPILE_ERROR":
         result["feedback"] = (
             "PEC compilation failed; no formal equivalence verdict was obtained. "
-            "Continue reference-based textual diagnosis and rule refinement. "
+            "Inspect the retained native/adapted PEC declarations; do not infer a mismatch. "
             "Do not infer a candidate syntax or semantic defect from this tool failure. "
             "Do not rewrite assertions to repair the PEC implementation.\n"
             + result["feedback"]
@@ -419,6 +420,7 @@ def cleanup_work(result: dict, keep_work=False, *, preserve_unresolved=True) -> 
         return {"retained": True, "reason": "Ownership check failed; no files deleted."}
     shutil.rmtree(work)
     return {"retained": False, "reason": "Removed owned native evaluation work."}
+
 
 
 

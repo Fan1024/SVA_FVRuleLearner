@@ -3,7 +3,7 @@
 import json
 
 from new_agent import assertion_tree
-from new_agent.diagnosis_context import linked_diagnoses
+from new_agent.diagnosis_context import linked_diagnoses, category_label, interpretation_view
 from new_agent.correction_locations import location_for
 from new_agent.training_prompt_context import evaluation_feedback
 from new_agent.train_tree_rule_prompts import SYSTEM_PROMPT, TASK_INSTRUCTIONS
@@ -33,7 +33,8 @@ def build_rule_prompt(requirement, generated_assertion, reference_assertion,
         if trees[side].get("source_assertion") != source:
             raise ValueError(f"The {side} tree does not belong to the current source assertion.")
     data = dict(requirement=requirement, testbench=testbench,
-                trees={side: compact_tree(trees[side]) for side in ("generated", "reference")},
+                generated_tree=compact_tree(trees['generated']),
+                reference_assertion=reference_assertion,
                 evaluation_feedback=evaluation_feedback(evaluation_status))
     if previous_transition is not None:
         data['last_revision'] = previous_transition
@@ -85,16 +86,24 @@ def parse_response(response_text, trees):
     if not isinstance(result, dict) or not isinstance(result.get("corrections"), list):
         raise ValueError("Expected a JSON object with a corrections array")
     generated, reference = _nodes(trees["generated"]), _nodes(trees["reference"])
+    if 'requirement_interpretation' in result:
+        if not isinstance(result['requirement_interpretation'], dict):
+            raise ValueError('requirement_interpretation must be an object')
+        result['requirement_interpretation'] = interpretation_view(result['requirement_interpretation'])
     for entry in result["corrections"]:
         if not isinstance(entry, dict):
             raise ValueError("Each correction must be an object")
         node_id = entry.get("generated_node_id")
         if not isinstance(node_id, str) or node_id not in generated:
             raise ValueError("Correction has an unknown generated_node_id")
-        ids = entry.get("reference_node_ids")
+        ids = entry.get("reference_node_ids", [])
         if not isinstance(ids, list) or any(not isinstance(x, str) or x not in reference for x in ids):
             raise ValueError("reference_node_ids must contain existing reference IDs")
-        for key in ("difference", "why_it_matters", "rule"):
+        if 'diagnosis' in entry:
+            entry['diagnosis'] = category_label(entry['diagnosis'])
+        elif 'requirement_interpretation' in result:
+            raise ValueError('Each new-schema correction needs a diagnosis category')
+        for key in ("rule",):
             if not isinstance(entry.get(key), str) or not entry[key].strip():
                 raise ValueError(f"Correction needs nonempty {key} text")
         entry['location'] = location_for(trees['generated'], node_id)
@@ -106,9 +115,11 @@ def export_rules(response, round_number):
     return {f"rule_{i}": {
         "group": ["tree_correction", f"round_{round_number:04d}", f"correction_{i:04d}"],
         "rule": entry["rule"].strip(),
+        **({'diagnosis': entry['diagnosis']} if entry.get('diagnosis') else {}),
         **({'location': entry['location']} if entry.get('location') else {}),
         **({'diagnoses': linked_diagnoses(entry, response)}
-           if 'diagnosis_ids' in entry or 'diagnoses' in entry else {}),
+           if any(key in entry for key in ('diagnosis', 'diagnosis_ids', 'diagnoses')) else {}),
     } for i, entry in enumerate(response["corrections"], 1)}
+
 
 

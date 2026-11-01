@@ -99,7 +99,7 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
     record["settings"].update(
         inference_workflow="existing_rule_selector_independent_locations",
         inference_rule_stages="rank_existing_rules_and_locate_issues_only",
-        inference_feedback="latest_ranked_rules_and_independent_locations",
+        inference_feedback="latest_interpretation_categories_ranked_rules",
         inference_example_source="accepted_generated_training_assertions",
         inference_retrieval="once_per_target_case",
         inference_max_selected_rules=selector.MAX_SELECTED_RULES,
@@ -336,5 +336,6 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
         passed=False, stage="finished", stop_reason="max_rounds",
     )
     return 0 if resolved else 1
+
 
 

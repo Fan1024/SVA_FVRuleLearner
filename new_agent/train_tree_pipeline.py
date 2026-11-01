@@ -1,8 +1,8 @@
-"""Training-only tree/rule loop; the original pipeline remains the inference path.
+"""Training-only tree/rule loop with concise requirement-based corrections.
 
 Native evaluation, acceptance and round budgets retain the existing checker.
-Training prompts use complete assertion history, latest-only located guidance,
-and behavior-first diagnosis with coarse outcomes only.
+Training prompts use the latest assertion, latest interpretation/categories/rules,
+and a short repetition notice. Complete history remains in saved round evidence.
 """
 from copy import deepcopy
 from contextlib import contextmanager
@@ -106,10 +106,10 @@ def run_training_pipeline(directory, record: dict, *, retriever=None) -> int:
     template = statement_template(dataset)
     record["settings"].update(
         training_prompt_version=PROMPT_VERSION,
-        training_assertion_history="all_previous_assertions_coarse_results",
-        training_feedback="latest_located_corrections_only",
+        training_assertion_history="latest_assertion_coarse_result_repetition_notice",
+        training_feedback="latest_requirement_interpretation_categories_rules",
         training_rule_feedback="coarse_reference_equivalence_only",
-        training_rule_schema="behavior_review_diagnoses_corrections_v4",
+        training_rule_schema="requirement_interpretation_categories_v5",
     )
     registry = {}
     previous_assertion = None
@@ -349,5 +349,6 @@ def run_training_pipeline(directory, record: dict, *, retriever=None) -> int:
         passed=False, stage="finished", stop_reason="max_rounds",
     )
     return 0 if resolved else 1
+
 
 

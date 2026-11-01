@@ -8,7 +8,7 @@ import json
 import re
 import sys
 
-MARKER = '// FVRULE_TYPED_CONTEXT_v1'
+MARKER = '// FVRULE_TYPED_CONTEXT_v2_fixed_arrays'
 
 
 class ContextPreparationError(ValueError):
@@ -16,17 +16,24 @@ class ContextPreparationError(ValueError):
 
 
 def sv_type(item):
-    if item.get('type_error') or not item.get('integral') or item.get('unpacked_array'):
+    from new_agent.pec_context_adapter import supported_context_type
+    if not supported_context_type(item):
         raise ContextPreparationError(f"Unsupported PEC type for {item['name']}: {item['type']}")
-    base = 'logic' if item.get('four_state', True) else 'bit'
-    if item.get('signed'):
+    base = 'logic' if item.get('element_four_state', item.get('four_state', True)) else 'bit'
+    if item.get('element_signed', item.get('signed')):
         base += ' signed'
-    dimensions = item.get('dimensions', [])
+    dimensions = [d for d in item.get('dimensions', []) if d['kind'] == 'packed']
     if dimensions:
         base += ' ' + ''.join(d['range'] for d in dimensions)
-    elif item.get('bit_width', 1) > 1:
-        base += f" [{item['bit_width'] - 1}:0]"
+    elif item.get('packed_bit_width', item.get('bit_width', 1)) > 1:
+        width = item.get('packed_bit_width', item.get('bit_width', 1))
+        base += f" [{width - 1}:0]"
     return base
+
+
+def sv_name(item):
+    ranges = ''.join(d['range'] for d in item.get('dimensions', []) if d['kind'] == 'unpacked')
+    return item['name'] + (' ' + ranges if ranges else '')
 
 
 def _module(source):
@@ -55,12 +62,13 @@ def rewrite_checker(source, context):
     """
     if MARKER in source:
         return source
-    from new_agent.pec_context_adapter import _type_info
+    from new_agent.pec_context_adapter import _type_info, supported_context_type
     module, instance = _module(source)
-    signals = {item['name']: item for item in context['signals']
-               if item.get('integral') and not item.get('unpacked_array') and not item.get('type_error')}
+    signals = {item['name']: item for item in context['signals'] if supported_context_type(item)}
     constants = {item['name']: item for item in context['parameters']}
     for item in constants.values():
+        if item.get('unpacked_array'):
+            raise ContextPreparationError(f"Array parameter needs a constant initializer adapter: {item['name']}")
         sv_type(item)
         if not re.fullmatch(r"[-+0-9a-fA-F_xXzZ?'sSbBoOdDhH\s]+", item['value']):
             raise ContextPreparationError(f"Unresolved constant {item['name']}: {item['value']}")
@@ -82,7 +90,7 @@ def rewrite_checker(source, context):
     port_names = {p[0] for p in ports}
     declarations = [f"localparam {sv_type(item)} {name} = {item['value']};"
                     for name, item in constants.items()]
-    declarations += [f'{direction} {sv_type(item)} {name};' for name, direction, item in ports]
+    declarations += [f'{direction} {sv_type(item)} {sv_name(item)};' for name, direction, item in ports]
     seen = set(port_names)
     members = []
     for member in module.members:
@@ -109,10 +117,10 @@ def rewrite_checker(source, context):
             if name in signals:
                 net = (str(member.netType).strip() + ' ') if kind == 'NetDeclaration' else ''
                 initializer = str(declaration.initializer) if declaration.initializer else ''
-                members.append(f'{net}{sv_type(signals[name])} {name}{initializer};')
+                members.append(f'{net}{sv_type(signals[name])} {sv_name(signals[name])}{initializer};')
             else:
                 members.append(prefix + str(declaration).strip() + ';')
-    declarations += [f'{sv_type(item)} {name};' for name, item in signals.items() if name not in seen]
+    declarations += [f'{sv_type(item)} {sv_name(item)};' for name, item in signals.items() if name not in seen]
     name = module.header.name.valueText
     params = str(module.header.parameters) if module.header.parameters else ''
     header = f"module {name}{params} ({', '.join(p[0] for p in ports)});"
@@ -148,6 +156,10 @@ def prepare_launcher(bound, preparation, directory):
         return
     if 'source_context' not in preparation:
         raise ContextPreparationError(preparation.get('error', 'TB context unavailable. Install pyslang.'))
+    unsupported = preparation.get('unsupported_required_declarations', [])
+    if unsupported:
+        raise ContextPreparationError('Referenced TB declarations cannot be represented: ' +
+                                      ', '.join(f"{x['name']} ({x['type']})" for x in unsupported))
     directory = Path(directory).resolve()
     directory.mkdir(parents=True, exist_ok=True)
     manifest = directory / 'typed_context.json'
@@ -209,3 +221,4 @@ def candidate_testbench(testbench, assertion, module_name=None):
     raw = testbench.encode('utf-8')
     return (raw[:position].decode() + '\n// Generated candidate for native SYN checking\n'
             + assertion + '\n' + raw[position:].decode())
+

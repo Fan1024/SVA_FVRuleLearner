@@ -108,6 +108,7 @@ def main() -> int:
     dataset_path = Path(cases[0]["dataset_path"])
     models = {"assertion": config.ASSERTION_MODEL, "rule": config.RULE_MODEL}
     from new_agent.pec_context_adapter import context_mode, VERSION as PEC_CONTEXT_VERSION
+    from new_agent.diagnosis_context import DIAGNOSIS_CATEGORIES
     settings = {
         "phase": phase,
         "mode": config.MODE,
@@ -132,6 +133,7 @@ def main() -> int:
         "confidence_threshold": config.CONFIDENCE_THRESHOLD,
         "runs_dir": str(config.RUNS_DIR),
         "save_debug_traces": config.SAVE_DEBUG_TRACES,
+        "diagnosis_categories": list(DIAGNOSIS_CATEGORIES),
         "tree_parser": config.ASSERTION_TREE_PARSER,
         "candidate_syn_policy": "insert_full_candidate_into_native_human_machine_tb",
     }
@@ -142,14 +144,14 @@ def main() -> int:
                         tree_parser=config.ASSERTION_TREE_PARSER,
                         tree_parse_failure_policy="explicit_opaque_source_anchor",
                         training_diagnosis_model=config.RULE_MODEL,
-                        training_rule_schema="behavior_review_diagnoses_corrections_v4",
-                        training_feedback="complete_latest_response_only")
+                        training_rule_schema="requirement_interpretation_categories_v5",
+                        training_feedback="latest_requirement_interpretation_categories_rules")
 
     if phase == "infer":
         settings.update(
             inference_workflow="existing_rule_selector_independent_locations",
             inference_diagnosis_model=config.RULE_MODEL,
-            inference_feedback="latest_ranked_rules_and_independent_locations",
+            inference_feedback="latest_interpretation_categories_ranked_rules",
             inference_rule_stages='rank_existing_rules_and_locate_issues_only',
             inference_rule_context='training_rules_generated_before_after_no_references_or_scores',
             inference_rule_generation_enabled=False,
@@ -240,5 +242,6 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
 
 

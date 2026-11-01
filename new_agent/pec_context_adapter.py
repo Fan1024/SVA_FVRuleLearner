@@ -9,7 +9,7 @@ from pathlib import Path
 import os
 import re
 
-VERSION = "typed_tb_context_v2"
+VERSION = "typed_tb_context_v3_fixed_arrays"
 
 
 def context_mode():
@@ -33,7 +33,29 @@ def _type_info(typ):
         current = current.elementType.canonicalType
     if dimensions:
         result["dimensions"] = dimensions
+    # Unpacked arrays themselves are not integral; their packed element can be.
+    # Its signedness/width belong before the name, unpacked ranges after it.
+    element = typ.canonicalType
+    while element.isUnpackedArray:
+        element = element.elementType.canonicalType
+    result.update(element_integral=bool(element.isIntegral),
+                  element_signed=bool(element.isSigned),
+                  element_four_state=bool(element.isFourState))
+    if element.isIntegral and not element.isError:
+        result['packed_bit_width'] = int(element.bitWidth)
+    structured = bool(getattr(current, 'isStruct', False) or
+                      getattr(current, 'isUnion', False) or
+                      getattr(current, 'isEnum', False))
+    fixed_ranges = all(re.fullmatch(r'\[-?\d+:-?\d+\]', item['range'])
+                       for item in dimensions)
+    result['declaration_supported'] = bool(
+        element.isIntegral and not element.isError and fixed_ranges and not structured)
     return result
+
+
+def supported_context_type(item):
+    return item.get('declaration_supported',
+                    bool(item.get('integral') and not item.get('unpacked_array') and not item.get('type_error')))
 
 
 @lru_cache(maxsize=128)
@@ -71,12 +93,13 @@ def collect_context(source, module_name=None):
     return deepcopy(_collect(source, module_name))
 
 
-def prepare_signal_list(testbench, native_signal_list, *, mode=None, module_name=None):
-    """Keep legacy names; add module-scope integral signal/parameter names.
+def prepare_signal_list(testbench, native_signal_list, *, mode=None, module_name=None,
+                        assertion_texts=()):
+    """Expand names and prepare scalar, packed and fixed unpacked declarations.
 
-    Arrays, hierarchical scopes and unsupported native identifier spellings are
-    reported, not flattened or injected as declaration strings. Failure to read
-    context is recorded and leaves native evaluation available.
+    Fixed unpacked dimensions are retained in typed mode. Unsupported types and
+    identifiers are recorded; a referenced unsupported declaration blocks typed
+    launch instead of silently using a scalar approximation.
     """
     mode = mode or context_mode()
     if mode not in {"legacy", "expanded_names", "typed"}:
@@ -105,7 +128,8 @@ def prepare_signal_list(testbench, native_signal_list, *, mode=None, module_name
         name = item["name"]
         if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_$]*", name):
             reason = "unsupported_native_identifier"
-        elif item["unpacked_array"] or not item["integral"] or item["type_error"]:
+        elif not (supported_context_type(item) if mode == 'typed' else
+                  item['integral'] and not item['unpacked_array'] and not item['type_error']):
             reason = "unsupported_or_unresolved_native_type"
         else:
             reason = None
@@ -116,9 +140,19 @@ def prepare_signal_list(testbench, native_signal_list, *, mode=None, module_name
             result["added_names"].append(name)
     result.update(status="expanded", effective_signal_list=names)
     if mode == 'typed':
+        from new_agent.pec_input_adapter import _tokens
+        referenced = {token.text for source in assertion_texts for token in _tokens(source)}
+        required = referenced | set(original)
+        unsupported = [item for item in result['source_context']['signals']
+                       if item['name'] in required and not supported_context_type(item)]
         result.update(status='typed_context_prepared',
                       constant_names=sorted(constants),
-                      note='TB signals retain types; parameters become evaluated localparams. '
+                      referenced_tb_names=sorted(referenced & {
+                          item['name'] for item in result['source_context']['signals'] +
+                          result['source_context']['parameters']}),
+                      unsupported_required_declarations=unsupported,
+                      note='TB signals retain packed and fixed unpacked ranges; '
+                           'parameters become evaluated localparams. '
                            'No TB assignments, assumptions or state updates are copied.')
     return ",".join(names), result
 
@@ -132,4 +166,5 @@ def inspect_checker_context(sv_dir):
         return {"status": "available", "context": collect_context(paths[-1].read_text())}
     except Exception as error:
         return {"status": "unavailable", "error": f"{type(error).__name__}: {error}"}
+
 
