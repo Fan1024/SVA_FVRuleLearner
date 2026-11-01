@@ -1,0 +1,162 @@
+{
+  "repository": "https://github.com/Fan1024/SVA_FVRuleLearner",
+  "base_commit": "fb624d5b452a0dbeccea891e310f82ca9728e087",
+  "package_kind": "Complete source replacements plus installer-driven cleanup",
+  "adapter_version": "native_signal_list_v5",
+  "source_files": 20,
+  "obsolete_files": [
+    "new_agent/typed_pec.py",
+    "tests/test_pec_array_context.py",
+    "tests/test_pec_source_bytes.py",
+    "requirements_pec_compilation.txt",
+    "README_PEC_COMPILATION_UPDATE.md",
+    "README_REQUIREMENT_DIAGNOSIS_UPDATE.md",
+    "MANIFEST_REQUIREMENT_DIAGNOSIS_UPDATE.json",
+    "MANIFEST_PEC_COMPILATION_UPDATE.json"
+  ],
+  "config_change": "Set PEC_CONTEXT_MODE to expanded_names; preserve all other settings",
+  "native_files_modified": [],
+  "validation": {
+    "local_tests_passed": 28,
+    "pyslang_versions": [
+      "11.0.0",
+      "12.1.0"
+    ],
+    "python": "3.12.14",
+    "llm_native_calls_mocked": true,
+    "jasper_run": false
+  },
+  "files": [
+    {
+      "path": "README_SIGNAL_LIST_UPDATE.md",
+      "sha256": "9d74136102fd9ccae991d3faac6e4f0b3dec89ec427abcd2008c148849f07b9b",
+      "bytes": 8221
+    },
+    {
+      "path": "apply_signal_list_update.py",
+      "sha256": "cc7b042a5e967ba5cd507d4474d5a6b1eadea3aafb2ff157e995bc36480674a1",
+      "bytes": 3698
+    },
+    {
+      "path": "new_agent/check_pec_context.py",
+      "sha256": "b4acb48b1a209f44f732eb2a5eb1db2b247465de72599534ea0e0fae94cc33b5",
+      "bytes": 5268
+    },
+    {
+      "path": "new_agent/correction_locations.py",
+      "sha256": "180f61fa3755bf35adcaa2508f35012444e7b8cdc4c121842d05d442ea2cd94f",
+      "bytes": 5211
+    },
+    {
+      "path": "new_agent/diagnosis_context.py",
+      "sha256": "9562b5e57c9c22f15520d940d86caa858647b7ece6ec0b3b14965662b3605212",
+      "bytes": 4115
+    },
+    {
+      "path": "new_agent/formal_check.py",
+      "sha256": "d125cfd3150b1a7c35cabf551af8e7838616f9b7f816a5c8d1a38698c16bf83e",
+      "bytes": 23861
+    },
+    {
+      "path": "new_agent/infer_assertion_generator.py",
+      "sha256": "f7f0e9cd36652247891948eddc8e0ce4b6349ada189c4bc519b2a1585346b517",
+      "bytes": 5930
+    },
+    {
+      "path": "new_agent/infer_rule_masking.py",
+      "sha256": "36ab8067fb35a65309722f63b86ef86d4a0541f1cb41826d0ef8d468f505ba75",
+      "bytes": 14186
+    },
+    {
+      "path": "new_agent/infer_rule_selector.py",
+      "sha256": "8c18d7afbf8eda41bd9447b135906e0410e321b15532f314db96cd4c888ff2f9",
+      "bytes": 13875
+    },
+    {
+      "path": "new_agent/infer_rule_selector_prompts.py",
+      "sha256": "c4137920f38f656185cd1a34684092c72617124297de530b844b2ea9d36b1303",
+      "bytes": 3334
+    },
+    {
+      "path": "new_agent/infer_training_traces.py",
+      "sha256": "beaa54b2016523b0441adaa0c75054c5ee7a21afe52d4e2fa5bf39ab3cbc25e1",
+      "bytes": 5939
+    },
+    {
+      "path": "new_agent/infer_tree_pipeline.py",
+      "sha256": "d2b97bbbfa49c2261849a532b6d4d0ffaf416d9d285edbd3a8b5c69590d2d568",
+      "bytes": 20765
+    },
+    {
+      "path": "new_agent/main.py",
+      "sha256": "dcd797ce677333d77ed0d463f6df0c9b0f6a3fca37371e21906bd0db0c12eebd",
+      "bytes": 12506
+    },
+    {
+      "path": "new_agent/pec_context_adapter.py",
+      "sha256": "e7d325f26ce82165d73435f21bea8adfd34aee506a9cbc055b518699532e5ed4",
+      "bytes": 3552
+    },
+    {
+      "path": "new_agent/pyslang_assertion_parser.py",
+      "sha256": "81e13f43be755bbc447858edd5f275d5e4c53b367d7ae19c741eb4b115a62903",
+      "bytes": 7860
+    },
+    {
+      "path": "new_agent/revision_context.py",
+      "sha256": "ee4d7b7bbb865ad987b9cf4d446b75af2165af90f3993edfeaf4eb441d48606a",
+      "bytes": 4995
+    },
+    {
+      "path": "new_agent/run_io.py",
+      "sha256": "c1c5c43b82ec38de771741a40f964a87dac8d5558336b34a8153067ba619669c",
+      "bytes": 44145
+    },
+    {
+      "path": "new_agent/train_assertion_generator.py",
+      "sha256": "e4c8344f108bae796c6c5481ee6dadcf7e21838a289b8779def28bf1cda0c875",
+      "bytes": 4557
+    },
+    {
+      "path": "new_agent/train_tree_pipeline.py",
+      "sha256": "a6aa23b2c06c10c48554afb8c910c131b2052f76dfd1d85c70c957938bc9b7f5",
+      "bytes": 21517
+    },
+    {
+      "path": "new_agent/train_tree_rule_generator.py",
+      "sha256": "08e6d3b7df7bbbc2f4afa9e4e50481870f27839901d67a054e28943aac5811ee",
+      "bytes": 6285
+    },
+    {
+      "path": "new_agent/train_tree_rule_prompts.py",
+      "sha256": "d089c5488466843a764502398aaf3ee3810097108e52d05f254485ded3012e5e",
+      "bytes": 3937
+    },
+    {
+      "path": "new_agent/training_prompt_context.py",
+      "sha256": "d8cb3bc2777269e055d21b9ee7f841e147331ccaab50e9adce5c3b64a59729d9",
+      "bytes": 4340
+    },
+    {
+      "path": "requirements_new_agent.txt",
+      "sha256": "ca574883e0f7bc893f720e9438b4b39da2bda27e4406b5ec88cfe14b1f2a6af1",
+      "bytes": 83
+    },
+    {
+      "path": "tests/test_native_signal_list.py",
+      "sha256": "4aa0995c8c5c0e5ef1517372fe9727362867b9b72e47ff0d201c3e83c91dd214",
+      "bytes": 10168
+    },
+    {
+      "path": "tests/test_pec_revision_update.py",
+      "sha256": "444953bf2c309f87217b0e0a9fe8be6772ae306f16e06e96d651ee58a81d8eba",
+      "bytes": 8572
+    },
+    {
+      "path": "tests/test_requirement_diagnosis.py",
+      "sha256": "df310db4378ff17a9af8d2a964d6491e82737ec7fdbf6df94fc836fb4a61e7d6",
+      "bytes": 14727
+    }
+  ],
+  "checksum_note": "Hashes cover every delivered file except this manifest itself."
+}
