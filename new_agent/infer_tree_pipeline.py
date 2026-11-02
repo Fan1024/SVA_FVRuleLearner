@@ -9,7 +9,7 @@ import json
 from pathlib import Path
 import sys
 from tempfile import TemporaryDirectory
-from openai import OpenAI
+from new_agent.model_gateway import ModelGateway
 from new_agent import config, formal_check, model_io, run_io
 from new_agent import tree_archive
 from new_agent.revision_context import reconsider_repeat, evaluate_once, last_transition, retain_checker_failure
@@ -164,7 +164,7 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
                     attempt["prompts"]["user"] = user_prompt
                     run_io.update_run(directory, record, stage=stage)
                     if client is None:
-                        client = OpenAI()
+                        client = ModelGateway()
                     with run_io.measure_stage(record, "assertion") as capture_usage:
                         response_text = model_io.request_text(
                             client=client, model=config.ASSERTION_MODEL,

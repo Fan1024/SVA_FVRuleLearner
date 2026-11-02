@@ -34,10 +34,21 @@ TRAIN_FRACTION = 0.8
 # Keep this seed and the CSV unchanged to reproduce the same split.
 SPLIT_SEED = 100
 
-# Models for the two generation components. Jev uses its service default.
+# Models for assertion generation, training diagnosis and inference selection.
 ASSERTION_MODEL = "gpt-5.6-terra"
 RULE_MODEL = "gpt-5.6-terra"
 # RULE_MODEL runs training diagnosis/rules and inference selection.
+
+# Official API routing is inferred from these unchanged model-ID settings.
+# Enabled alternatives: "kimi-k3.1-pro", "kimi-k3.1-pro-highspeed",
+# "deepseek-v4-pro", "deepseek-flash". Claude is excluded because its
+# compatibility endpoint rejects the required JSON-object output mode.
+# Keys: OPENAI_API_KEY, MOONSHOT_API_KEY, DEEPSEEK_API_KEY, as applicable.
+# None preserves provider defaults (and the existing OpenAI request).
+# For a controlled comparison, set both options explicitly for every model;
+# "high" and 32768 are accepted by all enabled comparison routes.
+MODEL_REASONING_EFFORT = None
+MODEL_MAX_OUTPUT_TOKENS = None
 
 # Total assertion attempts: 10 = initial generation + at most nine revisions.
 MAX_ROUNDS = 10

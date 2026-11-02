@@ -12,6 +12,7 @@ from tempfile import TemporaryDirectory
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from new_agent import config, dataset_loader, formal_check, run_io
+from new_agent import model_gateway
 
 
 def select_workflow():
@@ -54,6 +55,8 @@ def validate_config() -> None:
         value = getattr(config, name)
         if not isinstance(value, str) or not value.strip():
             raise ValueError(f"{name} must be a nonempty model name.")
+    for model in active_models().values():
+        model_gateway.model_settings(model)
     timeout = config.JASPER_TIMEOUT_SECONDS
     if type(timeout) not in (int, float) or not isfinite(timeout) or timeout <= 0:
         raise ValueError("JASPER_TIMEOUT_SECONDS must be a finite positive number.")
@@ -73,9 +76,16 @@ def validate_config() -> None:
     formal_check.validate_backend()
 
 
+def active_models():
+    models = {"assertion": config.ASSERTION_MODEL}
+    if config.MODE != "inference_only":
+        models["rule"] = config.RULE_MODEL
+    return models
+
+
 def validate_credentials() -> None:
     """Reject absent credentials before paying for assertion-generation calls."""
-    required = ["OPENAI_API_KEY"]
+    required = model_gateway.required_api_keys(active_models().values())
     missing = [name for name in required if not os.environ.get(name, "").strip()]
     if missing:
         raise ValueError("Missing environment variables: " + ", ".join(missing)
@@ -125,9 +135,7 @@ def main() -> int:
         print(f"Rule retrieval pool: {len(retriever.cases)} passed training cases with diagnoses and rules; "
               f"{len(retriever.excluded_unpassed_case_ids)} unpassed cases excluded.", flush=True)
     dataset_path = Path(cases[0]["dataset_path"])
-    models = {"assertion": config.ASSERTION_MODEL, "rule": config.RULE_MODEL}
-    if phase == "inference_only":
-        models = {"assertion": config.ASSERTION_MODEL}
+    models = active_models()
     from new_agent.pec_context_adapter import context_mode, VERSION as PEC_CONTEXT_VERSION
     from new_agent.diagnosis_context import DIAGNOSIS_CATEGORIES
     settings = {
@@ -158,6 +166,8 @@ def main() -> int:
         "diagnosis_categories": list(DIAGNOSIS_CATEGORIES),
         "tree_parser": config.ASSERTION_TREE_PARSER,
         "candidate_syn_policy": "insert_full_candidate_into_native_human_machine_tb",
+        "model_gateway_version": model_gateway.VERSION,
+        "model_gateway": {role: model_gateway.model_settings(model) for role, model in models.items()},
     }
 
     if phase == "train":
