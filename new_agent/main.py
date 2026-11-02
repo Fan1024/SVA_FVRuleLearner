@@ -128,7 +128,7 @@ def main() -> int:
         "comparison_scope": policy["scope"],
         "revision_rules": "previous_round_only",
         "round_policy": "pec_or_bleu_or_max_rounds",
-        "pec_compile_error_policy": "continue_requirement_review_allow_bleu_acceptance",
+        "pec_compile_error_policy": "block_on_native_pec_compile_failure",
         "case_ids": ([case["case_number"] for case in cases]
                      if phase == "infer" else list(config.TRAIN_CASE_IDS)),
         "dataset_split": dataset_split,
@@ -246,6 +246,7 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
 
 
 

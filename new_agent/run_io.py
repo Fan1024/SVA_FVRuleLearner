@@ -603,7 +603,7 @@ def _debug_event_text(record: dict, event: str, data: dict) -> str:
         reason = data["stop_reason"]
         explanation = {
             "passed": "The supplied FVRuleLearner PEC checker reported full equivalence.",
-            "bleu_match": "BLEU is 1.0; accepted under FVRuleLearner's PEC-or-BLEU policy. Native PEC/relaxed scores and formal status remain unchanged.",
+            "bleu_match": "BLEU is 1.0; accepted under FVRuleLearner's PEC-or-BLEU policy. Reported PEC/relaxed PEC are 1.0; raw scores remain in the formal result.",
             "max_rounds": "Maximum assertion attempts reached.",
             "pec_compile_error": "Native PEC compilation failed; no equivalence verdict.",
             "no_guidance": "Rule generator returned no rules.",
@@ -1011,6 +1011,7 @@ def print_summary(run_dir, record: dict) -> None:
         print("Evaluation:", Path(run_dir) / "evaluation.csv")
     else:
         print("Result:", Path(run_dir) / "result.json")
+
 
 
 

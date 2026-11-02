@@ -4,8 +4,9 @@ The native evaluator invokes its original Jasper launcher/Tcl/PEC. Immediately
 before launch, our source-boundary adapter replaces the two property-expression
 arguments, binds TB integral parameters, and supplies a prepared signal-name list. Native PEC files and Tcl
 remain untouched; there is no analyze-command interception or Tcl overlay.
-Human/Machine SYN checking includes the full candidate in the TB. Missing PEC
-verdicts remain unavailable even when a candidate is accepted by BLEU alone.
+Human/Machine SYN checking includes the full candidate in the TB. BLEU matches
+retain the pre-v7 PEC reporting policy after a completed comparison; missing
+PEC verdicts remain unavailable.
 """
 
 from dataclasses import asdict
@@ -43,11 +44,13 @@ def apply_acceptance_policy(result: dict) -> dict:
         name: result.get(name) for name in ("syntax", "pec", "relax_pec")
     })
     completed = result.get('status') in SEMANTIC_STATUSES
-    bleu_match = result.get("bleu") == 1.0
+    bleu_match = completed and result.get("bleu") == 1.0
     native_pass = completed and raw.get("pec") == 1.0
     result["accepted"] = native_pass or bleu_match
     result["acceptance_reason"] = "pec" if native_pass else "bleu_match" if bleu_match else None
     result['native_pec_passed'] = native_pass
+    if bleu_match:
+        result["pec"] = result["relax_pec"] = 1.0
     return result
 
 
@@ -431,6 +434,7 @@ def cleanup_work(result: dict, keep_work=False, *, preserve_unresolved=True) -> 
         return {"retained": True, "reason": "Ownership check failed; no files deleted."}
     shutil.rmtree(work)
     return {"retained": False, "reason": "Removed owned native evaluation work."}
+
 
 
 
