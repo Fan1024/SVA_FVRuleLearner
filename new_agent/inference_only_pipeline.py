@@ -108,6 +108,7 @@ def run_inference_only_pipeline(directory, record: dict, *, retriever=None) -> i
                     generation_inputs = {
                         "requirement": inputs["requirement"],
                         "testbench": inputs["testbench"],
+                        "assertion_template": policy["assertion_template"],
                         "examples": example_cases, "previous_assertion": previous_assertion,
                         "previous_round": previous_round, "diagnosis_guidance": latest_diagnosis_guidance,
                         "previous_evaluation": evaluation_feedback((record.get('formal') or {}).get('status')),
@@ -209,14 +210,6 @@ def run_inference_only_pipeline(directory, record: dict, *, retriever=None) -> i
                     )
                     return 0
 
-                if status == 'PEC_COMPILE_ERROR':
-                    run_io.update_run(
-                        directory, record, status='BLOCKED_PEC_COMPILE', passed=False,
-                        stage='finished', stop_reason='pec_compile_error',
-                        diagnosis_skipped_reason='Native PEC compilation failed; no semantic verdict. '
-                                                 'Inspect native diagnostics before assertion revision.')
-                    return 1
-
                 run_io.update_run(directory, record,
                     diagnosis_skipped_reason="Generation-only baseline: no diagnosis or retrieval component.")
                 continue
@@ -224,7 +217,7 @@ def run_inference_only_pipeline(directory, record: dict, *, retriever=None) -> i
     # No earlier pass is possible here. Keep the latest attempt and its scores.
     last = record["formal"]
     resolved = last["status"] in {"IMPLIES", "NO_EQUIVALENCE", "SYNTAX_ERROR", "FORMAT_ERROR", "PEC_COMPILE_ERROR"} or (
-        last["status"] == "INPUT_ERROR" and last.get("error_origin") == "candidate"
+        last["status"] == "INPUT_ERROR" and last.get("error_origin") in {"candidate", "candidate_format"}
     )
     run_io.update_run(
         directory, record, status="COMPLETED" if resolved else "CHECKER_UNRESOLVED",

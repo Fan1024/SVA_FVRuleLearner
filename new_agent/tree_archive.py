@@ -7,8 +7,8 @@ from new_agent import assertion_tree, run_io
 def build(source, prefix):
     try:
         return assertion_tree.build_tree(source, prefix)
-    except assertion_tree.ParseError as error:
-        return {'source_assertion': source, 'parse_error': str(error), 'context': {},
+    except Exception as error:
+        return {'source_assertion': source, 'parse_error': f'{type(error).__name__}: {error}', 'context': {},
                 'root': {'id': prefix + '_unparsed', 'kind': 'unparsed_assertion',
                          'value': source, 'children': [], 'parent_id': None, 'depth': 0}}
 

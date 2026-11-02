@@ -202,10 +202,16 @@ def extract_property(text, dataset):
 
 def prepare_pec_inputs(generated_assertion, reference_assertion, dataset):
     """Prepare both expressions; no declarations, scores, or source repairs."""
+    properties = {}
+    for side, source in (('generated', generated_assertion), ('reference', reference_assertion)):
+        try:
+            properties[side] = extract_property(source, dataset).to_dict()
+        except ExtractionError as error:
+            error.side = side
+            raise
     return {
         "adapter_version": ADAPTER_VERSION,
         "dataset": dataset,
         "offset_units": "unicode_characters_end_exclusive",
-        "generated": extract_property(generated_assertion, dataset).to_dict(),
-        "reference": extract_property(reference_assertion, dataset).to_dict(),
+        **properties,
     }

@@ -28,5 +28,5 @@ def build_generation_prompt(requirement, testbench=None, *, examples=None,
                 generator_view(selector_guidance,previous_assertion,previous_round),ensure_ascii=False,indent=2))
     elif selector_guidance is not None:
         raise ValueError('Selected guidance requires a previous assertion.')
-    sections.append(output_instruction())
+    sections.append(output_instruction(assertion_template))
     return '\n\n'.join(sections)

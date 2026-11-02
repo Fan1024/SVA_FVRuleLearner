@@ -38,12 +38,11 @@ def _failed_round(directory, round_number, status, message, policy):
     directory.mkdir(parents=True, exist_ok=True)
     log_path = directory / "jasper.log"
     log_path.write_text(message + "\n", encoding="utf-8")
-    candidate_error = status in {"FORMAT_ERROR", "INPUT_ERROR"}
     return {
         "status": status,
-        "syntax": 0.0 if candidate_error else None,
-        "pec": 0.0 if candidate_error else None,
-        "relax_pec": 0.0 if candidate_error else None,
+        "syntax": None,
+        "pec": None,
+        "relax_pec": None,
         "bleu": None, "rouge": None, "exact_match": None,
         "comparison_scope": policy["scope"], "returncode": None,
         "source_task_id": "", "tool_task_id": f"round_{round_number:04d}",

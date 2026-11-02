@@ -45,6 +45,7 @@ def _save_round_trace(directory, record, round_number):
             "pec_input_preparation": evidence.get("pec_input_preparation"),
             "pec_context_preparation": (evaluation or {}).get("pec_context_preparation"),
             "diagnosis_from_round": evidence.get("diagnosis_from_round"),
+            "diagnosis_basis": evidence.get("diagnosis_basis"),
             "guidance_payload": evidence.get("guidance_payload"),
             "generation_prompts": evidence.get('generation_prompts'),
         }
@@ -144,6 +145,7 @@ def run_training_pipeline(directory, record: dict, *, retriever=None) -> int:
                     generation_inputs = {
                         "requirement": inputs["requirement"],
                         "testbench": inputs["testbench"],
+                        "assertion_template": policy["assertion_template"],
                         "assertion_history": assertion_history(
                             record["round_evidence"], before_round=round_number),
                         "diagnosis_response": latest_diagnosis_response,
@@ -253,29 +255,23 @@ def run_training_pipeline(directory, record: dict, *, retriever=None) -> int:
                     )
                     return 0
 
-                if status == 'PEC_COMPILE_ERROR':
-                    run_io.update_run(
-                        directory, record, status='BLOCKED_PEC_COMPILE', passed=False,
-                        stage='finished', stop_reason='pec_compile_error',
-                        diagnosis_skipped_reason='Native PEC compilation failed; no semantic verdict. '
-                                                 'Inspect native diagnostics before assertion revision.')
-                    return 1
-
                 # Next-round feedback comes only from whitelisted history outcomes.
                 # Native logs, metrics and evaluation-policy text stay in experiment records.
                 if round_number == config.MAX_ROUNDS:
                     run_io.update_run(directory, record, diagnosis_skipped_reason="Round budget exhausted.")
                     continue
-                if inspection_trees is None:
+                if generated_assertion is None:
                     run_io.update_run(directory, record,
-                                      diagnosis_skipped_reason="Tree archive unavailable after evaluation.")
+                                      diagnosis_skipped_reason="No candidate source was extracted for review.")
                     continue
-                if status not in {"IMPLIES", "NO_EQUIVALENCE"}:
-                    run_io.update_run(
-                        directory, record,
-                        diagnosis_skipped_reason="No completed semantic comparison; retry without semantic rule learning.",
-                    )
-                    continue
+                if inspection_trees is None:
+                    # Archive/parser failures must not disable source-based diagnosis.
+                    inspection_trees = {
+                        'generated': tree_archive.build(generated_assertion, 'G'),
+                        'reference': tree_archive.build(inputs['reference_assertion'], 'R'),
+                    }
+                evidence['diagnosis_basis'] = ('completed_comparison' if status in
+                    {'IMPLIES', 'NO_EQUIVALENCE'} else 'source_review_no_equivalence_verdict')
 
                 stage = "tree_construction"
                 try:
@@ -342,7 +338,7 @@ def run_training_pipeline(directory, record: dict, *, retriever=None) -> int:
     # No earlier pass is possible here. Keep the latest attempt and its scores.
     last = record["formal"]
     resolved = last["status"] in {"IMPLIES", "NO_EQUIVALENCE", "SYNTAX_ERROR", "FORMAT_ERROR", "PEC_COMPILE_ERROR"} or (
-        last["status"] == "INPUT_ERROR" and last.get("error_origin") == "candidate"
+        last["status"] == "INPUT_ERROR" and last.get("error_origin") in {"candidate", "candidate_format"}
     )
     run_io.update_run(
         directory, record, status="COMPLETED" if resolved else "CHECKER_UNRESOLVED",

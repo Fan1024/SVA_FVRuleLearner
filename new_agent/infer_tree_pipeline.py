@@ -148,6 +148,7 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
                     generation_inputs = {
                         "requirement": inputs["requirement"],
                         "testbench": inputs["testbench"],
+                        "assertion_template": policy["assertion_template"],
                         "examples": example_cases, "previous_assertion": previous_assertion,
                         "previous_round": previous_round, "selector_guidance": latest_selector_guidance,
                         "previous_evaluation": evaluation_feedback((record.get('formal') or {}).get('status')),
@@ -249,28 +250,16 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
                     )
                     return 0
 
-                if status == 'PEC_COMPILE_ERROR':
-                    run_io.update_run(
-                        directory, record, status='BLOCKED_PEC_COMPILE', passed=False,
-                        stage='finished', stop_reason='pec_compile_error',
-                        diagnosis_skipped_reason='Native PEC compilation failed; no semantic verdict. '
-                                                 'Inspect native diagnostics before assertion revision.')
-                    return 1
-
                 # No detailed checker feedback is sent to assertion generation.
                 if round_number == config.MAX_ROUNDS:
                     run_io.update_run(directory, record, diagnosis_skipped_reason="Round budget exhausted.")
                     continue
-                if inspection_trees is None:
+                if generated_assertion is None:
                     run_io.update_run(directory, record,
-                                      diagnosis_skipped_reason="Tree archive unavailable after evaluation.")
+                                      diagnosis_skipped_reason="No candidate source was extracted for review.")
                     continue
-                if status not in {"IMPLIES", "NO_EQUIVALENCE"}:
-                    run_io.update_run(
-                        directory, record,
-                        diagnosis_skipped_reason="No eligible comparison outcome; retry assertion generation without selector guidance.",
-                    )
-                    continue
+                if inspection_trees is None:
+                    inspection_trees = {'generated': tree_archive.build(generated_assertion, 'G')}
 
                 stage = "retrieval"
                 try:
@@ -325,7 +314,7 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
     # No earlier pass is possible here. Keep the latest attempt and its scores.
     last = record["formal"]
     resolved = last["status"] in {"IMPLIES", "NO_EQUIVALENCE", "SYNTAX_ERROR", "FORMAT_ERROR", "PEC_COMPILE_ERROR"} or (
-        last["status"] == "INPUT_ERROR" and last.get("error_origin") == "candidate"
+        last["status"] == "INPUT_ERROR" and last.get("error_origin") in {"candidate", "candidate_format"}
     )
     run_io.update_run(
         directory, record, status="COMPLETED" if resolved else "CHECKER_UNRESOLVED",

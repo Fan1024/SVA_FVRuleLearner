@@ -84,12 +84,14 @@ def evaluate_once(record, round_number, **arguments):
 def retain_checker_failure(directory, record, round_number, result):
     """Keep small failure inputs/logs before the round's temporary tree disappears."""
     if (not record['settings'].get('save_debug_traces') or
-            result['status'] not in {'PEC_COMPILE_ERROR', 'TOOL_ERROR'}):
+            result['status'] not in {'PEC_COMPILE_ERROR', 'TOOL_ERROR', 'INPUT_ERROR', 'SYNTAX_ERROR'}):
         return
     source = Path(result['run_dir'])
     target = Path(directory) / 'diagnostics' / f'round_{round_number:04d}'
     target.mkdir(parents=True, exist_ok=True)
-    files = [source / name for name in ('jasper.log', 'native_pec_inputs.json', 'evaluation_error.log')]
+    files = [source / name for name in ('jasper.log', 'native_pec_inputs.json', 'evaluation_error.log',
+                                      'candidate_syn.log')]
+    files += sorted(source.glob('native_transport_*.tcl'))
     work = Path(result['work_dir'])
     files += sorted(work.glob('jg/*/pec/pec*.sve'))
     saved = []

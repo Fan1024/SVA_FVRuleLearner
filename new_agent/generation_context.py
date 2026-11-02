@@ -3,7 +3,11 @@ def outcome(value):
     if not isinstance(value, str):
         return 'The previous attempt did not obtain a completed evaluation.'
     text = value.lower()
-    if value in {'SYNTAX_ERROR','FORMAT_ERROR','INPUT_ERROR'} or 'could not compile' in text:
+    if value in {'FORMAT_ERROR','INPUT_ERROR'} or 'single assertion' in text or 'input preparation' in text:
+        return ('The previous output did not satisfy the single-assertion input contract. '
+                'Return exactly one assert property statement; no generate/for blocks, '
+                'property declarations, or additional assertions. No equivalence verdict was obtained.')
+    if value == 'SYNTAX_ERROR' or 'could not compile' in text:
         return 'The previous attempt could not be compiled as a valid assertion.'
     if value in {'IMPLIES','NO_EQUIVALENCE'} or 'not functionally equivalent' in text:
         return 'The previous assertion did not pass evaluation.'
@@ -37,5 +41,11 @@ def testbench_section(testbench):
     return 'TESTBENCH / MODULE CONTEXT\n' + testbench
 
 
-def output_instruction():
-    return 'Enclose the complete SVA statement in ```systemverilog and ```. Output no other text.'
+def output_instruction(assertion_template=None):
+    instruction = ('Output exactly one complete assert property statement, optionally labelled. '
+                   'Express the obligation within that one property; do not emit generate/for blocks, '
+                   'module declarations, named property declarations, or multiple assertions. '
+                   'Enclose the statement in ```systemverilog and ```. Output no other text.')
+    if assertion_template:
+        instruction += '\nSTATEMENT TEMPLATE\n' + assertion_template
+    return instruction

@@ -2,8 +2,9 @@
 
 The native evaluator invokes its original Jasper launcher/Tcl/PEC. Immediately
 before launch, our source-boundary adapter replaces the two property-expression
-arguments, binds TB integral parameters, and supplies a prepared signal-name list. Native PEC files and Tcl
-remain untouched; there is no analyze-command interception or Tcl overlay.
+arguments, binds TB integral parameters, and supplies a prepared signal-name list.
+A temporary Tcl bootstrap transfers literal input data and sources the unchanged
+native Tcl. Native analyze commands and PEC logic remain untouched.
 Human/Machine SYN checking includes the full candidate in the TB. BLEU matches
 retain the pre-v7 PEC reporting policy after a completed comparison; missing
 PEC verdicts remain unavailable.
@@ -26,6 +27,7 @@ import traceback
 from types import SimpleNamespace
 from new_agent.pec_input_adapter import ExtractionError, prepare_pec_inputs
 from new_agent.pec_context_adapter import prepare_signal_list, bind_parameter_constants
+from new_agent.native_tcl_transport import literal_define_transport, COMPLETED_MARKER
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -94,7 +96,7 @@ def get_evaluation_policy(dataset: str) -> dict:
             "inserted into the supplied testbench before running PEC.",
             "include_reset": not human, "tcl_file": f"run_jg_{dataset}.tcl",
             "assertion_template": (
-                "asrt: assert property (@(posedge clk) BODY);" if human else
+                "asrt: assert property (@(posedge clk) disable iff (tb_reset) BODY);" if human else
                 "assert property (@(posedge clk) BODY);"
             )}
 
@@ -258,6 +260,31 @@ def _candidate_testbench(testbench, assertion, module_name=None):
     return raw[:position].decode() + '\n// Candidate for native SYN checking\n' + assertion + '\n' + raw[position:].decode()
 
 
+def _syntax_only(original_launcher, arguments, directory):
+    """Compile the complete candidate TB when PEC preparation cannot proceed."""
+    arguments = dict(arguments)
+    original_work = Path(arguments['sv_dir']).resolve()
+    work = original_work / 'syn_only'
+    work.mkdir(exist_ok=True)
+    name = f"{arguments['experiment_id']}_{arguments['task_id']}.sva"
+    shutil.copyfile(original_work / name, work / name)
+    arguments.update(tcl_file_path=str(REPO_ROOT / 'FVEval/tool_scripts/run_jg_only_analysis.tcl'),
+                     sv_dir=str(work), lm_assertion_text='1', ref_assertion_text='1',
+                     signal_list_text='unused')
+    try:
+        with literal_define_transport(_SESSION.execution, directory):
+            output = original_launcher(**arguments)
+    except Exception as error:
+        output = str(error)
+    status = _execution_status(output)
+    syntax = (0.0 if status == 'SYNTAX_ERROR' else
+              1.0 if status == 'INCONCLUSIVE' and re.search(
+                  r'^' + re.escape(COMPLETED_MARKER) + r'\s*$', output, re.M) else None)
+    (directory / 'candidate_syn.log').write_text(output + '\n', encoding='utf-8')
+    return {'syntax': syntax, 'status': 'SYN_PASSED' if syntax == 1.0 else status,
+            'tool_output': output}
+
+
 def evaluate_assertion(generated_assertion: str, reference_assertion: str, testbench: str,
                        requirement: str, run_dir=None, timeout_seconds: float = 300,
                        task_id: str = "case", dataset: str = "nl2sva_human", *,
@@ -309,11 +336,13 @@ def evaluate_assertion(generated_assertion: str, reference_assertion: str, testb
         design_rtl="\n", cot_response="\n")
     original_launcher = _SESSION.execution.launch_jg_custom_equiv_check
     outputs = []
+    launch_arguments = {}
 
     def observed_launcher(*args, **kwargs):
         # Keep native preparation, replace intact source expressions, and expand
         # names immediately before the unchanged native Jasper launcher runs.
         bound = inspect.signature(original_launcher).bind(*args, **kwargs)
+        launch_arguments.update(bound.arguments)
         native_formulas = {name: bound.arguments.get(name) for name in
                            ("lm_assertion_text", "ref_assertion_text")}
         try:
@@ -351,7 +380,8 @@ def evaluate_assertion(generated_assertion: str, reference_assertion: str, testb
             "preparation": preparation,
         })
         try:
-            output = original_launcher(*bound.args, **bound.kwargs)
+            with literal_define_transport(_SESSION.execution, directory):
+                output = original_launcher(*bound.args, **bound.kwargs)
         except Exception as error:
             outputs.append(str(error))
             raise
@@ -385,11 +415,21 @@ def evaluate_assertion(generated_assertion: str, reference_assertion: str, testb
         result["status"] = observed if observed in {"TIMEOUT", "PEC_COMPILE_ERROR", "SYNTAX_ERROR"} else "TOOL_ERROR"
         if isinstance(error, ExtractionError):
             result["status"] = "INPUT_ERROR"
-            result["error_origin"] = "pec_extraction"
+            result["error_origin"] = ('candidate_format' if getattr(error, 'side', None) == 'generated'
+                                      else 'reference_extraction')
         result["evaluation_error"] = f"{type(error).__name__}: {error}"
         (directory / "evaluation_error.log").write_text(traceback.format_exc(), encoding="utf-8")
     finally:
         _SESSION.execution.launch_jg_custom_equiv_check = original_launcher
+        if (launch_arguments and dataset in {'nl2sva_human', 'nl2sva_machine'}
+                and result['status'] in {'INPUT_ERROR', 'PEC_COMPILE_ERROR'}):
+            try:
+                with _capture_native_console(directory / 'native_console.log'):
+                    result['candidate_syn'] = _syntax_only(original_launcher, launch_arguments, directory)
+                result['syntax'] = result['candidate_syn']['syntax']
+            except Exception as syn_error:
+                result['syntax'] = None
+                result['candidate_syn'] = {'syntax': None, 'error': f'{type(syn_error).__name__}: {syn_error}'}
         result["native_timing"]["jg_seconds"] = perf_counter() - jg_started
         native_input = work / f"{dataset}_{tool_id}.sva"
         if dataset == "nl2sva_opencore":
@@ -411,10 +451,11 @@ def evaluate_assertion(generated_assertion: str, reference_assertion: str, testb
             "Do not rewrite assertions to repair the PEC implementation.\n"
             + result["feedback"]
         )
-    if result.get("error_origin") == "pec_extraction":
+    if result['status'] == 'INPUT_ERROR':
         result["feedback"] = (
-            "PEC input extraction failed before Jasper was launched. No SYN or PEC "
-            "verdict was obtained; do not treat this as a measured syntax failure.\n"
+            "PEC input extraction failed; no equivalence verdict was obtained. "
+            "Any candidate SYN result is recorded separately. The PEC interface "
+            "requires exactly one assert property statement, without generate blocks.\n"
             + result["feedback"]
         )
     _write_json(directory / "result.json", result)

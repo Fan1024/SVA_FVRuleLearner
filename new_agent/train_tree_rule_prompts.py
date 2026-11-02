@@ -36,6 +36,14 @@ No diagnosis IDs, requirement quotes or cross-link fields are needed.
 '''
 
 TASK_INSTRUCTIONS = '''DIAGNOSIS
+When no equivalence verdict is available, independently review the source against
+the requirement, testbench and training reference. Do not treat an unavailable
+tool result as evidence of a behavioral mismatch. Diagnose supported syntax,
+output-structure or behavioral issues; do not rewrite behavior to repair tool
+infrastructure. The output contract is one assert property statement. If the
+candidate contains generate blocks or multiple assertions, identify that format
+issue and propose a rule for expressing the obligation in a single property.
+
 Compare scope, activation, required response, timing, history, quantification,
 boundaries and written clock/reset context. Respect four-state, signedness,
 expression-width, temporal and sampling semantics. Use the supplied assertions,

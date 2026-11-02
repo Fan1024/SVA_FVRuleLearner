@@ -32,6 +32,10 @@ def evaluation_feedback(status):
         return EQUIVALENT
     if status == 'SYNTAX_ERROR':
         return SYNTAX_FAILURE
+    if status in {'INPUT_ERROR', 'FORMAT_ERROR'}:
+        return ('Input preparation could not represent the previous output as a single assertion. '
+                'Review the single assert property statement contract. No functional-equivalence '
+                'verdict was obtained; this alone does not establish a syntax or semantic defect.')
     return NO_VERDICT
 
 

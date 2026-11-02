@@ -7,7 +7,6 @@ from new_agent.generation_context import SYSTEM_PROMPT, outcome, output_instruct
 def build_generation_prompt(requirement, testbench=None, *, assertion_history=None,
                             diagnosis_response=None, diagnosis_round=None,
                             assertion_template=None):
-    # Retain assertion_template call compatibility; use the actual supplied TB.
     if not isinstance(requirement,str) or not requirement.strip():
         raise ValueError('A nonempty requirement is required.')
     history = sorted(assertion_history or [], key=lambda entry: entry['round'])
@@ -24,5 +23,5 @@ def build_generation_prompt(requirement, testbench=None, *, assertion_history=No
                 diagnosis_response,assertion=latest['generated_assertion']))
     elif diagnosis_response is not None:
         raise ValueError('Correction guidance requires a previous assertion.')
-    sections.append(output_instruction())
+    sections.append(output_instruction(assertion_template))
     return '\n\n'.join(sections)
