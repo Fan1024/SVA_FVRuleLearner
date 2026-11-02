@@ -96,7 +96,8 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
     record["settings"].update(
         inference_workflow="existing_diagnosis_and_rule_selection",
         inference_rule_stages="rank_existing_diagnoses_and_rules_only",
-        inference_feedback="latest_ranked_source_diagnoses_and_corrections",
+        inference_feedback="latest_ranked_masked_diagnoses_and_rules",
+        inference_rule_context="masked_diagnoses_and_rules_only",
         inference_example_source="accepted_generated_training_assertions",
         inference_retrieval="once_per_target_case",
         inference_max_selected_rules=selector.limits()["rules"],
@@ -158,9 +159,8 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
                     run_io.save_debug_event(directory, record, 'guidance_context',
                                             source_round=latest_selector_round,
                                             payload=latest_selector_guidance)
-                    # Only the latest selector response is used. No assertion history,
-                    # old rules, native logs, scores or reference enters this prompt.
-                    latest_selector_guidance = latest_selector_round = None
+                    # Retain current guidance if generation/extraction fails.
+                    # Only masked selected diagnoses and rules enter revision guidance.
                     attempt["prompts"]["user"] = user_prompt
                     run_io.update_run(directory, record, stage=stage)
                     if client is None:
@@ -187,6 +187,7 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
                     record["round_evidence"][-1]["generated_assertion"] = generated_assertion
                     previous_assertion = generated_assertion
                     previous_round = round_number
+                    latest_selector_guidance = latest_selector_round = None
                     stage = "formal_check"
                     run_io.update_run(directory, record, stage=stage)
                     with run_io.measure_stage(record, "tool"):
@@ -284,7 +285,7 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
                     evidence["selector_checker_status"] = status
                     run_io.save_debug_event(directory, record, "selector_request")
                     # Reuse the existing 'rule' usage column for selector cost only.
-                    # Empty outputs are valid; no forced-rule retry or generator fallback.
+                    # One selector call; enforce the requested counts without semantic filtering.
                     with run_io.measure_stage(record, "rule") as capture_usage:
                         response = model_io.request_text(
                             client=client, model=config.RULE_MODEL,
@@ -308,7 +309,11 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
                     latest_selector_guidance = latest_selector_round = None
                     _remember_round_error(directory, record, round_number, stage, error)
                     run_io.update_run(directory, record,
-                        diagnosis_skipped_reason="Selector unavailable; next attempt independently reviews the task.")
+                        status='BLOCKED_SELECTION', passed=False, stage='finished',
+                        stop_reason='selection_unavailable',
+                        diagnosis_skipped_reason='Selection unavailable; no revision will run '
+                                                 'without selected diagnoses and rules.')
+                    return 1
                 continue
 
     # No earlier pass is possible here. Keep the latest attempt and its scores.

@@ -122,7 +122,7 @@ def main() -> int:
             training_cases=dataset_loader.load_cases(dataset_path, sorted(training_ids)),
             top_k=config.TOP_K_CASES, model_name=config.EMBEDDING_MODEL,
         )
-        print(f"Rule retrieval pool: {len(retriever.cases)} passed training cases with rules; "
+        print(f"Rule retrieval pool: {len(retriever.cases)} passed training cases with diagnoses and rules; "
               f"{len(retriever.excluded_unpassed_case_ids)} unpassed cases excluded.", flush=True)
     dataset_path = Path(cases[0]["dataset_path"])
     models = {"assertion": config.ASSERTION_MODEL, "rule": config.RULE_MODEL}
@@ -173,9 +173,9 @@ def main() -> int:
         settings.update(
             inference_workflow="existing_diagnosis_and_rule_selection",
             inference_selection_model=config.RULE_MODEL,
-            inference_feedback="latest_ranked_source_diagnoses_and_corrections",
+            inference_feedback="latest_ranked_masked_diagnoses_and_rules",
             inference_rule_stages='rank_existing_diagnoses_and_rules_only',
-            inference_rule_context='training_rules_generated_before_after_no_references_or_scores',
+            inference_rule_context='masked_diagnoses_and_rules_only',
             inference_rule_generation_enabled=False,
             inference_max_selected_rules=config.TOP_K_RULES,
             inference_max_selected_diagnoses=config.TOP_K_DIAGNOSES,
@@ -186,6 +186,8 @@ def main() -> int:
             retrieval_top_k=config.TOP_K_CASES, embedding_model=config.EMBEDDING_MODEL,
             retrieval_eligible_cases=len(retriever.cases),
             retrieval_passed_cases_only=True,
+            retrieval_requires_diagnoses_and_rules=True,
+            excluded_missing_guidance_case_ids=list(retriever.excluded_missing_guidance_case_ids),
             example_retrieval="top_three_accepted_generated_training_pairs_by_requirement_cosine",
             missing_generated_example_case_ids=list(retriever.missing_generated_example_case_ids),
             example_pool_size=len(retriever.examples),

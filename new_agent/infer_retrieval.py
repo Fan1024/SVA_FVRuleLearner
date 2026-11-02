@@ -68,6 +68,7 @@ class RuleRetriever:
         self.sha256 = hashlib.sha256(data).hexdigest()
         self.cases = []
         self.excluded_unpassed_case_ids = []
+        self.excluded_missing_guidance_case_ids = []
         self._trace_sources = {}
         self._trace_cache = {}
         seen = set()
@@ -101,8 +102,12 @@ class RuleRetriever:
             rules = {key: value.strip() for key, value in rules.items()
                      if isinstance(value, str) and value.strip()}
             diagnoses = case.get('diagnoses', [])
-            diagnoses = diagnoses if isinstance(diagnoses,list) else []
-            if not rules and not diagnoses:
+            diagnoses = [item for item in diagnoses if isinstance(item, dict)
+                         and isinstance(item.get('category'), str) and item['category'].strip()
+                         and isinstance(item.get('statement'), str) and item['statement'].strip()
+                         ] if isinstance(diagnoses, list) else []
+            if not rules or not diagnoses:
+                self.excluded_missing_guidance_case_ids.append(number)
                 continue
             self._trace_sources[number] = {
                 'trace_file': case.get('trace_file'),
