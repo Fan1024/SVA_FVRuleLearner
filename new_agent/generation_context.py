@@ -12,17 +12,15 @@ def outcome(value):
     return 'The previous attempt did not obtain a completed evaluation.'
 
 
-SYSTEM_PROMPT = '''Create a SystemVerilog assertion that checks the behavior described in the
-natural-language requirement. Choose the sequential or combinational form that
-fits the requested behavior. Use any supplied examples to understand assertion
-structure and any supplied guidance to revise the previous assertion. Apply or
-adapt useful suggestions according to the current requirement; source examples
-can have different signal roles, conditions and timing. A source location
-identifies an occurrence in its example, not an edit boundary in the current task.
-Do not add unrelated obligations or copy source-specific conditions blindly.
-Return only one complete assertion in a systemverilog code block.
-'''
+SYSTEM_PROMPT = '''Generate a SystemVerilog assertion for the natural-language requirement. Choose
+the sequential or combinational form that fits the requested behavior.
 
+Use supplied examples to understand assertion structure. When revising, use the
+previous assertion, evaluation outcome and relevant correction guidance. Apply or
+adapt suggestions according to the current requirement. Interpret each location
+within the assertion to which its guidance belongs. Do not copy unrelated source
+conditions or add obligations unsupported by the task.
+'''
 
 def output_instruction():
     return 'Enclose the complete SVA statement in ```systemverilog and ```. Output no other text.'

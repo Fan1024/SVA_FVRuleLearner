@@ -83,56 +83,33 @@ def parse_response(response_text, trees):
     feedback and can later be masked with the source examples for retrieval.
     """
     raw = json.loads(response_text)
-    if not isinstance(raw,dict) or not isinstance(raw.get('corrections'),list):
+    if not isinstance(raw,dict) or not isinstance(raw.get('diagnoses'),list) or not isinstance(raw.get('corrections'),list):
         raise ValueError('Expected diagnoses and corrections arrays.')
-    diagnoses=[]; ids=set()
-    for entry in raw.get('diagnoses',[]):
-        if not isinstance(entry,dict) or not isinstance(entry.get('id'),str) or entry['id'] in ids:
-            raise ValueError('Diagnosis IDs must be unique strings.')
-        if not isinstance(entry.get('statement'),str) or not entry['statement'].strip():
-            raise ValueError('A high-level diagnosis needs an explanation.')
-        ids.add(entry['id'])
-        item={'id':entry['id'], 'category':category_label(entry.get('category')),
-              'statement':entry['statement'].strip()}
-        if isinstance(entry.get('requirement_quote'),str) and entry['requirement_quote'].strip():
-            item['requirement_quote']=entry['requirement_quote'].strip()
-        diagnoses.append(item)
+    diagnoses=[]
+    for entry in raw['diagnoses']:
+        if not isinstance(entry,dict) or not isinstance(entry.get('statement'),str) or not entry['statement'].strip():
+            raise ValueError('A high-level diagnosis needs a category and explanation.')
+        diagnoses.append({'category':category_label(entry.get('category')),
+                          'statement':entry['statement'].strip()})
     result={'diagnoses':diagnoses,'corrections':[]}
     for entry in raw['corrections']:
         if not isinstance(entry,dict) or not isinstance(entry.get('rule'),str) or not entry['rule'].strip():
             raise ValueError('Each correction needs a nonempty rule.')
-        links=entry.get('diagnosis_ids',[])
-        # Read legacy category-only corrections without preserving old interpretations.
-        if not links and 'diagnosis' in entry:
-            key=f'D{len(diagnoses)+1}'
-            diagnoses.append({'id':key,'category':category_label(entry['diagnosis']),
-                              'statement':entry.get('issue') or entry['rule'].strip()})
-            ids.add(key); links=[key]
-        if not isinstance(links,list) or not links or any(key not in ids for key in links):
-            raise ValueError('Corrections must link to existing diagnosis IDs.')
         node_id=entry.get('generated_node_id')
-        item={'diagnosis_ids':list(dict.fromkeys(links)), 'generated_node_id':node_id,
-              'location':location_for(trees['generated'],node_id), 'rule':entry['rule'].strip()}
-        result['corrections'].append(item)
+        result['corrections'].append({'generated_node_id':node_id,
+            'location':location_for(trees['generated'],node_id), 'rule':entry['rule'].strip()})
     return result
 
 
 def export_diagnoses(response,round_number):
-    return [{**entry,'id':f"round_{round_number:04d}:"+entry['id'],'round':round_number}
+    """Whole-assertion observations; round context belongs to the outer trace."""
+    return [{'category':entry['category'],'statement':entry['statement']}
             for entry in response.get('diagnoses',[])]
 
 
-def export_rules(response, round_number):
-    """Existing inference bank index only; never used as training feedback."""
-    return {f"rule_{i}": {
-        "group": ["tree_correction", f"round_{round_number:04d}", f"correction_{i:04d}"],
-        "rule": entry["rule"].strip(),
-        **({'diagnosis': entry['diagnosis']} if entry.get('diagnosis') else {}),
-        **({'location': entry['location']} if entry.get('location') else {}),
-        **({'diagnoses': linked_diagnoses(entry, response)}
-           if any(key in entry for key in ('diagnosis', 'diagnosis_ids', 'diagnoses')) else {}),
-    } for i, entry in enumerate(response["corrections"], 1)}
-
-
-
-
+def export_rules(response,round_number):
+    """Independent node corrections for the existing source-rule index."""
+    return {f'rule_{i}':{
+        'group':['tree_correction',f'round_{round_number:04d}',f'correction_{i:04d}'],
+        'rule':entry['rule'].strip(), 'location':entry['location']}
+        for i,entry in enumerate(response['corrections'],1)}

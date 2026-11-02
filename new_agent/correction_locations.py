@@ -104,16 +104,9 @@ def feedback_json(diagnosis, *, assertion=None, tree=None):
         rule = item.get('rule')
         if not isinstance(rule, str) or not rule.strip():
             raise ValueError('Correction needs a nonempty rule')
-        correction = {'location': location}
-        if isinstance(item.get('diagnosis'), str):
-            correction['diagnosis'] = item['diagnosis']
-        for field in ('difference', 'why_it_matters'):
-            if isinstance(item.get(field), str) and item[field].strip():
-                correction[field] = item[field].strip()
-        if 'diagnosis_ids' in item:
-            correction['diagnosis_ids'] = list(item['diagnosis_ids'])
-        correction['rule'] = rule.strip()
+        correction = {'location': location, 'rule': rule.strip()}
         corrections.append(correction)
     return json.dumps({**diagnosis_payload(data), 'corrections': corrections}, ensure_ascii=False)
+
 
 

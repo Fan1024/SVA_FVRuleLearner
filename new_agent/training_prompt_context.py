@@ -4,7 +4,7 @@ Never serialize raw formal results into a model request. Evaluation settings,
 metrics, logs and input-extraction policy stay outside the training prompts.
 """
 
-PROMPT_VERSION = "reference_diagnoses_corrections_v6"
+PROMPT_VERSION = "whole_assertion_diagnoses_v8"
 
 NOT_EQUIVALENT = (
     "JasperGold completed the functional-equivalence comparison. "

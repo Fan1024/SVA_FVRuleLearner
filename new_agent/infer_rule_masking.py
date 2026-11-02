@@ -214,10 +214,10 @@ def prepare_candidates(cases, contexts=None):
         descriptions = dict(case['rules'])
         for number,item in enumerate(case.get('diagnoses',[])):
             if isinstance(item,dict):
-                descriptions[f'high_level_{number}']=item.get('statement','')+' '+item.get('requirement_quote','')
+                descriptions[f'high_level_{number}']=item.get('statement','')
         for i,entry in enumerate(trace):
             for j,item in enumerate(entry.get('diagnoses',[])):
-                descriptions[f'round_diagnosis_{i}_{j}']=item.get('statement','')+' '+item.get('requirement_quote','')
+                descriptions[f'round_diagnosis_{i}_{j}']=item.get('statement','')
         indexed_diagnoses = case.get('rule_diagnoses', {})
         for rule_id, diagnoses in indexed_diagnoses.items():
             for number, diagnosis in enumerate(diagnoses):
@@ -239,7 +239,7 @@ def prepare_candidates(cases, contexts=None):
         masker = CaseMasker(source_names(case['requirement'], descriptions, context))
         requirement = masker.mask(case['requirement'])
         def mask_diagnoses(values):
-            return [{key: masker.mask(value) if key in {'statement','requirement_quote'} else value
+            return [{key: masker.mask(value) if key == 'statement' else value
                      for key, value in diagnosis_view(item).items()}
                     for item in values if isinstance(item, dict)]
         rules = [{'id': f"C{case['case_number']:04d}:{key}", 'rule': masker.mask(text),

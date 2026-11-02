@@ -107,7 +107,7 @@ def run_training_pipeline(directory, record: dict, *, retriever=None) -> int:
         training_assertion_history="latest_assertion_coarse_result_repetition_notice",
         training_feedback="latest_high_level_diagnoses_located_rules",
         training_rule_feedback="coarse_reference_equivalence_only",
-        training_rule_schema="reference_diagnoses_corrections_v6",
+        training_rule_schema="whole_assertion_diagnoses_v8",
     )
     registry = {}
     previous_assertion = None
@@ -315,8 +315,9 @@ def run_training_pipeline(directory, record: dict, *, retriever=None) -> int:
                     run_io.update_run(directory, record, stage=stage)
                     diagnosis = rule_generator.parse_response(rule_response, trees)
                     evidence["tree_rule_diagnosis"] = deepcopy(diagnosis)
-                    record.setdefault('diagnosis_registry',[]).extend(
-                        rule_generator.export_diagnoses(diagnosis,round_number))
+                    for item in rule_generator.export_diagnoses(diagnosis,round_number):
+                        if item not in record.setdefault('diagnosis_registry',[]):
+                            record['diagnosis_registry'].append(item)
                     latest_diagnosis_response = feedback_json(diagnosis, tree=trees['generated'])
                     latest_diagnosis_round = round_number
                     run_io.save_debug_event(directory, record, 'correction_locations',

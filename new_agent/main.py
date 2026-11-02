@@ -166,7 +166,7 @@ def main() -> int:
                         tree_parser=config.ASSERTION_TREE_PARSER,
                         tree_parse_failure_policy="explicit_opaque_source_anchor",
                         training_diagnosis_model=config.RULE_MODEL,
-                        training_rule_schema="reference_diagnoses_corrections_v6",
+                        training_rule_schema="whole_assertion_diagnoses_v8",
                         training_feedback="latest_high_level_diagnoses_located_rules")
 
     if phase == "infer":

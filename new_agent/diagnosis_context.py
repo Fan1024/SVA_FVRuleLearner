@@ -19,13 +19,13 @@ INTERPRETATION_FIELDS = ('scope', 'activation', 'response', 'timing', 'context')
 
 def category_label(value):
     """Read the requested category spelling; no semantic diagnosis scoring."""
-    if not isinstance(value, str):
-        raise ValueError('diagnosis must be a category label')
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError('diagnosis must be a nonempty category label')
     normalized = value.strip().casefold().replace('_', ' ')
     for category in DIAGNOSIS_CATEGORIES:
         if normalized == category.casefold():
             return category
-    raise ValueError('diagnosis must use one of DIAGNOSIS_CATEGORIES')
+    return value.strip()
 
 
 def interpretation_view(value):
@@ -42,10 +42,9 @@ def interpretation_instruction():
 
 
 def category_instructions():
-    return ('HIGH-LEVEL DIAGNOSIS OPTIONS\n' + '\n'.join('- ' + item for item in DIAGNOSIS_CATEGORIES)
-            + '\nUse one primary category per correction/location. diagnosis is only the short '
-              'category label, never a case-specific explanatory sentence. '
-              'Use the diagnosis statement for explanation and the correction rule for the action.')
+    return ('SUGGESTED HIGH-LEVEL CATEGORIES\n' + '\n'.join('- ' + item for item in DIAGNOSIS_CATEGORIES)
+            + '\nThese are examples, not an exhaustive list. Use another concise category when it fits better. '
+              'An assertion may have multiple diagnoses; give each category its own explanation.')
 
 
 def diagnosis_view(value):
@@ -56,7 +55,7 @@ def diagnosis_view(value):
             return {'category': value.strip()} if value.strip() else {}
     if not isinstance(value, dict):
         return {}
-    return {key: value[key] for key in ("id", "category", "statement", "requirement_quote")
+    return {key: value[key] for key in ("category", "statement")
             if isinstance(value.get(key), str)}
 
 
@@ -68,7 +67,7 @@ def review_view(value):
 
 
 def linked_diagnoses(correction, response=None):
-    """Resolve optional links, including legacy records with no diagnosis."""
+    """Read links in historical source records; new outputs are independent lists."""
     result = [diagnosis_view(item) for item in correction.get("diagnoses", [])
               if isinstance(item, (dict, str))]
     if isinstance(correction.get('diagnosis'), str):

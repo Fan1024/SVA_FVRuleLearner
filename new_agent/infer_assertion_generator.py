@@ -2,7 +2,7 @@
 import json
 from new_agent.generation_context import SYSTEM_PROMPT, outcome, output_instruction
 
-PROMPT_VERSION='selected_training_guidance_v6'
+PROMPT_VERSION='selected_whole_assertion_guidance_v8'
 REVISION_PROCEDURE=''
 
 

@@ -862,10 +862,11 @@ def save_summaries(summary_dir, record: dict) -> None:
         "rules": rules,
         "rule_rounds": rule_rounds,
         "rule_locations": rule_locations,
-        "rule_diagnoses": rule_diagnoses,
         "diagnoses": deepcopy(record.get("diagnosis_registry",[])),
         "round_evidence": record["round_evidence"],
     }
+    if rule_diagnoses:
+        learning["rule_diagnoses"] = rule_diagnoses
     if record["settings"].get("flat_training_output"):
         # Full per-round outputs live in rules/case_NNNN.json exactly once.
         # Keep the existing rule index for the unchanged inference reader.
