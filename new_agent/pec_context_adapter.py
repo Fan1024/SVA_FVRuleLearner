@@ -4,10 +4,65 @@ Never open, parse or rewrite PEC artifacts, declarations or Tcl scripts.
 """
 from copy import deepcopy
 from functools import lru_cache
+import hashlib
+import json
 import os
+from pathlib import Path
 import re
 
-VERSION = 'native_signal_list_v6_constant_bindings'
+VERSION = 'native_signal_list_v8_wrapper_only'
+
+
+def declaration_entry(typ, name, profile):
+    """Format a signal-list entry only for a server-verified declaration profile."""
+    unpacked, packed = [], []
+    current = typ.canonicalType
+    while current.isUnpackedArray:
+        dimension = str(getattr(current, 'range', ''))
+        if not re.fullmatch(r'\[-?\d+:-?\d+\]', dimension):
+            raise ValueError('Only fixed unpacked dimensions are supported')
+        unpacked.append(dimension)
+        current = current.elementType.canonicalType
+    element = current
+    while current.isPackedArray:
+        packed.append(str(current.range))
+        current = current.elementType.canonicalType
+    structured = any(bool(getattr(current, field, False)) for field in ('isStruct', 'isUnion', 'isEnum'))
+    if not element.isIntegral or element.isError or structured:
+        raise ValueError('Only integral scalar/packed elements are supported')
+    if not packed and element.bitWidth > 1:
+        packed = [f'[{int(element.bitWidth)-1}:0]']
+    base = 'logic' if element.isFourState else 'bit'
+    if profile == 'range_fragments':
+        if base != 'logic':
+            raise ValueError('The range-fragment profile cannot specify a two-state base type')
+        base = ''
+    elif profile != 'full_declarations':
+        raise ValueError('Unknown verified declaration profile')
+    prefix = ' '.join(part for part in (base, 'signed' if element.isSigned else '', ''.join(packed)) if part)
+    return ((prefix + ' ') if prefix else '') + name + (' ' + ''.join(unpacked) if unpacked else '')
+
+
+def verified_interface_profile():
+    """Use only a passing report tied to this exact native checker binary."""
+    from new_agent import config
+    location = getattr(config, 'PEC_TYPED_INTERFACE_REPORT', Path(__file__).with_name('pec_interface_probe.json'))
+    if not location:
+        return None, 'Typed-interface report disabled; using names only.'
+    path = Path(location)
+    if not path.is_file():
+        return None, 'No verified interface report; using names only.'
+    try:
+        report = json.loads(path.read_text())
+        checker = Path(__file__).resolve().parents[1] / 'FVEval' / 'tool_scripts' / 'pec' / 'pec.tcle'
+        profile = report.get('verified_profile')
+        if (report.get('schema_version') == 1 and report.get('verified') is True and
+                profile in {'range_fragments', 'full_declarations'} and
+                report.get('checker_sha256') == hashlib.sha256(checker.read_bytes()).hexdigest()):
+            return profile, 'Using a declaration profile verified by server controls.'
+        return None, 'Report is unverified or belongs to another checker; using names only.'
+    except (OSError, ValueError, TypeError) as error:
+        return None, f'Interface report unavailable ({type(error).__name__}); using names only.'
 
 
 def context_mode(value=None):
@@ -34,6 +89,7 @@ def _collect(source, module_name):
     if len(instances) != 1:
         raise ValueError('Expected one TB top module; set PEC_CONTEXT_MODULE for multiple tops.')
     signals, parameters, literals = [], [], {}
+    declarations = {profile: {} for profile in ('range_fragments', 'full_declarations')}
     for symbol in instances[0].body:
         if not symbol.name:
             continue
@@ -41,6 +97,12 @@ def _collect(source, module_name):
         target = signals if kind in {'Port', 'Net', 'Variable'} else parameters if kind == 'Parameter' else None
         if target is not None and symbol.name not in target:
             target.append(symbol.name)
+        if kind in {'Port', 'Net', 'Variable'}:
+            for profile, entries in declarations.items():
+                try:
+                    entries[symbol.name] = declaration_entry(symbol.type, symbol.name, profile)
+                except ValueError:
+                    entries[symbol.name] = None
         if kind == 'Parameter':
             literal = None
             try:
@@ -54,7 +116,8 @@ def _collect(source, module_name):
                 pass
             literals[symbol.name] = literal
     return {'module': instances[0].name, 'parser_version': pyslang.__version__,
-            'signals': signals, 'parameters': parameters, 'parameter_literals': literals}
+            'signals': signals, 'parameters': parameters, 'parameter_literals': literals,
+            'declarations': declarations}
 
 
 def collect_signal_names(testbench, module_name=None):
@@ -120,4 +183,16 @@ def prepare_signal_list(testbench, native_signal_list, *, mode=None, module_name
             names.append(name)
             audit['added_names'].append(name)
     audit.update(status='signal_names_expanded', effective_signal_list=names)
-    return ','.join(names), audit
+    profile, note = verified_interface_profile()
+    audit.update(typed_interface_profile=None, typed_interface_note=note)
+    entries = names
+    if profile:
+        declarations = collected['declarations'][profile]
+        unsupported = [name for name in names if name not in declarations or declarations[name] is None]
+        if unsupported:
+            audit['typed_interface_note'] = 'Unsupported declarations in this case; using names only: ' + ', '.join(unsupported)
+        else:
+            entries = [declarations[name] for name in names]
+            audit['typed_interface_profile'] = profile
+    audit['effective_signal_entries'] = entries
+    return ','.join(entries), audit

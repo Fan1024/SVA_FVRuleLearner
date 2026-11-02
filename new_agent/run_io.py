@@ -416,7 +416,7 @@ def final_record(record: dict) -> dict:
         name: formal[name]
         for name in SCORE_FIELDS + (
             "status", "comparison_scope", "backend", "native_source", "native_metrics",
-            "raw_scores", "accepted", "acceptance_reason", "retained_diagnostics", "evaluation_reused_from_round",
+            "raw_scores", "accepted", "acceptance_reason", "native_pec_passed", "retained_diagnostics", "evaluation_reused_from_round",
             "native_similarity", "native_timing", "similarity_error", "evaluation_error",
             "error_origin", "returncode", "source_task_id", "tool_task_id", "log_path", "input_path", "cleanup",
         )
@@ -429,6 +429,7 @@ def final_record(record: dict) -> dict:
                 'adapter_version', 'mode', 'status', 'module', 'parser_version',
                 'native_signal_list', 'effective_signal_list', 'added_names', 'removed_parameters', 'not_added',
                 'parameter_bindings',
+                'typed_interface_profile', 'typed_interface_note', 'effective_signal_entries',
             ) if key in context
         }
     if formal is not None and formal.get('status') == 'PEC_COMPILE_ERROR':
@@ -602,7 +603,7 @@ def _debug_event_text(record: dict, event: str, data: dict) -> str:
         reason = data["stop_reason"]
         explanation = {
             "passed": "The supplied FVRuleLearner PEC checker reported full equivalence.",
-            "bleu_match": "BLEU is 1.0; accepted under FVRuleLearner's PEC-or-BLEU policy. Reported PEC/relaxed PEC are 1.0; raw scores remain in the formal result.",
+            "bleu_match": "BLEU is 1.0; accepted under FVRuleLearner's PEC-or-BLEU policy. Native PEC/relaxed scores and formal status remain unchanged.",
             "max_rounds": "Maximum assertion attempts reached.",
             "pec_compile_error": "Native PEC compilation failed; no equivalence verdict.",
             "no_guidance": "Rule generator returned no rules.",
@@ -692,6 +693,7 @@ def record_formal_result(run_dir, record: dict, attempt: dict, formal: dict) -> 
         "raw_scores": deepcopy(formal.get("raw_scores", {})),
         "accepted": formal.get("accepted", False),
         "acceptance_reason": formal.get("acceptance_reason"),
+        "native_pec_passed": formal.get("native_pec_passed", False),
         "pec_context_preparation": deepcopy(formal.get("pec_context_preparation")),
         "evaluation_reused_from_round": formal.get('evaluation_reused_from_round'),
         "retained_diagnostics": formal.get('retained_diagnostics', []),
@@ -984,6 +986,7 @@ def print_summary(run_dir, record: dict) -> None:
     )
     formal = record["formal"]
     if formal is not None:
+        print(f"Acceptance: {formal.get('acceptance_reason')} | Native PEC passed: {formal.get('native_pec_passed', False)}")
         print(
             f"Formal: {formal['status']} | Syntax: {formal['syntax']} | "
             f"Strict: {formal['pec']} | Relaxed: {formal['relax_pec']}"

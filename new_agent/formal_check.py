@@ -5,7 +5,7 @@ before launch, our source-boundary adapter replaces the two property-expression
 arguments, binds TB integral parameters, and supplies a prepared signal-name list. Native PEC files and Tcl
 remain untouched; there is no analyze-command interception or Tcl overlay.
 Human/Machine SYN checking includes the full candidate in the TB. Missing PEC
-verdicts remain unavailable and cannot be accepted through text similarity.
+verdicts remain unavailable even when a candidate is accepted by BLEU alone.
 """
 
 from dataclasses import asdict
@@ -43,12 +43,11 @@ def apply_acceptance_policy(result: dict) -> dict:
         name: result.get(name) for name in ("syntax", "pec", "relax_pec")
     })
     completed = result.get('status') in SEMANTIC_STATUSES
-    bleu_match = completed and result.get("bleu") == 1.0
+    bleu_match = result.get("bleu") == 1.0
     native_pass = completed and raw.get("pec") == 1.0
     result["accepted"] = native_pass or bleu_match
     result["acceptance_reason"] = "pec" if native_pass else "bleu_match" if bleu_match else None
-    if bleu_match:
-        result["pec"] = result["relax_pec"] = 1.0
+    result['native_pec_passed'] = native_pass
     return result
 
 

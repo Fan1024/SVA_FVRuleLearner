@@ -194,7 +194,7 @@ def run_pipeline(directory, record: dict, *, retriever=None) -> int:
                         "The supplied PEC checker reported full equivalence."
                         if pec_pass else
                         "BLEU is 1.0; accepted under FVRuleLearner's PEC-or-BLEU policy. "
-                        "Reported PEC and relaxed PEC are 1.0; raw scores remain in raw_scores/native_metrics."
+                        "Native PEC/relaxed scores and formal status remain unchanged."
                     ),
                 )
                 return 0
@@ -354,6 +354,7 @@ def run_pipeline(directory, record: dict, *, retriever=None) -> int:
         passed=False, stage="finished", stop_reason="max_rounds",
     )
     return 0 if resolved else 1
+
 
 
 

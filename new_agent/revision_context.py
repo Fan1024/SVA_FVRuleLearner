@@ -9,6 +9,7 @@ from new_agent.pec_input_adapter import _tokens
 from new_agent.training_prompt_context import evaluation_feedback
 
 SEMANTIC_FAILURES = {'IMPLIES', 'NO_EQUIVALENCE'}
+REVISION_FAILURES = SEMANTIC_FAILURES | {'PEC_COMPILE_ERROR'}
 
 
 def candidate_key(source):
@@ -34,17 +35,18 @@ def last_transition(evidence, assertion, status):
 
 def reconsider_repeat(*, directory, record, attempt, assertion, response_text,
                       user_prompt, instructions, client, model):
-    """One explicit reassessment if generation repeats a known semantic failure."""
+    """One explicit reassessment if generation repeats an unaccepted candidate."""
     key = candidate_key(assertion)
     matches = [row['round'] for row in record['round_evidence'][:-1]
                if isinstance(row.get('generated_assertion'), str)
-               and (row.get('evaluation') or {}).get('status') in SEMANTIC_FAILURES
+               and (row.get('evaluation') or {}).get('status') in REVISION_FAILURES
                and candidate_key(row['generated_assertion']) == key]
     if not matches:
         return response_text, assertion
     retry = user_prompt + (
-        '\n\nREASSESS THIS REVISION\nYour proposed response repeats an assertion whose completed '
-        f'equivalence comparison failed in round(s) {matches}.\nREPEATED PROPOSAL\n{assertion}\n'
+        '\n\nREASSESS THIS REVISION\nYour proposed response repeats an unaccepted assertion '
+        f'from round(s) {matches}. An unavailable PEC verdict does not establish a semantic defect.\n'
+        f'REPEATED PROPOSAL\n{assertion}\n'
         'Reassess the complete required behavior and this proposal before choosing edits. '
         'Check whether the supplied diagnosis missed scope, activation, timing, history, '
         'polarity or a required case. Reconsider the premise of any ineffective suggestion; '
@@ -62,8 +64,9 @@ def reconsider_repeat(*, directory, record, attempt, assertion, response_text,
 def evaluate_once(record, round_number, **arguments):
     """Never cache compilation errors, timeouts or other missing verdicts."""
     from new_agent import formal_check
-    from new_agent.pec_context_adapter import context_mode
-    key = (candidate_key(arguments['generated_assertion']), context_mode(), arguments['dataset'],
+    from new_agent.pec_context_adapter import context_mode, verified_interface_profile
+    profile, _ = verified_interface_profile()
+    key = (candidate_key(arguments['generated_assertion']), context_mode(), profile, arguments['dataset'],
            arguments['testbench'], arguments['reference_assertion'])
     cache = record.setdefault('_completed_comparison_cache', {})
     if key in cache:

@@ -249,18 +249,11 @@ def run_training_pipeline(directory, record: dict, *, retriever=None) -> int:
                             "The supplied PEC checker reported full equivalence."
                             if pec_pass else
                             "BLEU is 1.0; accepted under FVRuleLearner's PEC-or-BLEU policy. "
-                            "Reported PEC and relaxed PEC are 1.0; raw scores remain in raw_scores/native_metrics."
+                            "Native PEC/relaxed scores and formal status remain unchanged."
                         ),
                     )
                     return 0
 
-                if status == 'PEC_COMPILE_ERROR':
-                    run_io.update_run(
-                        directory, record, status='BLOCKED_PEC_COMPILE', passed=False,
-                        stage='finished', stop_reason='pec_compile_error',
-                        diagnosis_skipped_reason='Native PEC compilation failed; no semantic verdict. '
-                                                 'Inspect native diagnostics before assertion revision.')
-                    return 1
 
                 # Next-round feedback comes only from whitelisted history outcomes.
                 # Native logs, metrics and evaluation-policy text stay in experiment records.
@@ -271,7 +264,7 @@ def run_training_pipeline(directory, record: dict, *, retriever=None) -> int:
                     run_io.update_run(directory, record,
                                       diagnosis_skipped_reason="Tree archive unavailable after evaluation.")
                     continue
-                if status not in {"IMPLIES", "NO_EQUIVALENCE"}:
+                if status not in {"IMPLIES", "NO_EQUIVALENCE", "PEC_COMPILE_ERROR"}:
                     run_io.update_run(
                         directory, record,
                         diagnosis_skipped_reason="No completed semantic comparison; retry without semantic rule learning.",
