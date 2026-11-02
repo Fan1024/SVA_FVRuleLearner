@@ -26,15 +26,15 @@
   "files": [
     {
       "path": "new_agent/pec_context_adapter.py",
-      "sha256": "74815dabafcf9d6daad8f56bc0b5faef7aad37cac8be35a3364487f2fffea4fc"
+      "sha256": "00ef9bb096726c1f71bad9e177a053a8407d06503c1cb4b59410d8450230134c"
     },
     {
       "path": "new_agent/probe_pec_interface.py",
-      "sha256": "45774d8a4dee6172411b5e043c4d0d86fc75a6876ca44a4d0f8861634987a679"
+      "sha256": "0290ff20a71d74b1424ec34fe2d50a8d1efb97e83fa420b9f5e42fbbdf4a2bbc"
     },
     {
       "path": "tests/test_pec_interface_probe.py",
-      "sha256": "83bc5e439b904e9ea7bb50e78564db8f0d2f661148bcf2cc9b26bbb86f08a135"
+      "sha256": "e13eae5a53084fb372c37529954d57febdecf1e916c73ef59d3975690bdd7e34"
     },
     {
       "path": "apply_pec_wrapper_update.py",
@@ -42,7 +42,8 @@
     },
     {
       "path": "README_PEC_WRAPPER_ONLY.md",
-      "sha256": "61f40ac84f7b71ae9214da7410027a10a5f66eb6487c3cc8038c07b26a7a6934"
+      "sha256": "083ac48489201b2c6df5d4b9240b0e4f3d54d2122789f42203983dc48920abf1"
     }
-  ]
+  ],
+  "change": "Replace out-of-range one-bit semantic probe with in-range one-bit declaration probe; no assertion or experiment changes."
 }

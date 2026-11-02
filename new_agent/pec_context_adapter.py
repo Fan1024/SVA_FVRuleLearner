@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 import re
 
-VERSION = 'native_signal_list_v8_wrapper_only'
+VERSION = 'native_signal_list_v9_in_range_probe'
 
 
 def declaration_entry(typ, name, profile):
@@ -160,7 +160,8 @@ def prepare_signal_list(testbench, native_signal_list, *, mode=None, module_name
     """Replace a quoted-name list with its union with declared TB signal names.
 
     Known parameters/localparams are excluded: they are constants, not signals.
-    Widths and declarations remain entirely under the native PEC implementation.
+    A verified profile supplies TB declarations through the original argument.
+    The native PEC implementation continues to create its own checker files.
     """
     mode = context_mode(mode)
     original = list(dict.fromkeys(name.strip() for name in native_signal_list.split(',') if name.strip()))

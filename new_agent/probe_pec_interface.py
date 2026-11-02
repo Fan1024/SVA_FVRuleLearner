@@ -35,8 +35,10 @@ def controls(profile=None):
          [entry('items','[1:0]',unpacked='[0:0]')], False),
         ('signed_positive', '(s < 0)', "s[3] == 1'b1", [entry('s','[3:0]',signed=True)], True),
         ('ascending_positive', 'up[0]', "((up >> 3) & 4'h1) != 4'h0", [entry('up','[0:3]')], True),
-        ('one_bit_index_self', 'one[idx]', 'one[idx]',
-         [entry('one','[0:0]'), entry('idx','[1:0]')], True),
+        # Only index 0 exists. An unconstrained two-bit index would also test
+        # out-of-range/X handling, rather than declaration compatibility.
+        ('one_bit_index_self', 'one[0]', 'one[0]',
+         [entry('one','[0:0]')], True),
     ]
 
 
@@ -106,7 +108,8 @@ def probe(output, report_path, timeout=60, jg='jg'):
     report = {'schema_version':1,'verified':False,'verified_profile':None,
               'checker_sha256':hashlib.sha256(checker.read_bytes()).hexdigest(),
               'baseline':[],'profiles':{},'output_directory':str(output),
-              'scope':'Empirical declaration-entry compatibility, not a documented vendor guarantee.'}
+              'scope':'Empirical declaration-entry compatibility with in-range indexing; not a documented vendor guarantee.',
+              'probe_version':'v9_in_range_one_bit'}
     # Invalidate an earlier capability record before trying another checker/session.
     report_path.write_text(json.dumps(report,indent=2)+'\n')
     for label,left,right,entries,equal in (
