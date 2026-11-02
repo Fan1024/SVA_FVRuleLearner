@@ -1,0 +1,48 @@
+{
+  "scope": "PEC wrapper and interface probe only; no new experiment/scoring behavior",
+  "runtime_files": [
+    "new_agent/pec_context_adapter.py",
+    "new_agent/probe_pec_interface.py"
+  ],
+  "undo_known_v7_edits": {
+    "new_agent/formal_check.py": "556ec55e79eab082ef841074c5025d21374c1ef6c569012619e002e36bbcd785",
+    "new_agent/train_tree_pipeline.py": "98bf0a994037a46dce08ef789545add972f15338f4d23f3816fdd60c440b9ef7",
+    "new_agent/infer_tree_pipeline.py": "ac754c5da92b3eaa9e04363b5c98c920c5ae728163dc3e4d993f02ab63f9f97f",
+    "new_agent/pipeline.py": "8f61ef4d51af863eed489362bae99448b0fb5c5819798bc2d9cf634c9e194319",
+    "new_agent/run_io.py": "243d2e4b8c51c0f2f167940bda82fc897b3620abeedb14d3628fc7b8fd22f8a9",
+    "new_agent/revision_context.py": "f622f68a02a37e7a2645467edf4ff5435d0bb68fc1c4e3c705d4e20068696942",
+    "new_agent/main.py": "10744b19fca3330d0514dd1acfa712df4c9b88c1b8524d4915dfb9f61483336f",
+    "tests/test_pec_revision_update.py": "7b4b75c4d21333e98c0305b64f77eb857854750c03f674a27990e56c5c4cfb58",
+    "tests/test_requirement_diagnosis.py": "0ba5da6535cb4a27f11f0cbf2816e61a44a275ccda95e027e66279b24866a3bc"
+  },
+  "validation": {
+    "local_regression_tests_passed": 38,
+    "jasper_run": false,
+    "pyslang_versions": [
+      "11.0.0",
+      "12.1.0"
+    ]
+  },
+  "files": [
+    {
+      "path": "new_agent/pec_context_adapter.py",
+      "sha256": "74815dabafcf9d6daad8f56bc0b5faef7aad37cac8be35a3364487f2fffea4fc"
+    },
+    {
+      "path": "new_agent/probe_pec_interface.py",
+      "sha256": "45774d8a4dee6172411b5e043c4d0d86fc75a6876ca44a4d0f8861634987a679"
+    },
+    {
+      "path": "tests/test_pec_interface_probe.py",
+      "sha256": "83bc5e439b904e9ea7bb50e78564db8f0d2f661148bcf2cc9b26bbb86f08a135"
+    },
+    {
+      "path": "apply_pec_wrapper_update.py",
+      "sha256": "060c70c7a9b783f65adcd7f485b5ff4b4bcc4c5ece3eefabf153be55ae628f99"
+    },
+    {
+      "path": "README_PEC_WRAPPER_ONLY.md",
+      "sha256": "61f40ac84f7b71ae9214da7410027a10a5f66eb6487c3cc8038c07b26a7a6934"
+    }
+  ]
+}

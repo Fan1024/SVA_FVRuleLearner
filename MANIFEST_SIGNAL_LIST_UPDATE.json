@@ -2,8 +2,8 @@
   "repository": "https://github.com/Fan1024/SVA_FVRuleLearner",
   "base_commit": "fb624d5b452a0dbeccea891e310f82ca9728e087",
   "package_kind": "Complete source replacements plus installer-driven cleanup",
-  "adapter_version": "native_signal_list_v6_constant_bindings",
-  "source_files": 20,
+  "adapter_version": "native_signal_list_v7_interface_probe",
+  "source_files": 22,
   "obsolete_files": [
     "new_agent/typed_pec.py",
     "tests/test_pec_array_context.py",
@@ -17,7 +17,7 @@
   "config_change": "Set PEC_CONTEXT_MODE to expanded_names; preserve all other settings",
   "native_files_modified": [],
   "validation": {
-    "local_tests_passed": 34,
+    "local_tests_passed": 40,
     "pyslang_versions": [
       "11.0.0",
       "12.1.0"
@@ -25,13 +25,14 @@
     "python": "3.12.14",
     "llm_native_calls_mocked": true,
     "jasper_run": false,
-    "human_reference_parameter_binding_inputs_checked": 79
+    "human_reference_parameter_binding_inputs_checked": 79,
+    "native_interface_support_verified_on_server": false
   },
   "files": [
     {
       "path": "README_SIGNAL_LIST_UPDATE.md",
-      "sha256": "0f8a6dc68cf0cf5133ea797d57d305bb03564abd82865330b7af130c39d7f333",
-      "bytes": 9870
+      "sha256": "7f814116844844dd4121e3f625e1621ab4146d46e93c7a197eb81141ea141387",
+      "bytes": 8775
     },
     {
       "path": "apply_signal_list_update.py",
@@ -55,8 +56,8 @@
     },
     {
       "path": "new_agent/formal_check.py",
-      "sha256": "5f4634e995e78df7d2849f21f0e946bbe5c44d9188bb0f266ee7b2a15722b00f",
-      "bytes": 24464
+      "sha256": "dbdd0f16830ce0a242d4f17a05c071bce488343940e789cf7af227f41f0c44a5",
+      "bytes": 24428
     },
     {
       "path": "new_agent/infer_assertion_generator.py",
@@ -85,18 +86,28 @@
     },
     {
       "path": "new_agent/infer_tree_pipeline.py",
-      "sha256": "d2b97bbbfa49c2261849a532b6d4d0ffaf416d9d285edbd3a8b5c69590d2d568",
-      "bytes": 20765
+      "sha256": "ba60e4aaa8c90e2aa124a0006af144a94cda80352c959944f096ba29f48b5fa0",
+      "bytes": 20272
     },
     {
       "path": "new_agent/main.py",
-      "sha256": "da34b3d7d947bc89056b6c4c82b5b884f161244297c9e319b54c399ab70282c1",
-      "bytes": 12593
+      "sha256": "6611e875d1ed5a4d4a11fea2d336afeb70940b12bdbd72978dcf35b5073827ee",
+      "bytes": 12607
     },
     {
       "path": "new_agent/pec_context_adapter.py",
-      "sha256": "3937cd06612389a106f6e84b6d1e429f65318747cc3044652ba03dd89973c60c",
-      "bytes": 5835
+      "sha256": "246bc2ab0ae79dfd4c72f7b09af4975816b54b694f07d265c3eafdd2b22197f0",
+      "bytes": 9801
+    },
+    {
+      "path": "new_agent/pipeline.py",
+      "sha256": "b37ad4f164d0aee39d962c8f4c393ec1edb1c8bae58de44c230d415cdf190a3d",
+      "bytes": 20799
+    },
+    {
+      "path": "new_agent/probe_pec_interface.py",
+      "sha256": "6785d92aba8ce798e26ce5c63060e8c7fe6888b4234482e9c9325f1ca2d615ab",
+      "bytes": 8070
     },
     {
       "path": "new_agent/pyslang_assertion_parser.py",
@@ -105,13 +116,13 @@
     },
     {
       "path": "new_agent/revision_context.py",
-      "sha256": "ee4d7b7bbb865ad987b9cf4d446b75af2165af90f3993edfeaf4eb441d48606a",
-      "bytes": 4995
+      "sha256": "bafabd41792ca8096301b88a8668a7eb6d7963bc0771bf5692029fac3ed3df02",
+      "bytes": 5183
     },
     {
       "path": "new_agent/run_io.py",
-      "sha256": "b3bf4336a2ad0d55dc93b21cc227e7fe8841105cea34a58d09ff8f8044cfeb57",
-      "bytes": 44183
+      "sha256": "d2763d91893229a64ba939608d38b1ec2aae9b4ad474e62a1767da5b2375e279",
+      "bytes": 44482
     },
     {
       "path": "new_agent/train_assertion_generator.py",
@@ -120,8 +131,8 @@
     },
     {
       "path": "new_agent/train_tree_pipeline.py",
-      "sha256": "a6aa23b2c06c10c48554afb8c910c131b2052f76dfd1d85c70c957938bc9b7f5",
-      "bytes": 21517
+      "sha256": "b301060cc6beee96add99fc805c72f399d3cf60ba47a2b80cc8310b194095b5b",
+      "bytes": 21024
     },
     {
       "path": "new_agent/train_tree_rule_generator.py",
@@ -149,23 +160,46 @@
       "bytes": 13660
     },
     {
+      "path": "tests/test_pec_interface_probe.py",
+      "sha256": "7b0463eb1d87f5b9f718997ae1ba833df56e91095a20e1ab50bf5b378abef5f9",
+      "bytes": 5135
+    },
+    {
       "path": "tests/test_pec_revision_update.py",
-      "sha256": "444953bf2c309f87217b0e0a9fe8be6772ae306f16e06e96d651ee58a81d8eba",
-      "bytes": 8572
+      "sha256": "a49977ef19ee7112a5535ca9a2ea7fcec6f9c3f96ae8bfe420eeca94a7f7926c",
+      "bytes": 9889
     },
     {
       "path": "tests/test_requirement_diagnosis.py",
-      "sha256": "df310db4378ff17a9af8d2a964d6491e82737ec7fdbf6df94fc836fb4a61e7d6",
-      "bytes": 14727
+      "sha256": "3112c1f01c4b45b1bad26cd2b2112bca1ba5ea6814c563759249532837587509",
+      "bytes": 15347
     }
   ],
   "checksum_note": "Hashes cover every delivered file except this manifest itself.",
   "parameter_policy": "Bind known integral TB parameters, preserving width/signedness, in both native property arguments only.",
   "latest_replacement_sources": [
-    "new_agent/pec_context_adapter.py",
+    "new_agent/check_pec_context.py",
+    "new_agent/correction_locations.py",
+    "new_agent/diagnosis_context.py",
     "new_agent/formal_check.py",
-    "new_agent/run_io.py",
+    "new_agent/infer_assertion_generator.py",
+    "new_agent/infer_rule_masking.py",
+    "new_agent/infer_rule_selector.py",
+    "new_agent/infer_rule_selector_prompts.py",
+    "new_agent/infer_training_traces.py",
+    "new_agent/infer_tree_pipeline.py",
     "new_agent/main.py",
-    "new_agent/check_pec_context.py"
-  ]
+    "new_agent/pec_context_adapter.py",
+    "new_agent/pipeline.py",
+    "new_agent/probe_pec_interface.py",
+    "new_agent/pyslang_assertion_parser.py",
+    "new_agent/revision_context.py",
+    "new_agent/run_io.py",
+    "new_agent/train_assertion_generator.py",
+    "new_agent/train_tree_pipeline.py",
+    "new_agent/train_tree_rule_generator.py",
+    "new_agent/train_tree_rule_prompts.py",
+    "new_agent/training_prompt_context.py"
+  ],
+  "latest_revision": "Server declaration-entry probes with conditional profile use; continue PEC compilation failures and accept native BLEU=1 without fabricating PEC scores."
 }
