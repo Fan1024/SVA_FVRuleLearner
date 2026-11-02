@@ -9,7 +9,7 @@ from contextlib import contextmanager
 import json
 from pathlib import Path
 import sys
-from tempfile import TemporaryDirectory
+from new_agent.runtime_support import formal_round_directory
 from new_agent.model_gateway import ModelGateway
 from new_agent.model_output_schemas import TRAINING_RULES
 from new_agent import config, formal_check, model_io, run_io
@@ -132,14 +132,7 @@ def run_training_pipeline(directory, record: dict, *, retriever=None) -> int:
             evidence.pop("rules_used", None)
             evidence.pop("rules_generated", None)
             evidence["diagnosis_from_round"] = latest_diagnosis_round
-            # Persistent formal diagnostics disabled. To restore later, import
-            # nullcontext from contextlib, restore check_dir below, and replace
-            # TemporaryDirectory with nullcontext(str(check_dir)). Also restore
-            # persistent paths/cleanup at the marked block below.
-            # check_dir = Path(directory) / "formal_rounds" / f"round_{round_number:04d}"
-            # check_dir.mkdir(parents=True, exist_ok=False)
-            with TemporaryDirectory(prefix="fv_formal_round_", ignore_cleanup_errors=True) as temporary_check_dir:
-                check_dir = Path(temporary_check_dir)
+            with formal_round_directory(directory, round_number) as check_dir:
                 generated_assertion = None
                 stage = "generation"
                 try:
@@ -194,7 +187,9 @@ def run_training_pipeline(directory, record: dict, *, retriever=None) -> int:
                     record["round_evidence"][-1]["generated_assertion"] = generated_assertion
                     previous_assertion = generated_assertion
                     stage = "formal_check"
-                    run_io.update_run(directory, record, stage=stage)
+                    run_io.update_run(directory, record, stage=stage,
+                                      formal_round_directory=str(check_dir),
+                                      generation=deepcopy(attempt["generation"]), formal=None)
                     with run_io.measure_stage(record, "tool"):
                         formal_result = evaluate_once(record, round_number,
                             generated_assertion=generated_assertion,
@@ -211,15 +206,8 @@ def run_training_pipeline(directory, record: dict, *, retriever=None) -> int:
                         check_dir, round_number, status, f"{stage}: {type(error).__name__}: {error}", policy,
                     )
 
-                # Persistent diagnostics disabled: the surrounding temporary-directory
-                # context owns every native tool file, including failures/interruption.
-                # Comment out this block when restoring persistent formal diagnostics.
+                # Logs persist; cleanup below removes only evaluator-owned work.
                 retain_checker_failure(directory, record, round_number, formal_result)
-                formal_result["log_path"] = formal_result["input_path"] = None
-                formal_result["cleanup"] = {
-                    "retained": False,
-                    "reason": "Temporary native work removed; small checker-failure diagnostics retained when tracing is enabled.",
-                }
                 formal_check.apply_acceptance_policy(formal_result)
                 run_io.record_formal_result(directory, record, attempt, formal_result)
                 # Inspection trees are built only after native evaluation returns.
@@ -348,6 +336,7 @@ def run_training_pipeline(directory, record: dict, *, retriever=None) -> int:
         passed=False, stage="finished", stop_reason="max_rounds",
     )
     return 0 if resolved else 1
+
 
 
 

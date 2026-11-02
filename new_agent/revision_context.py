@@ -82,9 +82,9 @@ def evaluate_once(record, round_number, **arguments):
 
 
 def retain_checker_failure(directory, record, round_number, result):
-    """Keep small failure inputs/logs before the round's temporary tree disappears."""
+    """Index small failure inputs/logs alongside the persistent formal round."""
     if (not record['settings'].get('save_debug_traces') or
-            result['status'] not in {'PEC_COMPILE_ERROR', 'TOOL_ERROR', 'INPUT_ERROR', 'SYNTAX_ERROR'}):
+            result['status'] not in {'PEC_COMPILE_ERROR', 'TOOL_ERROR', 'INPUT_ERROR', 'SYNTAX_ERROR', 'TIMEOUT'}):
         return
     source = Path(result['run_dir'])
     target = Path(directory) / 'diagnostics' / f'round_{round_number:04d}'
@@ -92,6 +92,7 @@ def retain_checker_failure(directory, record, round_number, result):
     files = [source / name for name in ('jasper.log', 'native_pec_inputs.json', 'evaluation_error.log',
                                       'candidate_syn.log')]
     files += sorted(source.glob('native_transport_*.tcl'))
+    files += sorted(source.glob('jasper_*.log')) + sorted(source.glob('jasper_*.process.json'))
     work = Path(result['work_dir'])
     files += sorted(work.glob('jg/*/pec/pec*.sve'))
     saved = []
@@ -101,6 +102,7 @@ def retain_checker_failure(directory, record, round_number, result):
             shutil.copyfile(path, destination)
             saved.append(str(destination))
     result['retained_diagnostics'] = saved
+
 
 
 

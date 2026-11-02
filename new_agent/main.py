@@ -1,18 +1,19 @@
 """Run training or inference using the settings in new_agent/config.py."""
 
 from functools import partial
+from contextlib import nullcontext
 from math import isfinite
 import os
 from pathlib import Path
 import sys
 from time import perf_counter
-from tempfile import TemporaryDirectory
 
 # Support both python new_agent/main.py and python -m new_agent.main.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from new_agent import config, dataset_loader, formal_check, run_io
 from new_agent import model_gateway
+from new_agent.runtime_support import stage_progress
 
 
 def select_workflow():
@@ -236,19 +237,14 @@ def main() -> int:
     print("Experiment:", experiment_dir)
 
     # 3. Run each selected case with its own revision loop and rule registry.
-    # Native Saver/metrics initialization requires a writable directory at
-    # runtime. Keep it outside the experiment and discard it after this batch.
-    # To restore persistent native_logs, import nullcontext from contextlib and
-    # replace TemporaryDirectory with nullcontext(str(experiment_dir / "native_logs")).
-    with TemporaryDirectory(prefix="fv_native_logs_", ignore_cleanup_errors=True) as native_log_dir:
+    # Retain native initialization diagnostics with the experiment.
+    with nullcontext(str(experiment_dir / "native_logs")) as native_log_dir:
         exit_code = 0
         try:
-            # Import native dependencies and load metrics before making model calls.
-            # Persistent initializer diagnostics disabled:
-            # formal_check.initialize_evaluator(experiment_dir / "native_logs", config.DATASET, config.JASPER_TIMEOUT_SECONDS)
-            formal_check.initialize_evaluator(
-                Path(native_log_dir), config.DATASET, config.JASPER_TIMEOUT_SECONDS,
-            )
+            with stage_progress("Formal evaluator initialization"):
+                formal_check.initialize_evaluator(
+                    Path(native_log_dir), config.DATASET, config.JASPER_TIMEOUT_SECONDS,
+                )
             for position, case in enumerate(cases, start=1):
                 print(
                     f"\nRunning {position}/{len(cases)}: case {case['case_number']} | "
@@ -286,6 +282,7 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
 
 
 

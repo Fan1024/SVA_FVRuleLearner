@@ -68,6 +68,10 @@ MODEL_REASONING_EFFORT = None
 # 32768 is a common comparison cap, including thinking and final-answer tokens.
 MODEL_MAX_OUTPUT_TOKENS = None
 
+# Network timeout for each model request. SDK automatic retries are disabled.
+# Streaming calls may take longer while the provider continues sending events.
+MODEL_REQUEST_TIMEOUT_SECONDS = 600
+
 # Total assertion attempts: 10 = initial generation + at most nine revisions.
 MAX_ROUNDS = 10
 
@@ -99,7 +103,8 @@ EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 
 # True additionally writes readable debug_trace.txt files.
 # Final scores and learned-rule evidence are saved regardless of this setting.
-# Formal-tool work and native logs remain temporary.
+# Formal round logs persist, including failures and Ctrl+C. Successful tool
+# work directories are cleaned separately.
 SAVE_DEBUG_TRACES = True
 
 # Expand TB signal names and bind known integral parameters in native PEC inputs.
@@ -110,6 +115,7 @@ PEC_CONTEXT_MODULE = None
 
 # Pyslang establishes SVA grouping. Unsupported translations use original source.
 ASSERTION_TREE_PARSER = "pyslang"
+
 
 
 

@@ -4,11 +4,12 @@ Only verified text/JSON-object routes are enabled. Prompts, output parsing and
 evaluation policy belong to the existing pipeline and are not rewritten here.
 """
 import os
+from math import isfinite
 from types import SimpleNamespace
 
 from new_agent import config
 
-VERSION = 'official_text_json_gateway_v2_native_claude'
+VERSION = 'official_text_json_gateway_v3_explicit_timeout_no_retries'
 PROVIDERS = {
     'openai': {'api_key_env': 'OPENAI_API_KEY', 'base_url': 'https://api.openai.com/v1'},
     'kimi': {'api_key_env': 'MOONSHOT_API_KEY', 'base_url': 'https://api.moonshot.ai/v1'},
@@ -52,10 +53,14 @@ def model_settings(model):
         raise ValueError('MODEL_MAX_OUTPUT_TOKENS must be None or a positive integer.')
     if provider == 'claude' and maximum is None:
         raise ValueError('Claude requires an explicit MODEL_MAX_OUTPUT_TOKENS; use e.g. 32768.')
+    timeout = getattr(config, 'MODEL_REQUEST_TIMEOUT_SECONDS', 600)
+    if type(timeout) not in (int, float) or not isfinite(timeout) or timeout <= 0:
+        raise ValueError('MODEL_REQUEST_TIMEOUT_SECONDS must be finite and positive.')
     settings = dict(PROVIDERS[provider], model=model, provider=provider,
                     api=('responses' if provider == 'openai' else
                          'messages' if provider == 'claude' else 'chat_completions'),
-                    reasoning_effort=effort, max_output_tokens=maximum)
+                    reasoning_effort=effort, max_output_tokens=maximum,
+                    request_timeout_seconds=timeout, max_retries=0)
     settings['json_output_mode'] = ('native_stage_schema' if provider == 'claude' else 'json_object')
     if provider == 'openai':
         settings['base_url'] = os.environ.get('OPENAI_BASE_URL') or settings['base_url']
@@ -115,14 +120,17 @@ class ModelGateway:
                 self._clients[provider] = Anthropic(
                     api_key=os.environ[settings['api_key_env']],
                     base_url=settings['base_url'].removesuffix('/v1'),
+                    timeout=settings['request_timeout_seconds'], max_retries=0,
                     **({'default_headers': headers} if headers else {}))
                 return self._clients[provider]
             from openai import OpenAI
             if provider == 'openai':
-                self._clients[provider] = OpenAI()
+                self._clients[provider] = OpenAI(
+                    timeout=settings['request_timeout_seconds'], max_retries=0)
             else:
                 self._clients[provider] = OpenAI(
-                    api_key=os.environ[settings['api_key_env']], base_url=settings['base_url'])
+                    api_key=os.environ[settings['api_key_env']], base_url=settings['base_url'],
+                    timeout=settings['request_timeout_seconds'], max_retries=0)
         return self._clients[provider]
 
     def _create(self, *, model, instructions, input, output_schema=None, **options):
@@ -188,3 +196,4 @@ class ModelGateway:
             output_text=content if isinstance(content, str) else '',
             usage=_usage(completion.usage),
         )
+

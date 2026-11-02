@@ -2,6 +2,7 @@
 
 import json
 import re
+from new_agent.runtime_support import stage_progress
 
 
 def request_text(client, model: str, instructions: str, user_prompt: str, *,
@@ -16,9 +17,10 @@ def request_text(client, model: str, instructions: str, user_prompt: str, *,
         if not json_output:
             raise ValueError('An output schema requires JSON output mode.')
         options['output_schema'] = output_schema
-    response = client.responses.create(
-        model=model, instructions=instructions, input=user_prompt, **options,
-    )
+    with stage_progress(f"Model request ({model})"):
+        response = client.responses.create(
+            model=model, instructions=instructions, input=user_prompt, **options,
+        )
     if usage_callback is not None:
         usage_callback(getattr(response, "usage", None))
     if response.status != "completed":
@@ -62,4 +64,5 @@ def parse_rules(response_text: str) -> dict:
         if not isinstance(entry["rule"], str) or not entry["rule"].strip():
             raise ValueError(f"{name}.rule must contain an editing instruction.")
     return rules
+
 

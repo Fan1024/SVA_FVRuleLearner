@@ -28,6 +28,7 @@ from types import SimpleNamespace
 from new_agent.pec_input_adapter import ExtractionError, prepare_pec_inputs
 from new_agent.pec_context_adapter import prepare_signal_list, bind_parameter_constants
 from new_agent.native_tcl_transport import literal_define_transport, COMPLETED_MARKER
+from new_agent.runtime_support import stage_progress
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -285,6 +286,7 @@ def _syntax_only(original_launcher, arguments, directory):
             'tool_output': output}
 
 
+@stage_progress("Formal check")
 def evaluate_assertion(generated_assertion: str, reference_assertion: str, testbench: str,
                        requirement: str, run_dir=None, timeout_seconds: float = 300,
                        task_id: str = "case", dataset: str = "nl2sva_human", *,
@@ -409,6 +411,12 @@ def evaluate_assertion(generated_assertion: str, reference_assertion: str, testb
                                     "IMPLIES" if scores["func_relaxed"] == 1.0 else "NO_EQUIVALENCE")
         if result['status'] not in SEMANTIC_STATUSES:
             result['pec'] = result['relax_pec'] = None
+    except KeyboardInterrupt:
+        partial_logs = sorted(directory.glob('jasper_*.stdout.log')) + sorted(directory.glob('jasper_*.stderr.log'))
+        result.update(status='INTERRUPTED', accepted=False,
+                      tool_output='JASPER_INTERRUPTED: execution interrupted by the user.\n' +
+                      '\n'.join(path.read_text(encoding='utf-8', errors='replace') for path in partial_logs))
+        raise
     except Exception as error:
         result["tool_output"] = "\n".join(outputs) or str(error)
         observed = _execution_status(result["tool_output"])
@@ -438,6 +446,9 @@ def evaluate_assertion(generated_assertion: str, reference_assertion: str, testb
         if native_input.is_file():
             shutil.copyfile(native_input, result["input_path"])
         Path(result["log_path"]).write_text(result["tool_output"] + "\n", encoding="utf-8")
+        if result['status'] == 'INTERRUPTED':
+            result['native_timing']['total_seconds'] = perf_counter() - started
+            _write_json(directory / 'result.json', result)
     apply_acceptance_policy(result)
     result["native_timing"]["total_seconds"] = perf_counter() - started
     result["feedback"] = (f"Formal status: {result['status']}\nSyntax: {result['syntax']}; strict PEC: {result['pec']}; "
@@ -475,6 +486,7 @@ def cleanup_work(result: dict, keep_work=False, *, preserve_unresolved=True) -> 
         return {"retained": True, "reason": "Ownership check failed; no files deleted."}
     shutil.rmtree(work)
     return {"retained": False, "reason": "Removed owned native evaluation work."}
+
 
 
 

@@ -7,6 +7,7 @@ from contextlib import contextmanager
 from pathlib import Path
 import re
 import tempfile
+from new_agent.runtime_support import run_jasper
 
 COMPLETED_MARKER = "FVRULE_NATIVE_TCL_COMPLETED"
 
@@ -55,6 +56,7 @@ def prepare_command(command, directory):
         stream.write("\n".join(definitions) + "\n")
         stream.write("source " + literal(script) + "\n")
         stream.write("puts {" + COMPLETED_MARKER + "}\n")
+        stream.write("exit\n")
         path = stream.name
     rewritten[rewritten.index("-tcl") + 1] = path
     return rewritten
@@ -62,7 +64,7 @@ def prepare_command(command, directory):
 
 @contextmanager
 def literal_define_transport(execution, directory):
-    """Keep native cwd, timeout, return-code handling and output unchanged."""
+    """Keep native Tcl/cwd/scoring; supervise the serial Jasper subprocess."""
     original = execution.subprocess
 
     class Transport:
@@ -70,10 +72,12 @@ def literal_define_transport(execution, directory):
             return getattr(original, name)
 
         def run(self, command, *args, **kwargs):
-            return original.run(prepare_command(command, directory), *args, **kwargs)
+            return run_jasper(prepare_command(command, directory), directory,
+                              original, *args, **kwargs)
 
     execution.subprocess = Transport()
     try:
         yield
     finally:
         execution.subprocess = original
+
