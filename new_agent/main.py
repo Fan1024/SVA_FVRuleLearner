@@ -51,13 +51,10 @@ def validate_config() -> None:
         raise ValueError("DATASET must be 'nl2sva_human', 'nl2sva_machine', or 'nl2sva_opencore'.")
     if type(config.MAX_ROUNDS) is not int or config.MAX_ROUNDS < 1:
         raise ValueError("MAX_ROUNDS must be a positive integer.")
-    for name in ("ASSERTION_MODEL", "RULE_MODEL"):
-        value = getattr(config, name)
-        if not isinstance(value, str) or not value.strip():
-            raise ValueError(f"{name} must be a nonempty model name.")
-    for model in active_models().values():
-        model_gateway.model_settings(model)
-    model_gateway.validate_runtime(active_models().values())
+    if not isinstance(config.MODEL, str) or not config.MODEL.strip():
+        raise ValueError("MODEL must be a nonempty model name.")
+    model_gateway.model_settings(config.MODEL)
+    model_gateway.validate_runtime((config.MODEL,))
     timeout = config.JASPER_TIMEOUT_SECONDS
     if type(timeout) not in (int, float) or not isfinite(timeout) or timeout <= 0:
         raise ValueError("JASPER_TIMEOUT_SECONDS must be a finite positive number.")
@@ -77,16 +74,9 @@ def validate_config() -> None:
     formal_check.validate_backend()
 
 
-def active_models():
-    models = {"assertion": config.ASSERTION_MODEL}
-    if config.MODE != "inference_only":
-        models["rule"] = config.RULE_MODEL
-    return models
-
-
 def validate_credentials() -> None:
     """Reject absent credentials before paying for assertion-generation calls."""
-    required = model_gateway.required_api_keys(active_models().values())
+    required = model_gateway.required_api_keys((config.MODEL,))
     missing = [name for name in required if not os.environ.get(name, "").strip()]
     if missing:
         raise ValueError("Missing environment variables: " + ", ".join(missing)
@@ -136,7 +126,7 @@ def main() -> int:
         print(f"Rule retrieval pool: {len(retriever.cases)} passed training cases with diagnoses and rules; "
               f"{len(retriever.excluded_unpassed_case_ids)} unpassed cases excluded.", flush=True)
     dataset_path = Path(cases[0]["dataset_path"])
-    models = active_models()
+    models = {"model": config.MODEL}
     from new_agent.pec_context_adapter import context_mode, VERSION as PEC_CONTEXT_VERSION
     from new_agent.diagnosis_context import DIAGNOSIS_CATEGORIES
     settings = {
@@ -168,7 +158,7 @@ def main() -> int:
         "tree_parser": config.ASSERTION_TREE_PARSER,
         "candidate_syn_policy": "insert_full_candidate_into_native_human_machine_tb",
         "model_gateway_version": model_gateway.VERSION,
-        "model_gateway": {role: model_gateway.model_settings(model) for role, model in models.items()},
+        "model_gateway": model_gateway.model_settings(config.MODEL),
     }
 
     if phase == "train":
@@ -176,14 +166,12 @@ def main() -> int:
                         flat_training_output=False,
                         tree_parser=config.ASSERTION_TREE_PARSER,
                         tree_parse_failure_policy="explicit_opaque_source_anchor",
-                        training_diagnosis_model=config.RULE_MODEL,
                         training_rule_schema="whole_assertion_diagnoses_v8",
                         training_feedback="latest_high_level_diagnoses_located_rules")
 
     if phase == "infer":
         settings.update(
             inference_workflow="existing_diagnosis_and_rule_selection",
-            inference_selection_model=config.RULE_MODEL,
             inference_selector_applicability_reasons=False,
             inference_feedback="latest_ranked_masked_diagnoses_and_rules",
             inference_rule_stages='rank_existing_diagnoses_and_rules_only',

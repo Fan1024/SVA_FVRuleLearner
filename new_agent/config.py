@@ -1,4 +1,4 @@
-"""Edit these settings to choose the data, models, budget, and saved evidence."""
+"""Edit these settings to choose the data, model, budget, and saved evidence."""
 
 from pathlib import Path
 
@@ -34,10 +34,10 @@ TRAIN_FRACTION = 0.8
 # Keep this seed and the CSV unchanged to reproduce the same split.
 SPLIT_SEED = 100
 
-# Models for assertion generation, training diagnosis and inference selection.
-ASSERTION_MODEL = "gpt-5.6-terra"
-RULE_MODEL = "gpt-5.6-terra"
-# RULE_MODEL runs training diagnosis/rules and inference selection.
+# One model for every LLM call in the experiment:
+#   Training: assertion generator + rule generator (includes diagnosis).
+#   Inference: assertion generator + selector.
+MODEL = "gpt-5.6-terra"
 
 # Enabled model IDs and API keys:
 #   gpt-5.6-terra                         -> OPENAI_API_KEY

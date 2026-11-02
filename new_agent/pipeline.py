@@ -138,7 +138,7 @@ def run_pipeline(directory, record: dict, *, retriever=None) -> int:
                     client = ModelGateway()
                 with run_io.measure_stage(record, "assertion") as capture_usage:
                     response_text = model_io.request_text(
-                        client=client, model=config.ASSERTION_MODEL,
+                        client=client, model=config.MODEL,
                         instructions=assertion_generator.SYSTEM_PROMPT, user_prompt=user_prompt,
                         usage_callback=capture_usage,
                     )
@@ -159,7 +159,7 @@ def run_pipeline(directory, record: dict, *, retriever=None) -> int:
                         testbench=inputs["testbench"], requirement=inputs["requirement"],
                         run_dir=check_dir, timeout_seconds=config.JASPER_TIMEOUT_SECONDS,
                         task_id=inputs["task_id"], dataset=inputs.get("dataset", config.DATASET),
-                        model_name=config.ASSERTION_MODEL,
+                        model_name=config.MODEL,
                     )
             except Exception as error:
                 _remember_round_error(directory, record, round_number, stage, error)
@@ -315,13 +315,13 @@ def run_pipeline(directory, record: dict, *, retriever=None) -> int:
                 stage = "rule_generation"
                 run_io.update_run(directory, record, stage=stage)
                 rule_prompt = rule_generator.build_rule_prompt(**rule_inputs)
-                rule_attempt = {"round": round_number, "model": config.RULE_MODEL,
+                rule_attempt = {"round": round_number, "model": config.MODEL,
                                 "raw_response": None, "rules": None}
                 run_io.update_run(directory, record, last_rule_generation=rule_attempt)
                 run_io.save_debug_event(directory, record, "rule_request")
                 with run_io.measure_stage(record, "rule") as capture_usage:
                     rule_response = model_io.request_text(
-                        client=client, model=config.RULE_MODEL, instructions=rule_generator.SYSTEM_PROMPT,
+                        client=client, model=config.MODEL, instructions=rule_generator.SYSTEM_PROMPT,
                         user_prompt=rule_prompt, json_output=True,
                         usage_callback=capture_usage,
                     )

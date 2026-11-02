@@ -168,7 +168,7 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
                         client = ModelGateway()
                     with run_io.measure_stage(record, "assertion") as capture_usage:
                         response_text = model_io.request_text(
-                            client=client, model=config.ASSERTION_MODEL,
+                            client=client, model=config.MODEL,
                             instructions=assertion_generator.SYSTEM_PROMPT, user_prompt=user_prompt,
                             usage_callback=capture_usage,
                         )
@@ -181,7 +181,7 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
                         directory=directory, record=record, attempt=attempt,
                         assertion=generated_assertion, response_text=response_text,
                         user_prompt=user_prompt, instructions=assertion_generator.SYSTEM_PROMPT,
-                        client=client, model=config.ASSERTION_MODEL)
+                        client=client, model=config.MODEL)
                     attempt['generation']['raw_response'] = response_text
                     evidence['generation_prompts'] = deepcopy(attempt['prompts'])
                     attempt["generation"]["assertion"] = generated_assertion
@@ -198,7 +198,7 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
                             testbench=inputs["testbench"], requirement=inputs["requirement"],
                             run_dir=check_dir, timeout_seconds=config.JASPER_TIMEOUT_SECONDS,
                             task_id=inputs["task_id"], dataset=inputs.get("dataset", config.DATASET),
-                            model_name=config.ASSERTION_MODEL,
+                            model_name=config.MODEL,
                         )
                 except Exception as error:
                     _remember_round_error(directory, record, round_number, stage, error)
@@ -289,7 +289,7 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
                     # One selector call; enforce the requested counts without semantic filtering.
                     with run_io.measure_stage(record, "rule") as capture_usage:
                         response = model_io.request_text(
-                            client=client, model=config.RULE_MODEL,
+                            client=client, model=config.MODEL,
                             instructions=selector.SYSTEM_PROMPT, user_prompt=prompt,
                             json_output=True, usage_callback=capture_usage,
                             output_schema=INFERENCE_SELECTION)
@@ -303,8 +303,8 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
                     latest_selector_round = round_number
                     evidence["selector_guidance"] = deepcopy(latest_selector_guidance)
                     run_io.update_run(directory, record, diagnosis=selection,
-                                      diagnosis_model=config.RULE_MODEL)
-                    run_io.save_diagnosis_model(record, config.RULE_MODEL)
+                                      diagnosis_model=config.MODEL)
+                    run_io.save_diagnosis_model(record, config.MODEL)
                     print(f"Round {round_number}: {len(selection['ranked_rules'])} existing rules ranked; "
                           f"{len(selection['ranked_diagnoses'])} existing diagnoses ranked.", flush=True)
                 except Exception as error:
