@@ -3,8 +3,26 @@
 import csv
 import hashlib
 import json
+import re
 from math import isclose
 from pathlib import Path
+
+
+RETRIEVAL_REQUIREMENT_POLICY = 'behavior_without_appended_signal_hint_v1'
+_SIGNAL_HINT_SUFFIX = re.compile(
+    r'(?:^|(?<=[.!?]))\s*Use\s+(?:the\s+)?signals?\b.*\Z',
+    re.IGNORECASE | re.MULTILINE | re.DOTALL,
+)
+
+
+def requirement_for_retrieval(requirement: str) -> str:
+    """Drop the appended signal hint for embedding and example deduplication."""
+    match = _SIGNAL_HINT_SUFFIX.search(requirement)
+    if match:
+        behavior = requirement[:match.start()].strip()
+        if behavior:
+            return behavior
+    return requirement
 
 
 def _accepted_csv_assertions(directory, allowed_ids):
@@ -165,7 +183,7 @@ class RuleRetriever:
         self._cosine_similarity = cosine_similarity
         self.model = SentenceTransformer(model_name, device="cpu")
         embeddings = self.model.encode(
-            [c["requirement"] for c in self.examples] + [c["requirement"] for c in self.cases]
+            [requirement_for_retrieval(c["requirement"]) for c in self.examples + self.cases]
         )
         self.example_embeddings = embeddings[:len(self.examples)]
         self.embeddings = embeddings[len(self.examples):]
@@ -174,7 +192,7 @@ class RuleRetriever:
         """Rank eligible cases before selecting up to top_k; keep ties deterministic."""
         if not self.cases:
             return []
-        query = self.model.encode([requirement])
+        query = self.model.encode([requirement_for_retrieval(requirement)])
         scores = self._cosine_similarity(query, self.embeddings)[0]
         order = sorted(range(len(scores)), key=lambda i: (-float(scores[i]), self.cases[i]["case_number"]))
         from new_agent.infer_training_traces import load_case_trace
@@ -193,12 +211,12 @@ class RuleRetriever:
     def retrieve_examples(self, requirement: str) -> list[dict]:
         """Return up to three diverse accepted pairs from the full ranked pool.
 
-        Keep one example per numerical similarity tie, requirement text and
+        Keep one example per numerical similarity tie, behavioral requirement and
         generated-assertion token sequence. Never fill a short pool with repeats.
         """
         if not self.examples:
             return []
-        query = self.model.encode([requirement])
+        query = self.model.encode([requirement_for_retrieval(requirement)])
         scores = self._cosine_similarity(query, self.example_embeddings)[0]
         order = sorted(range(len(scores)), key=lambda i: (-float(scores[i]), self.examples[i]["case_number"]))
         from new_agent.pec_input_adapter import _tokens
@@ -206,7 +224,7 @@ class RuleRetriever:
         for i in order:
             case = self.examples[i]
             score = float(scores[i])
-            requirement_key = ' '.join(case['requirement'].split())
+            requirement_key = ' '.join(requirement_for_retrieval(case['requirement']).split())
             assertion_key = tuple(token.text for token in _tokens(case['solved_assertion']))
             if (requirement_key in seen_requirements or assertion_key in seen_assertions
                     or any(isclose(score, previous, rel_tol=0.0, abs_tol=1e-8)

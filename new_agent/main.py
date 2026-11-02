@@ -115,7 +115,7 @@ def main() -> int:
         print("Training case IDs excluded:", [c["case_number"] for c in source_metadata["selected_cases"]], flush=True)
         print(f"Automatically selected inference case IDs ({len(cases)}):",
               [case["case_number"] for case in cases], flush=True)
-        from new_agent.infer_retrieval import RuleRetriever
+        from new_agent.infer_retrieval import RuleRetriever, RETRIEVAL_REQUIREMENT_POLICY
         training_ids = {c["case_number"] for c in source_metadata["selected_cases"]}
         retriever = RuleRetriever(
             source_dir, training_case_ids=training_ids,
@@ -185,12 +185,13 @@ def main() -> int:
             inference_case_selection="all_dataset_cases_minus_source_selected_cases",
             training_case_ids=[c["case_number"] for c in source_metadata["selected_cases"]],
             retrieval_top_k=config.TOP_K_CASES, embedding_model=config.EMBEDDING_MODEL,
+            retrieval_requirement_text=RETRIEVAL_REQUIREMENT_POLICY,
             retrieval_eligible_cases=len(retriever.cases),
             retrieval_passed_cases_only=True,
             retrieval_requires_diagnoses_and_rules=True,
             excluded_missing_guidance_case_ids=list(retriever.excluded_missing_guidance_case_ids),
             example_retrieval="top_three_distinct_accepted_generated_training_pairs_by_requirement_cosine",
-            example_diversity="unique_requirement_text_assertion_tokens_and_similarity_abs_tol_1e-8",
+            example_diversity="unique_behavior_text_assertion_tokens_and_similarity_abs_tol_1e-8",
             missing_generated_example_case_ids=list(retriever.missing_generated_example_case_ids),
             example_pool_size=len(retriever.examples),
             source_rules_sha256=retriever.sha256,
