@@ -212,6 +212,12 @@ def prepare_candidates(cases, contexts=None):
         trace = compact_rounds(case.get('revision_trace', []))
         context['_source_assertions'] = [r['assertion'] for r in trace if r['assertion']]
         descriptions = dict(case['rules'])
+        for number,item in enumerate(case.get('diagnoses',[])):
+            if isinstance(item,dict):
+                descriptions[f'high_level_{number}']=item.get('statement','')+' '+item.get('requirement_quote','')
+        for i,entry in enumerate(trace):
+            for j,item in enumerate(entry.get('diagnoses',[])):
+                descriptions[f'round_diagnosis_{i}_{j}']=item.get('statement','')+' '+item.get('requirement_quote','')
         indexed_diagnoses = case.get('rule_diagnoses', {})
         for rule_id, diagnoses in indexed_diagnoses.items():
             for number, diagnosis in enumerate(diagnoses):
@@ -233,7 +239,7 @@ def prepare_candidates(cases, contexts=None):
         masker = CaseMasker(source_names(case['requirement'], descriptions, context))
         requirement = masker.mask(case['requirement'])
         def mask_diagnoses(values):
-            return [{key: masker.mask(value) if key == 'statement' else value
+            return [{key: masker.mask(value) if key in {'statement','requirement_quote'} else value
                      for key, value in diagnosis_view(item).items()}
                     for item in values if isinstance(item, dict)]
         rules = [{'id': f"C{case['case_number']:04d}:{key}", 'rule': masker.mask(text),
@@ -242,6 +248,7 @@ def prepare_candidates(cases, contexts=None):
                      if isinstance(indexed_locations.get(key), str) and indexed_locations[key].strip() else {})}
                  for key, text in case['rules'].items()]
         for entry in trace:
+            entry['diagnoses']=mask_diagnoses(entry.get('diagnoses',[]))
             entry['requirement_interpretation'] = {key: masker.mask(value)
                 for key, value in entry.get('requirement_interpretation', {}).items()}
             entry['behavior_review'] = {key: masker.mask(value)
@@ -262,9 +269,11 @@ def prepare_candidates(cases, contexts=None):
             'similarity': case.get('similarity'),
             'requirement': requirement,
             'rules': rules,
+            'diagnoses': mask_diagnoses(case.get('diagnoses',[])),
             'revision_trace': trace,
             'trace_status': case.get('trace_status', 'available' if trace else 'unavailable_missing_trace'),
         })
     return result
+
 
 

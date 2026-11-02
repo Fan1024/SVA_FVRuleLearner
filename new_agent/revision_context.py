@@ -44,9 +44,9 @@ def reconsider_repeat(*, directory, record, attempt, assertion, response_text,
         return response_text, assertion
     retry = user_prompt + (
         '\n\nREASSESS THIS REVISION\nYour proposed response repeats an assertion whose completed '
-        f'equivalence comparison failed in round(s) {matches}.\nREPEATED PROPOSAL\n{assertion}\n'
+        f'evaluation did not pass in round(s) {matches}.\nREPEATED PROPOSAL\n{assertion}\n'
         'Reassess the complete required behavior and this proposal before choosing edits. '
-        'Check whether the supplied diagnosis missed scope, activation, timing, history, '
+        'Check the required scope, activation, timing, history, '
         'polarity or a required case. Reconsider the premise of any ineffective suggestion; '
         'derive a supported corrected assertion rather than repeating the same attempt. '
         'A cosmetic rewrite is not a correction. Return only the complete assertion.')
@@ -99,5 +99,6 @@ def retain_checker_failure(directory, record, round_number, result):
             shutil.copyfile(path, destination)
             saved.append(str(destination))
     result['retained_diagnostics'] = saved
+
 
 

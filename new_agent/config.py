@@ -4,7 +4,7 @@ from pathlib import Path
 
 # "train": learn rules on selected training cases.
 # "inference": exclude source training cases and retrieve learned rules.
-# "inference_only": three fixed examples and current-case diagnosis; no retrieval.
+# "inference_only": three fixed examples; no retrieval or separate diagnosis.
 # Launch every mode with python main.py.
 MODE = "train"
 
@@ -37,7 +37,7 @@ SPLIT_SEED = 100
 # Models for the two generation components. Jev uses its service default.
 ASSERTION_MODEL = "gpt-5.6-terra"
 RULE_MODEL = "gpt-5.6-terra"
-# In inference_only, RULE_MODEL runs the requirement/TB diagnosis component.
+# RULE_MODEL runs training diagnosis/rules and inference selection.
 
 # Total assertion attempts: 10 = initial generation + at most nine revisions.
 MAX_ROUNDS = 10
@@ -63,6 +63,9 @@ TRAINING_RUN_DIR = None
 
 # Retrieve up to this many cases WITH rules, ranked by requirement similarity.
 TOP_K_CASES = 5
+# Independently rank existing training diagnoses and correction rules.
+TOP_K_DIAGNOSES = 5
+TOP_K_RULES = 5
 EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 
 # True additionally writes readable debug_trace.txt files.
@@ -78,6 +81,7 @@ PEC_CONTEXT_MODULE = None
 
 # Pyslang establishes SVA grouping. Unsupported translations use original source.
 ASSERTION_TREE_PARSER = "pyslang"
+
 
 
 

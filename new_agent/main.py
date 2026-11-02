@@ -35,6 +35,9 @@ def validate_config() -> None:
             raise ValueError("TOP_K_CASES must be a positive integer.")
         if not isinstance(config.EMBEDDING_MODEL, str) or not config.EMBEDDING_MODEL.strip():
             raise ValueError("EMBEDDING_MODEL must be a nonempty model name.")
+        for name in ('TOP_K_DIAGNOSES','TOP_K_RULES'):
+            if type(getattr(config,name)) is not int or getattr(config,name)<1:
+                raise ValueError(name+' must be a positive integer.')
     if config.MODE == "inference_only":
         ids = config.INFERENCE_ONLY_CASE_IDS
         if not isinstance(ids, list) or any(type(n) is not int or n < 1 for n in ids) or len(set(ids)) != len(ids):
@@ -96,7 +99,7 @@ def main() -> int:
         )
     elif phase == "inference_only":
         cases = dataset_loader.load_cases(config.DATASET_PATH, config.INFERENCE_ONLY_CASE_IDS)
-        print("Inference-only: three fixed examples; no training run or retrieval.", flush=True)
+        print("Inference-only baseline: three fixed examples; no diagnosis or retrieval.", flush=True)
         print("Selected case IDs:", [case["case_number"] for case in cases], flush=True)
     else:
         dataset_path = dataset_loader.resolve_dataset_path(config.DATASET_PATH)
@@ -124,7 +127,7 @@ def main() -> int:
     dataset_path = Path(cases[0]["dataset_path"])
     models = {"assertion": config.ASSERTION_MODEL, "rule": config.RULE_MODEL}
     if phase == "inference_only":
-        models = {"assertion": config.ASSERTION_MODEL, "diagnosis": config.RULE_MODEL}
+        models = {"assertion": config.ASSERTION_MODEL}
     from new_agent.pec_context_adapter import context_mode, VERSION as PEC_CONTEXT_VERSION
     from new_agent.diagnosis_context import DIAGNOSIS_CATEGORIES
     settings = {
@@ -163,18 +166,19 @@ def main() -> int:
                         tree_parser=config.ASSERTION_TREE_PARSER,
                         tree_parse_failure_policy="explicit_opaque_source_anchor",
                         training_diagnosis_model=config.RULE_MODEL,
-                        training_rule_schema="requirement_interpretation_categories_v5",
-                        training_feedback="latest_requirement_interpretation_categories_rules")
+                        training_rule_schema="reference_diagnoses_corrections_v6",
+                        training_feedback="latest_high_level_diagnoses_located_rules")
 
     if phase == "infer":
         settings.update(
-            inference_workflow="existing_rule_selector_independent_locations",
-            inference_diagnosis_model=config.RULE_MODEL,
-            inference_feedback="latest_interpretation_categories_ranked_rules",
-            inference_rule_stages='rank_existing_rules_and_locate_issues_only',
+            inference_workflow="existing_diagnosis_and_rule_selection",
+            inference_selection_model=config.RULE_MODEL,
+            inference_feedback="latest_ranked_source_diagnoses_and_corrections",
+            inference_rule_stages='rank_existing_diagnoses_and_rules_only',
             inference_rule_context='training_rules_generated_before_after_no_references_or_scores',
             inference_rule_generation_enabled=False,
-            inference_max_selected_rules=5,
+            inference_max_selected_rules=config.TOP_K_RULES,
+            inference_max_selected_diagnoses=config.TOP_K_DIAGNOSES,
             training_evidence_masking="after_unmasked_cosine; requirements_rules_revision_traces; role_based_unique_per_case",
             source_training_run=str(source_dir),
             inference_case_selection="all_dataset_cases_minus_source_selected_cases",
@@ -192,9 +196,8 @@ def main() -> int:
         from new_agent.inference_only_examples import get_examples, VERSION as EXAMPLES_VERSION
         fixed_examples = get_examples(config.DATASET)
         settings.update(
-            inference_workflow="requirement_tb_diagnosis_no_retrieval",
-            inference_diagnosis_model=config.RULE_MODEL,
-            inference_feedback="latest_requirement_parts_categories_located_corrections",
+            inference_workflow="fixed_examples_generation_only",
+            inference_feedback="no_separate_diagnosis",
             inference_retrieval="disabled", example_source="fixed_handwritten",
             fixed_examples_version=EXAMPLES_VERSION,
             fixed_example_ids=[example["id"] for example in fixed_examples],
@@ -279,6 +282,7 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
 
 
 

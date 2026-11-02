@@ -345,7 +345,7 @@ def finish_experiment(experiment_dir, exit_code: int, *, elapsed_seconds=None) -
         print(f"Cases recorded: {len(scores)} | Passed: {metadata['cases_passed']}")
     print("Evaluation:", directory / "evaluation.csv")
     if metadata.get("phase") == "inference_only":
-        print("Diagnosis evidence:", directory / "diagnoses.jsonl")
+        print("Case evidence:", directory / "inference_cases.jsonl")
     else:
         print("Learning evidence:", directory / "learned_rules.jsonl")
     return exit_code
@@ -376,6 +376,7 @@ def create_record(case_id: str, models: dict, inputs: dict, prompts: dict, setti
         "passed": False,
         "stop_reason": None,
         "rule_registry": [],
+        "diagnosis_registry": [],
         "rules_used": [],
         "last_rule_generation": None,
         "pending_attempt": None,
@@ -514,7 +515,9 @@ def _debug_event_text(record: dict, event: str, data: dict) -> str:
         number = record["pending_attempt"]["round"]
         if record["settings"].get("inference_workflow") or record["settings"].get("training_workflow"):
             source = record.get("inference_feedback_round") if record["settings"].get("inference_workflow") else record.get('training_feedback_round')
-            feedback = (f"complete diagnosis from round {source}" if source is not None
+            feedback = ((f"selected training guidance from round {source}"
+                         if record["settings"].get("inference_workflow") == "existing_diagnosis_and_rule_selection"
+                         else f"complete diagnosis from round {source}") if source is not None
                         else "none available from the preceding round")
             return (f"\nROUND {number}\n=======\nDiagnosis feedback: {feedback}\n\n"
                     "ASSERTION GENERATOR OUTPUT")
@@ -824,7 +827,7 @@ def save_summaries(summary_dir, record: dict) -> None:
     _atomic_write(directory / "evaluation.csv", buffer.getvalue())
 
     if record["settings"].get("phase") == "inference_only":
-        _update_case_collection(directory / "diagnoses.jsonl", {
+        _update_case_collection(directory / "inference_cases.jsonl", {
             "case_number": row["case_number"], "design_name": row["design_name"],
             "task_id": row["task_id"], "requirement": record["inputs"]["requirement"],
             "passed": record["passed"], "trace_file": record.get("inference_trace_file"),
@@ -860,6 +863,7 @@ def save_summaries(summary_dir, record: dict) -> None:
         "rule_rounds": rule_rounds,
         "rule_locations": rule_locations,
         "rule_diagnoses": rule_diagnoses,
+        "diagnoses": deepcopy(record.get("diagnosis_registry",[])),
         "round_evidence": record["round_evidence"],
     }
     if record["settings"].get("flat_training_output"):
@@ -1031,6 +1035,7 @@ def print_summary(run_dir, record: dict) -> None:
         print("Evaluation:", Path(run_dir) / "evaluation.csv")
     else:
         print("Result:", Path(run_dir) / "result.json")
+
 
 
 

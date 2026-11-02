@@ -21,7 +21,8 @@ FIXED_EXAMPLES = (
     {
         'id': 'first_request_scope',
         'requirement': ('For the first sampled request after reset, require ack in that '
-                        'same cycle. Later requests impose no ack obligation. Do not check during reset.'),
+                        'same cycle. The supplied flag seen_request is cleared by reset and becomes one on the first request. '
+                        'Later requests impose no ack obligation. Do not check during reset.'),
         'ports': 'input clk, tb_reset, req, ack',
         'declarations': ('logic seen_request;\n'
                          'always @(posedge clk)\n'
@@ -54,3 +55,4 @@ def get_examples(dataset):
     if len(examples) != 3:
         raise ValueError('inference_only requires exactly three fixed examples.')
     return examples
+

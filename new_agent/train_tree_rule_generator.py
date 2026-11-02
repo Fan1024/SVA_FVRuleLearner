@@ -27,12 +27,12 @@ def build_trees(reference_assertion, generated_assertion):
 
 
 def build_rule_prompt(requirement, generated_assertion, reference_assertion,
-                      testbench, *, trees, evaluation_status, previous_transition=None):
+                      testbench=None, *, trees, evaluation_status, previous_transition=None):
     """Whitelist task data plus one fixed coarse result; never include logs/scores."""
     for side, source in (("generated", generated_assertion), ("reference", reference_assertion)):
         if trees[side].get("source_assertion") != source:
             raise ValueError(f"The {side} tree does not belong to the current source assertion.")
-    data = dict(requirement=requirement, testbench=testbench,
+    data = dict(requirement=requirement,
                 generated_tree=compact_tree(trees['generated']),
                 reference_assertion=reference_assertion,
                 evaluation_feedback=evaluation_feedback(evaluation_status))
@@ -82,32 +82,44 @@ def parse_response(response_text, trees):
     Node IDs remain in inspection records; textual locations become generator
     feedback and can later be masked with the source examples for retrieval.
     """
-    result = json.loads(response_text)
-    if not isinstance(result, dict) or not isinstance(result.get("corrections"), list):
-        raise ValueError("Expected a JSON object with a corrections array")
-    generated, reference = _nodes(trees["generated"]), _nodes(trees["reference"])
-    if 'requirement_interpretation' in result:
-        if not isinstance(result['requirement_interpretation'], dict):
-            raise ValueError('requirement_interpretation must be an object')
-        result['requirement_interpretation'] = interpretation_view(result['requirement_interpretation'])
-    for entry in result["corrections"]:
-        if not isinstance(entry, dict):
-            raise ValueError("Each correction must be an object")
-        node_id = entry.get("generated_node_id")
-        if not isinstance(node_id, str) or node_id not in generated:
-            raise ValueError("Correction has an unknown generated_node_id")
-        ids = entry.get("reference_node_ids", [])
-        if not isinstance(ids, list) or any(not isinstance(x, str) or x not in reference for x in ids):
-            raise ValueError("reference_node_ids must contain existing reference IDs")
-        if 'diagnosis' in entry:
-            entry['diagnosis'] = category_label(entry['diagnosis'])
-        elif 'requirement_interpretation' in result:
-            raise ValueError('Each new-schema correction needs a diagnosis category')
-        for key in ("rule",):
-            if not isinstance(entry.get(key), str) or not entry[key].strip():
-                raise ValueError(f"Correction needs nonempty {key} text")
-        entry['location'] = location_for(trees['generated'], node_id)
+    raw = json.loads(response_text)
+    if not isinstance(raw,dict) or not isinstance(raw.get('corrections'),list):
+        raise ValueError('Expected diagnoses and corrections arrays.')
+    diagnoses=[]; ids=set()
+    for entry in raw.get('diagnoses',[]):
+        if not isinstance(entry,dict) or not isinstance(entry.get('id'),str) or entry['id'] in ids:
+            raise ValueError('Diagnosis IDs must be unique strings.')
+        if not isinstance(entry.get('statement'),str) or not entry['statement'].strip():
+            raise ValueError('A high-level diagnosis needs an explanation.')
+        ids.add(entry['id'])
+        item={'id':entry['id'], 'category':category_label(entry.get('category')),
+              'statement':entry['statement'].strip()}
+        if isinstance(entry.get('requirement_quote'),str) and entry['requirement_quote'].strip():
+            item['requirement_quote']=entry['requirement_quote'].strip()
+        diagnoses.append(item)
+    result={'diagnoses':diagnoses,'corrections':[]}
+    for entry in raw['corrections']:
+        if not isinstance(entry,dict) or not isinstance(entry.get('rule'),str) or not entry['rule'].strip():
+            raise ValueError('Each correction needs a nonempty rule.')
+        links=entry.get('diagnosis_ids',[])
+        # Read legacy category-only corrections without preserving old interpretations.
+        if not links and 'diagnosis' in entry:
+            key=f'D{len(diagnoses)+1}'
+            diagnoses.append({'id':key,'category':category_label(entry['diagnosis']),
+                              'statement':entry.get('issue') or entry['rule'].strip()})
+            ids.add(key); links=[key]
+        if not isinstance(links,list) or not links or any(key not in ids for key in links):
+            raise ValueError('Corrections must link to existing diagnosis IDs.')
+        node_id=entry.get('generated_node_id')
+        item={'diagnosis_ids':list(dict.fromkeys(links)), 'generated_node_id':node_id,
+              'location':location_for(trees['generated'],node_id), 'rule':entry['rule'].strip()}
+        result['corrections'].append(item)
     return result
+
+
+def export_diagnoses(response,round_number):
+    return [{**entry,'id':f"round_{round_number:04d}:"+entry['id'],'round':round_number}
+            for entry in response.get('diagnoses',[])]
 
 
 def export_rules(response, round_number):
@@ -120,6 +132,7 @@ def export_rules(response, round_number):
         **({'diagnoses': linked_diagnoses(entry, response)}
            if any(key in entry for key in ('diagnosis', 'diagnosis_ids', 'diagnoses')) else {}),
     } for i, entry in enumerate(response["corrections"], 1)}
+
 
 
 

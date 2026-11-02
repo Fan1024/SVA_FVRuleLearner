@@ -97,18 +97,17 @@ def run_training_pipeline(directory, record: dict, *, retriever=None) -> int:
     from new_agent import train_assertion_generator as assertion_generator
     from new_agent import train_tree_rule_generator as rule_generator
     from new_agent.training_prompt_context import (
-        PROMPT_VERSION, assertion_history, statement_template,
+        PROMPT_VERSION, assertion_history,
     )
     inputs = record["inputs"]
     policy = formal_check.get_evaluation_policy(inputs.get("dataset", config.DATASET))
     dataset = inputs.get("dataset", config.DATASET)
-    template = statement_template(dataset)
     record["settings"].update(
         training_prompt_version=PROMPT_VERSION,
         training_assertion_history="latest_assertion_coarse_result_repetition_notice",
-        training_feedback="latest_requirement_interpretation_categories_rules",
+        training_feedback="latest_high_level_diagnoses_located_rules",
         training_rule_feedback="coarse_reference_equivalence_only",
-        training_rule_schema="requirement_interpretation_categories_v5",
+        training_rule_schema="reference_diagnoses_corrections_v6",
     )
     registry = {}
     previous_assertion = None
@@ -143,12 +142,11 @@ def run_training_pipeline(directory, record: dict, *, retriever=None) -> int:
                 try:
                     stage = "generation"
                     generation_inputs = {
-                        "requirement": inputs["requirement"], "testbench": inputs["testbench"],
+                        "requirement": inputs["requirement"],
                         "assertion_history": assertion_history(
                             record["round_evidence"], before_round=round_number),
                         "diagnosis_response": latest_diagnosis_response,
                         "diagnosis_round": latest_diagnosis_round,
-                        "assertion_template": template,
                     }
                     user_prompt = assertion_generator.build_generation_prompt(**generation_inputs)
                     evidence['guidance_payload'] = latest_diagnosis_response
@@ -293,7 +291,7 @@ def run_training_pipeline(directory, record: dict, *, retriever=None) -> int:
                     print(f"Round {round_number}: running LLM tree diagnosis and rule generation.", flush=True)
                     run_io.update_run(directory, record, stage=stage)
                     rule_prompt = rule_generator.build_rule_prompt(
-                        requirement=inputs["requirement"], testbench=inputs["testbench"],
+                        requirement=inputs["requirement"],
                         generated_assertion=generated_assertion,
                         reference_assertion=inputs["reference_assertion"], trees=trees,
                         evaluation_status=status,
@@ -317,6 +315,8 @@ def run_training_pipeline(directory, record: dict, *, retriever=None) -> int:
                     run_io.update_run(directory, record, stage=stage)
                     diagnosis = rule_generator.parse_response(rule_response, trees)
                     evidence["tree_rule_diagnosis"] = deepcopy(diagnosis)
+                    record.setdefault('diagnosis_registry',[]).extend(
+                        rule_generator.export_diagnoses(diagnosis,round_number))
                     latest_diagnosis_response = feedback_json(diagnosis, tree=trees['generated'])
                     latest_diagnosis_round = round_number
                     run_io.save_debug_event(directory, record, 'correction_locations',
@@ -346,6 +346,7 @@ def run_training_pipeline(directory, record: dict, *, retriever=None) -> int:
         passed=False, stage="finished", stop_reason="max_rounds",
     )
     return 0 if resolved else 1
+
 
 
 

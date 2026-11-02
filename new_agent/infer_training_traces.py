@@ -2,7 +2,7 @@
 import json
 from pathlib import Path
 from new_agent.correction_locations import recover_location
-from new_agent.diagnosis_context import linked_diagnoses, review_view, interpretation_view
+from new_agent.diagnosis_context import linked_diagnoses, review_view, interpretation_view, diagnosis_view
 
 
 EVALUATION_FIELDS = ('status', 'syntax', 'pec', 'relax_pec', 'bleu', 'rouge',
@@ -72,6 +72,7 @@ def compact_rounds(rounds):
         result.append({'round': number, 'assertion': assertion,
                        'diagnosis_from_round': feedback_round,
                        'corrections': corrections, 'evaluation': evaluation,
+                       'diagnoses': [diagnosis_view(item) for item in (diagnosis.get('diagnoses', []) if isinstance(diagnosis,dict) else [])],
                        'requirement_interpretation': interpretation_view(diagnosis.get('requirement_interpretation')) if isinstance(diagnosis, dict) else {},
                        'behavior_review': review_view(diagnosis.get('behavior_review')) if isinstance(diagnosis, dict) else {}})
     return sorted(result, key=lambda item: item['round'])
@@ -104,5 +105,6 @@ def load_case_trace(directory, case_number, source):
     legacy = source.get('round_evidence', [])
     compact = compact_rounds(legacy) if isinstance(legacy, list) else []
     return compact, 'available_legacy' if compact else 'unavailable_missing_trace'
+
 
 

@@ -100,7 +100,9 @@ class RuleRetriever:
                 continue
             rules = {key: value.strip() for key, value in rules.items()
                      if isinstance(value, str) and value.strip()}
-            if not rules:
+            diagnoses = case.get('diagnoses', [])
+            diagnoses = diagnoses if isinstance(diagnoses,list) else []
+            if not rules and not diagnoses:
                 continue
             self._trace_sources[number] = {
                 'trace_file': case.get('trace_file'),
@@ -138,7 +140,7 @@ class RuleRetriever:
             self.cases.append({
                 "case_number": number, "design_name": case.get("design_name"),
                 "task_id": case.get("task_id"), "requirement": requirement.strip(),
-                "passed": case.get("passed"), "rules": rules,
+                "passed": case.get("passed"), "rules": rules, "diagnoses": diagnoses,
                 "rule_groups": {key: groups.get(key, []) for key in rules},
                 "rule_diagnoses": {key: case.get("rule_diagnoses", {}).get(key, []) for key in rules},
                 "rule_locations": {key: locations[key] for key in rules
@@ -190,4 +192,5 @@ class RuleRetriever:
         scores = self._cosine_similarity(query, self.example_embeddings)[0]
         order = sorted(range(len(scores)), key=lambda i: (-float(scores[i]), self.examples[i]["case_number"]))
         return [{**self.examples[i], "similarity": float(scores[i])} for i in order[:3]]
+
 

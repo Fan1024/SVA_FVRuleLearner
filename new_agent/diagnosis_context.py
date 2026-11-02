@@ -45,7 +45,7 @@ def category_instructions():
     return ('HIGH-LEVEL DIAGNOSIS OPTIONS\n' + '\n'.join('- ' + item for item in DIAGNOSIS_CATEGORIES)
             + '\nUse one primary category per correction/location. diagnosis is only the short '
               'category label, never a case-specific explanatory sentence. '
-              'Describe construction details in requirement_interpretation and the useful correction action.')
+              'Use the diagnosis statement for explanation and the correction rule for the action.')
 
 
 def diagnosis_view(value):
@@ -56,7 +56,7 @@ def diagnosis_view(value):
             return {'category': value.strip()} if value.strip() else {}
     if not isinstance(value, dict):
         return {}
-    return {key: value[key] for key in ("id", "category", "statement")
+    return {key: value[key] for key in ("id", "category", "statement", "requirement_quote")
             if isinstance(value.get(key), str)}
 
 
@@ -85,16 +85,6 @@ def linked_diagnoses(correction, response=None):
 
 
 def diagnosis_payload(response):
-    """An allowlisted copy for the next training assertion generator."""
-    if 'requirement_interpretation' in response or any(
-            'diagnosis' in item for item in response.get('corrections', []) if isinstance(item, dict)):
-        result = {'requirement_interpretation': interpretation_view(response.get('requirement_interpretation'))}
-        if isinstance(response.get('reference_conflict'), str) and response['reference_conflict'].strip():
-            result['reference_conflict'] = response['reference_conflict'].strip()
-        return result
-    return {
-        "behavior_review": review_view(response.get("behavior_review")),
-        "diagnoses": [diagnosis_view(item) for item in response.get("diagnoses", [])
-                      if isinstance(item, dict)],
-    }
-
+    """Forward category/explanation text, never interpretation or conflict records."""
+    return {"diagnoses": [diagnosis_view(item) for item in response.get("diagnoses", [])
+                          if isinstance(item, dict)]}

@@ -90,18 +90,17 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
         raise ValueError("Inference requires the selected training-run retriever.")
     from new_agent import infer_assertion_generator as assertion_generator
     from new_agent import infer_rule_selector as selector
-    from new_agent.training_prompt_context import statement_template
     from new_agent.infer_rule_masking import prepare_candidates
     inputs = record["inputs"]
     policy = formal_check.get_evaluation_policy(inputs.get("dataset", config.DATASET))
-    template = statement_template(inputs.get("dataset", config.DATASET))
     record["settings"].update(
-        inference_workflow="existing_rule_selector_independent_locations",
-        inference_rule_stages="rank_existing_rules_and_locate_issues_only",
-        inference_feedback="latest_interpretation_categories_ranked_rules",
+        inference_workflow="existing_diagnosis_and_rule_selection",
+        inference_rule_stages="rank_existing_diagnoses_and_rules_only",
+        inference_feedback="latest_ranked_source_diagnoses_and_corrections",
         inference_example_source="accepted_generated_training_assertions",
         inference_retrieval="once_per_target_case",
-        inference_max_selected_rules=selector.MAX_SELECTED_RULES,
+        inference_max_selected_rules=selector.limits()["rules"],
+        inference_max_selected_diagnoses=selector.limits()["diagnoses"],
     )
     example_cases = None
     candidates = None
@@ -147,11 +146,10 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
                         print("Example case IDs:", [c["case_number"] for c in example_cases], flush=True)
                     stage = "generation"
                     generation_inputs = {
-                        "requirement": inputs["requirement"], "testbench": inputs["testbench"],
+                        "requirement": inputs["requirement"],
                         "examples": example_cases, "previous_assertion": previous_assertion,
                         "previous_round": previous_round, "selector_guidance": latest_selector_guidance,
                         "previous_evaluation": evaluation_feedback((record.get('formal') or {}).get('status')),
-                        "assertion_template": template,
                     }
                     user_prompt = assertion_generator.build_generation_prompt(**generation_inputs)
                     evidence['guidance_payload'] = deepcopy(latest_selector_guidance)
@@ -290,7 +288,7 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
                     stage = "rule_selection"
                     run_io.update_run(directory, record, stage=stage)
                     prompt = selector.build_selector_prompt(
-                        inputs["requirement"], inputs["testbench"], tree,
+                        inputs["requirement"], None, tree,
                         record["retrieved_rule_bank"], evaluation_status=status,
                         previous_transition=last_transition(record['round_evidence'], generated_assertion, status))
                     evidence["selector_checker_status"] = status
@@ -315,7 +313,7 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
                                       diagnosis_model=config.RULE_MODEL)
                     run_io.save_diagnosis_model(record, config.RULE_MODEL)
                     print(f"Round {round_number}: {len(selection['ranked_rules'])} existing rules ranked; "
-                          f"{len(selection['locations'])} independent issue locations.", flush=True)
+                          f"{len(selection['ranked_diagnoses'])} existing diagnoses ranked.", flush=True)
                 except Exception as error:
                     latest_selector_guidance = latest_selector_round = None
                     _remember_round_error(directory, record, round_number, stage, error)
@@ -333,6 +331,7 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
         passed=False, stage="finished", stop_reason="max_rounds",
     )
     return 0 if resolved else 1
+
 
 
 
