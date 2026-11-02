@@ -7,6 +7,9 @@ import re
 def request_text(client, model: str, instructions: str, user_prompt: str, *,
                  json_output: bool = False, usage_callback=None) -> str:
     """Save provider usage even if a response is incomplete or invalid."""
+    if json_output:
+        # JSON mode validates input separately from the system instructions.
+        user_prompt = "Return only a valid JSON object.\n\n" + user_prompt
     options = {"text": {"format": {"type": "json_object"}}} if json_output else {}
     response = client.responses.create(
         model=model, instructions=instructions, input=user_prompt, **options,
@@ -54,3 +57,4 @@ def parse_rules(response_text: str) -> dict:
         if not isinstance(entry["rule"], str) or not entry["rule"].strip():
             raise ValueError(f"{name}.rule must contain an editing instruction.")
     return rules
+
