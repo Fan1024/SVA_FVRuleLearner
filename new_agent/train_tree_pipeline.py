@@ -143,6 +143,7 @@ def run_training_pipeline(directory, record: dict, *, retriever=None) -> int:
                     stage = "generation"
                     generation_inputs = {
                         "requirement": inputs["requirement"],
+                        "testbench": inputs["testbench"],
                         "assertion_history": assertion_history(
                             record["round_evidence"], before_round=round_number),
                         "diagnosis_response": latest_diagnosis_response,
@@ -292,6 +293,7 @@ def run_training_pipeline(directory, record: dict, *, retriever=None) -> int:
                     run_io.update_run(directory, record, stage=stage)
                     rule_prompt = rule_generator.build_rule_prompt(
                         requirement=inputs["requirement"],
+                        testbench=inputs["testbench"],
                         generated_assertion=generated_assertion,
                         reference_assertion=inputs["reference_assertion"], trees=trees,
                         evaluation_status=status,

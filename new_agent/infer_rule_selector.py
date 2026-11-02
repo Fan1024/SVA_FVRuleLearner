@@ -127,6 +127,8 @@ def _rule_map(bank):
 
 def build_selector_prompt(requirement, testbench, tree, rule_bank, *, evaluation_status, previous_transition=None):
     from new_agent.infer_rule_selector_prompts import TASK_INSTRUCTIONS
+    if not isinstance(testbench, str) or not testbench.strip():
+        raise ValueError('A nonempty target testbench or module context is required.')
     bank = {'requirements': dict(rule_bank['requirements']),
             'examples': {key: {field: item.get(field) for field in ('before', 'after')}
                          for key, item in rule_bank['examples'].items()},
@@ -134,7 +136,8 @@ def build_selector_prompt(requirement, testbench, tree, rule_bank, *, evaluation
                           for item in rule_bank.get('diagnoses', [])],
             'cases': [{key: deepcopy(case[key]) for key in ('case_number', 'requirement_id', 'rules')}
                       for case in rule_bank['cases']]}
-    data = {'requirement': requirement, 'generated_assertion': tree['source_assertion'],
+    data = {'requirement': requirement, 'testbench': testbench,
+            'generated_assertion': tree['source_assertion'],
             'training_guidance': bank, 'selection_limits': limits(),
             'previous_outcome': outcome(evaluation_status)}
     return TASK_INSTRUCTIONS + '\nINPUT DATA\n' + json.dumps(data, ensure_ascii=False, indent=2)

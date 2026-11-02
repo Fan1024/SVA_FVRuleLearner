@@ -107,6 +107,7 @@ def run_inference_only_pipeline(directory, record: dict, *, retriever=None) -> i
                     stage = "generation"
                     generation_inputs = {
                         "requirement": inputs["requirement"],
+                        "testbench": inputs["testbench"],
                         "examples": example_cases, "previous_assertion": previous_assertion,
                         "previous_round": previous_round, "diagnosis_guidance": latest_diagnosis_guidance,
                         "previous_evaluation": evaluation_feedback((record.get('formal') or {}).get('status')),

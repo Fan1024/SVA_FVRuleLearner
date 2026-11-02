@@ -1,17 +1,18 @@
 """Requirement-based generation with the latest training correction guidance."""
 import json
 from new_agent.correction_locations import feedback_json
-from new_agent.generation_context import SYSTEM_PROMPT, outcome, output_instruction
+from new_agent.generation_context import SYSTEM_PROMPT, outcome, output_instruction, testbench_section
 
 
 def build_generation_prompt(requirement, testbench=None, *, assertion_history=None,
                             diagnosis_response=None, diagnosis_round=None,
                             assertion_template=None):
-    # Retain call compatibility; testbench and assertion_template are not serialized.
+    # Retain assertion_template call compatibility; use the actual supplied TB.
     if not isinstance(requirement,str) or not requirement.strip():
         raise ValueError('A nonempty requirement is required.')
     history = sorted(assertion_history or [], key=lambda entry: entry['round'])
-    sections=['Question: Create a SVA assertion that checks:\n'+requirement]
+    sections=['Question: Create a SVA assertion that checks:\n'+requirement,
+              testbench_section(testbench)]
     if history:
         latest=history[-1]
         sections.append('PREVIOUS ASSERTION\n'+latest['generated_assertion'])

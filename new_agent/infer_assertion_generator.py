@@ -1,6 +1,6 @@
 """Requirement-based inference using selected existing training guidance."""
 import json
-from new_agent.generation_context import SYSTEM_PROMPT, outcome, output_instruction
+from new_agent.generation_context import SYSTEM_PROMPT, outcome, output_instruction, testbench_section
 
 PROMPT_VERSION='selected_whole_assertion_guidance_v8'
 REVISION_PROCEDURE=''
@@ -12,7 +12,8 @@ def build_generation_prompt(requirement, testbench=None, *, examples=None,
                             assertion_template=None):
     if not isinstance(requirement,str) or not requirement.strip():
         raise ValueError('A nonempty requirement is required.')
-    sections=['Question: Create a SVA assertion that checks:\n'+requirement]
+    sections=['Question: Create a SVA assertion that checks:\n'+requirement,
+              testbench_section(testbench)]
     pairs=[{key: entry[key] for key in ('requirement','solved_assertion')} for entry in examples or []]
     if pairs:
         sections.append('SVA EXAMPLES\n'+json.dumps(pairs,ensure_ascii=False,indent=2))

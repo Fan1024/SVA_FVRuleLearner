@@ -29,10 +29,12 @@ def build_trees(reference_assertion, generated_assertion):
 def build_rule_prompt(requirement, generated_assertion, reference_assertion,
                       testbench=None, *, trees, evaluation_status, previous_transition=None):
     """Whitelist task data plus one fixed coarse result; never include logs/scores."""
+    if not isinstance(testbench, str) or not testbench.strip():
+        raise ValueError('A nonempty target testbench or module context is required.')
     for side, source in (("generated", generated_assertion), ("reference", reference_assertion)):
         if trees[side].get("source_assertion") != source:
             raise ValueError(f"The {side} tree does not belong to the current source assertion.")
-    data = dict(requirement=requirement,
+    data = dict(requirement=requirement, testbench=testbench,
                 generated_tree=compact_tree(trees['generated']),
                 reference_assertion=reference_assertion,
                 evaluation_feedback=evaluation_feedback(evaluation_status))

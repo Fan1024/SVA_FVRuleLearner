@@ -147,6 +147,7 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
                     stage = "generation"
                     generation_inputs = {
                         "requirement": inputs["requirement"],
+                        "testbench": inputs["testbench"],
                         "examples": example_cases, "previous_assertion": previous_assertion,
                         "previous_round": previous_round, "selector_guidance": latest_selector_guidance,
                         "previous_evaluation": evaluation_feedback((record.get('formal') or {}).get('status')),
@@ -288,7 +289,7 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
                     stage = "rule_selection"
                     run_io.update_run(directory, record, stage=stage)
                     prompt = selector.build_selector_prompt(
-                        inputs["requirement"], None, tree,
+                        inputs["requirement"], inputs["testbench"], tree,
                         record["retrieved_rule_bank"], evaluation_status=status,
                         previous_transition=last_transition(record['round_evidence'], generated_assertion, status))
                     evidence["selector_checker_status"] = status
