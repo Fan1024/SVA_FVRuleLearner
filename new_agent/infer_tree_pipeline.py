@@ -10,6 +10,7 @@ from pathlib import Path
 import sys
 from tempfile import TemporaryDirectory
 from new_agent.model_gateway import ModelGateway
+from new_agent.model_output_schemas import INFERENCE_SELECTION
 from new_agent import config, formal_check, model_io, run_io
 from new_agent import tree_archive
 from new_agent.revision_context import reconsider_repeat, evaluate_once, last_transition, retain_checker_failure
@@ -290,7 +291,8 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
                         response = model_io.request_text(
                             client=client, model=config.RULE_MODEL,
                             instructions=selector.SYSTEM_PROMPT, user_prompt=prompt,
-                            json_output=True, usage_callback=capture_usage)
+                            json_output=True, usage_callback=capture_usage,
+                            output_schema=INFERENCE_SELECTION)
                     evidence["selector_raw_response"] = response
                     run_io.save_debug_event(directory, record, "selector_response", raw_response=response)
                     stage = "selector_response_format"

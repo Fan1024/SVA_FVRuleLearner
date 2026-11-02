@@ -57,6 +57,7 @@ def validate_config() -> None:
             raise ValueError(f"{name} must be a nonempty model name.")
     for model in active_models().values():
         model_gateway.model_settings(model)
+    model_gateway.validate_runtime(active_models().values())
     timeout = config.JASPER_TIMEOUT_SECONDS
     if type(timeout) not in (int, float) or not isfinite(timeout) or timeout <= 0:
         raise ValueError("JASPER_TIMEOUT_SECONDS must be a finite positive number.")

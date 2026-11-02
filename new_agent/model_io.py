@@ -1,16 +1,21 @@
-"""Shared OpenAI transport and output parsing for both experiment stages."""
+"""Shared model transport and output parsing for both experiment stages."""
 
 import json
 import re
 
 
 def request_text(client, model: str, instructions: str, user_prompt: str, *,
-                 json_output: bool = False, usage_callback=None) -> str:
+                 json_output: bool = False, usage_callback=None, output_schema=None) -> str:
     """Save provider usage even if a response is incomplete or invalid."""
     if json_output:
         # JSON mode validates input separately from the system instructions.
         user_prompt = "Return only a valid JSON object.\n\n" + user_prompt
     options = {"text": {"format": {"type": "json_object"}}} if json_output else {}
+    if output_schema is not None:
+        # Gateway-only metadata: it is never appended to either prompt string.
+        if not json_output:
+            raise ValueError('An output schema requires JSON output mode.')
+        options['output_schema'] = output_schema
     response = client.responses.create(
         model=model, instructions=instructions, input=user_prompt, **options,
     )

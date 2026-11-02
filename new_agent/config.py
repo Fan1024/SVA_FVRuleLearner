@@ -39,15 +39,33 @@ ASSERTION_MODEL = "gpt-5.6-terra"
 RULE_MODEL = "gpt-5.6-terra"
 # RULE_MODEL runs training diagnosis/rules and inference selection.
 
-# Official API routing is inferred from these unchanged model-ID settings.
-# Enabled alternatives: "kimi-k3.1-pro", "kimi-k3.1-pro-highspeed",
-# "deepseek-v4-pro", "deepseek-flash". Claude is excluded because its
-# compatibility endpoint rejects the required JSON-object output mode.
-# Keys: OPENAI_API_KEY, MOONSHOT_API_KEY, DEEPSEEK_API_KEY, as applicable.
-# None preserves provider defaults (and the existing OpenAI request).
-# For a controlled comparison, set both options explicitly for every model;
-# "high" and 32768 are accepted by all enabled comparison routes.
+# Enabled model IDs and API keys:
+#   gpt-5.6-terra                         -> OPENAI_API_KEY
+#   kimi-k3.1-pro / kimi-k3.1-pro-highspeed -> MOONSHOT_API_KEY
+#   deepseek-v4-pro / deepseek-flash       -> DEEPSEEK_API_KEY
+#   claude-sonnet-5-5 / claude-opus-5-5    -> ANTHROPIC_API_KEY
+# Claude uses the native Messages API; install: pip install --upgrade "anthropic>=1.0"
+# Optional ANTHROPIC_WORKSPACE_ID selects a workspace for unscoped Claude keys.
+
+# MODEL_REASONING_EFFORT accepts the following values (no silent remapping):
+#   gpt-5.6-terra: None, "none", "low", "medium", "high", "xhigh", "max"
+#       API keyword: reasoning={"effort": value}; provider default: "medium".
+#   kimi-k3.1-pro / kimi-k3.1-pro-highspeed: None, "low", "high", "max"
+#       API keyword: reasoning_effort=value; provider default: "max".
+#   deepseek-v4-pro / deepseek-flash: None, "low", "high", "max"
+#       API keyword: reasoning_effort=value, plus thinking={"type":"enabled"}
+#       in extra_body when effort is explicit; provider default: "high".
+#   claude-sonnet-5-5 / claude-opus-5-5: None, "low", "medium", "high", "xhigh", "max"
+#       API keyword: output_config={"effort": value}; defaults: Sonnet "high", Opus "medium".
+# None omits the effort field. The string "none" is only enabled for Terra.
+# "high" is supported across the listed models, but does not mean equal compute.
 MODEL_REASONING_EFFORT = None
+
+# MODEL_MAX_OUTPUT_TOKENS is a positive integer within the provider's limit:
+#   OpenAI -> max_output_tokens; Kimi -> max_completion_tokens;
+#   DeepSeek -> max_tokens; native Claude -> max_tokens.
+# None omits the limit for OpenAI/Kimi/DeepSeek. Claude REQUIRES an explicit value.
+# 32768 is a common comparison cap, including thinking and final-answer tokens.
 MODEL_MAX_OUTPUT_TOKENS = None
 
 # Total assertion attempts: 10 = initial generation + at most nine revisions.
