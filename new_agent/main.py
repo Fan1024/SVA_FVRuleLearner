@@ -15,23 +15,32 @@ from new_agent import config, dataset_loader, formal_check, run_io
 
 
 def select_workflow():
-    """Select the independent training or inference tree workflow."""
+    """Select the independent training, retrieval-inference or inference-only loop."""
     if config.MODE == "train":
         from new_agent.train_tree_pipeline import run_training_pipeline
         return run_training_pipeline
+    if config.MODE == "inference_only":
+        from new_agent.inference_only_pipeline import run_inference_only_pipeline
+        return run_inference_only_pipeline
     from new_agent.infer_tree_pipeline import run_inference_pipeline
     return run_inference_pipeline
 
 
 def validate_config() -> None:
     """Check active settings once, before creating a run or making API calls."""
-    if config.MODE not in {"train", "inference"}:
-        raise ValueError('MODE must be "train" or "inference".')
+    if config.MODE not in {"train", "inference", "inference_only"}:
+        raise ValueError('MODE must be "train", "inference" or "inference_only".')
     if config.MODE == "inference":
         if type(config.TOP_K_CASES) is not int or config.TOP_K_CASES < 1:
             raise ValueError("TOP_K_CASES must be a positive integer.")
         if not isinstance(config.EMBEDDING_MODEL, str) or not config.EMBEDDING_MODEL.strip():
             raise ValueError("EMBEDDING_MODEL must be a nonempty model name.")
+    if config.MODE == "inference_only":
+        ids = config.INFERENCE_ONLY_CASE_IDS
+        if not isinstance(ids, list) or any(type(n) is not int or n < 1 for n in ids) or len(set(ids)) != len(ids):
+            raise ValueError("INFERENCE_ONLY_CASE_IDS must be a list of unique positive integers.")
+        from new_agent.inference_only_examples import get_examples
+        get_examples(config.DATASET)
     if not isinstance(config.DATASET, str) or not config.DATASET.strip():
         raise ValueError("DATASET must be a nonempty dataset name.")
     if config.DATASET not in {"nl2sva_human", "nl2sva_machine", "nl2sva_opencore"}:
@@ -77,7 +86,7 @@ def main() -> int:
     validate_config()
     validate_credentials()
     policy = formal_check.get_evaluation_policy(config.DATASET)
-    phase = "train" if config.MODE == "train" else "infer"
+    phase = {"train": "train", "inference": "infer", "inference_only": "inference_only"}[config.MODE]
     source_dir = source_metadata = retriever = None
     dataset_split = None
     if phase == "train":
@@ -85,6 +94,10 @@ def main() -> int:
             config.DATASET_PATH, config.TRAIN_CASE_IDS,
             train_fraction=config.TRAIN_FRACTION, split_seed=config.SPLIT_SEED,
         )
+    elif phase == "inference_only":
+        cases = dataset_loader.load_cases(config.DATASET_PATH, config.INFERENCE_ONLY_CASE_IDS)
+        print("Inference-only: three fixed examples; no training run or retrieval.", flush=True)
+        print("Selected case IDs:", [case["case_number"] for case in cases], flush=True)
     else:
         dataset_path = dataset_loader.resolve_dataset_path(config.DATASET_PATH)
         source_dir, source_metadata = run_io.select_training_run(
@@ -110,6 +123,8 @@ def main() -> int:
               f"{len(retriever.excluded_unpassed_case_ids)} unpassed cases excluded.", flush=True)
     dataset_path = Path(cases[0]["dataset_path"])
     models = {"assertion": config.ASSERTION_MODEL, "rule": config.RULE_MODEL}
+    if phase == "inference_only":
+        models = {"assertion": config.ASSERTION_MODEL, "diagnosis": config.RULE_MODEL}
     from new_agent.pec_context_adapter import context_mode, VERSION as PEC_CONTEXT_VERSION
     from new_agent.diagnosis_context import DIAGNOSIS_CATEGORIES
     settings = {
@@ -130,7 +145,7 @@ def main() -> int:
         "round_policy": "pec_or_bleu_or_max_rounds",
         "pec_compile_error_policy": "block_on_native_pec_compile_failure",
         "case_ids": ([case["case_number"] for case in cases]
-                     if phase == "infer" else list(config.TRAIN_CASE_IDS)),
+                     if phase != "train" else list(config.TRAIN_CASE_IDS)),
         "dataset_split": dataset_split,
         "max_rounds": config.MAX_ROUNDS,
         "timeout_seconds": config.JASPER_TIMEOUT_SECONDS,
@@ -173,12 +188,30 @@ def main() -> int:
             source_rules_sha256=retriever.sha256,
         )
 
+    if phase == "inference_only":
+        from new_agent.inference_only_examples import get_examples, VERSION as EXAMPLES_VERSION
+        fixed_examples = get_examples(config.DATASET)
+        settings.update(
+            inference_workflow="requirement_tb_diagnosis_no_retrieval",
+            inference_diagnosis_model=config.RULE_MODEL,
+            inference_feedback="latest_requirement_parts_categories_located_corrections",
+            inference_retrieval="disabled", example_source="fixed_handwritten",
+            fixed_examples_version=EXAMPLES_VERSION,
+            fixed_example_ids=[example["id"] for example in fixed_examples],
+            inference_case_selection="explicit_ids_or_entire_dataset_no_split",
+            tree_reference_enabled=False,
+        )
+
     # 2. Create one experiment containing shared summaries and separate case folders.
     experiment_dir = run_io.create_experiment(
         dataset=config.DATASET, dataset_path=dataset_path, cases=cases,
         models=models, settings=settings, runs_root=config.RUNS_DIR,
         phase=phase, source_training_run=source_dir,
     )
+    if phase == "inference_only":
+        import json
+        run_io._atomic_write(experiment_dir / "fixed_examples.json",
+                             json.dumps(fixed_examples, ensure_ascii=False, indent=2) + "\n")
     print("Dataset:", dataset_path)
     print("Evaluation scope:", policy["scope"])
     if phase == "infer":
@@ -246,6 +279,7 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
 
 
 

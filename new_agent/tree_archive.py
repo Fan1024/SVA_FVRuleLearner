@@ -30,21 +30,23 @@ def _write(directory, record):
     record['tree_file'] = str(path.relative_to(root))
 
 
-def record_generated(directory, record, round_number, generated):
+def record_generated(directory, record, round_number, generated, *, include_reference=True):
     """Write immediately after extraction, including initial success/final round."""
     inputs = record['inputs']
-    if '_tree_reference' not in record:
+    if include_reference and '_tree_reference' not in record:
         record['_tree_reference'] = build(inputs['reference_assertion'], 'R')
     generated_tree = build(generated, 'G')
     archive = record.setdefault('_tree_archive', {
         'case': {key: inputs[key] for key in ('case_number', 'design_name', 'task_id')},
-        'reference': inspection_tree(record['_tree_reference']),
         'rounds': [],
     })
+    if include_reference:
+        archive['reference'] = inspection_tree(record['_tree_reference'])
     archive['rounds'].append({'round': round_number,
                               'generated': inspection_tree(generated_tree)})
     _write(directory, record)
-    return {'reference': record['_tree_reference'], 'generated': generated_tree}
+    return {**({'reference': record['_tree_reference']} if include_reference else {}),
+            'generated': generated_tree}
 
 
 def finish_round(directory, record, round_number, evidence):
@@ -62,4 +64,5 @@ def finish_round(directory, record, round_number, evidence):
         entry['evaluation'] = {key: evaluation.get(key) for key in
                                ('status', 'accepted', 'acceptance_reason', 'bleu')}
     _write(directory, record)
+
 

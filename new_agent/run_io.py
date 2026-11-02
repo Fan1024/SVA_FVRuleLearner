@@ -191,8 +191,8 @@ def create_run(case_id: str, runs_root=None, *, phase: str | None = None) -> Pat
     """Create a timestamped directory, optionally labeled Train or Infer."""
     if not re.fullmatch(r"[A-Za-z0-9_-]+", case_id):
         raise ValueError("case_id must contain only letters, digits, _ or -.")
-    if phase not in (None, "train", "infer"):
-        raise ValueError("phase must be 'train' or 'infer'.")
+    if phase not in (None, "train", "infer", "inference_only"):
+        raise ValueError("phase must be 'train', 'infer' or 'inference_only'.")
     root = (
         Path(runs_root).expanduser().resolve()
         if runs_root is not None
@@ -200,7 +200,7 @@ def create_run(case_id: str, runs_root=None, *, phase: str | None = None) -> Pat
     )
     root.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now(RUN_TIMEZONE).strftime("%Y%m%d_%H%M%S_%fZ")
-    prefix = f"{phase.title()}_" if phase else ""
+    prefix = "InferOnly_" if phase == "inference_only" else f"{phase.title()}_" if phase else ""
     directory = root / f"{prefix}{timestamp}_{case_id}"
     directory.mkdir()
     return directory
@@ -211,17 +211,17 @@ def create_experiment(
     settings: dict, runs_root=None, phase: str = "train", source_training_run=None,
 ) -> Path:
     """Create one batch directory and save its resolved inputs/selection once."""
-    if phase not in ("train", "infer"):
-        raise ValueError("phase must be 'train' or 'infer'.")
+    if phase not in ("train", "infer", "inference_only"):
+        raise ValueError("phase must be 'train', 'infer' or 'inference_only'.")
     requires_source = phase == "infer"
     if requires_source != (source_training_run is not None):
-        raise ValueError("Inference requires a source training run; training does not accept one.")
+        raise ValueError("Retrieval inference requires a training run; other modes do not accept one.")
     directory_label = re.sub(r"[^A-Za-z0-9_-]+", "_", dataset).strip("_") or "dataset"
     directory = create_run(directory_label, runs_root=runs_root, phase=phase)
     metadata = {
         "output_format_version": 4,
         "phase": phase,
-        "mode": settings.get("mode", "inference" if phase == "infer" else "train"),
+        "mode": settings.get("mode", "inference" if phase == "infer" else phase),
         "dataset": dataset,
         "dataset_path": str(dataset_path),
         "dataset_sha256": hashlib.sha256(Path(dataset_path).read_bytes()).hexdigest(),
@@ -344,7 +344,10 @@ def finish_experiment(experiment_dir, exit_code: int, *, elapsed_seconds=None) -
     else:
         print(f"Cases recorded: {len(scores)} | Passed: {metadata['cases_passed']}")
     print("Evaluation:", directory / "evaluation.csv")
-    print("Learning evidence:", directory / "learned_rules.jsonl")
+    if metadata.get("phase") == "inference_only":
+        print("Diagnosis evidence:", directory / "diagnoses.jsonl")
+    else:
+        print("Learning evidence:", directory / "learned_rules.jsonl")
     return exit_code
 
 
@@ -402,7 +405,7 @@ def final_record(record: dict) -> dict:
     saved["round_failures"] = record.get("round_failures", [])
     saved["round_metrics"] = record.get("round_metrics", [])
     saved["phase"] = record["settings"].get("phase", "train")
-    saved["mode"] = record["settings"].get("mode", "inference" if saved["phase"] == "infer" else "train")
+    saved["mode"] = record["settings"].get("mode", "inference" if saved["phase"] == "infer" else saved["phase"])
     saved["retrieved_cases"] = record.get("retrieved_cases", [])
     saved["retrieved_examples"] = record.get("retrieved_examples", [])
     saved["inputs"] = {
@@ -577,6 +580,14 @@ def _debug_event_text(record: dict, event: str, data: dict) -> str:
         return "\nRULE GENERATOR OUTPUT"
     if event == "selector_request":
         return "\nRULE SELECTOR OUTPUT"
+    if event == "inference_only_diagnosis_request":
+        return "\nREQUIREMENT/TB DIAGNOSIS OUTPUT"
+    if event == "inference_only_diagnosis_response":
+        raw = data["raw_response"]
+        try:
+            return json.dumps(json.loads(raw), indent=2, ensure_ascii=False)
+        except ValueError:
+            return raw
     if event == "selector_response":
         raw = data["raw_response"]
         try:
@@ -812,6 +823,15 @@ def save_summaries(summary_dir, record: dict) -> None:
     writer.writerows(rows.values())  # None becomes blank, not a zero score.
     _atomic_write(directory / "evaluation.csv", buffer.getvalue())
 
+    if record["settings"].get("phase") == "inference_only":
+        _update_case_collection(directory / "diagnoses.jsonl", {
+            "case_number": row["case_number"], "design_name": row["design_name"],
+            "task_id": row["task_id"], "requirement": record["inputs"]["requirement"],
+            "passed": record["passed"], "trace_file": record.get("inference_trace_file"),
+            "tree_file": record.get("tree_file"),
+        })
+        return
+
     # Guidance is exported separately from score traces. A passed case does not
     # establish that every individual rule caused the successful revision.
     rule_groups = {}
@@ -1011,6 +1031,7 @@ def print_summary(run_dir, record: dict) -> None:
         print("Evaluation:", Path(run_dir) / "evaluation.csv")
     else:
         print("Result:", Path(run_dir) / "result.json")
+
 
 
 

@@ -1,0 +1,303 @@
+"""Inference-only generation, native evaluation, tree and current-case diagnosis.
+
+No training run, example search, rule bank, embedding model or target reference
+enters either model request. Native evaluation and score policy are reused.
+"""
+from copy import deepcopy
+from contextlib import contextmanager
+import json
+from pathlib import Path
+import sys
+from tempfile import TemporaryDirectory
+from openai import OpenAI
+from new_agent import config, formal_check, model_io, run_io, tree_archive
+from new_agent.revision_context import reconsider_repeat, evaluate_once, last_transition, retain_checker_failure
+from new_agent.training_prompt_context import evaluation_feedback
+from new_agent.pipeline import _failed_round, _remember_round_error
+
+
+def _previous_transition(record, assertion, status):
+    transition = last_transition(record['round_evidence'], assertion, status)
+    if transition is not None:
+        previous = record['round_evidence'][-2]
+        guidance = previous.get('inference_only_guidance')
+        if guidance is not None:
+            from new_agent.inference_only_diagnosis import generator_view
+            transition['previous_guidance'] = generator_view(
+                guidance, transition['before_assertion'], previous['round'])
+    return transition
+
+
+@contextmanager
+def _save_inference_only_trace(directory, record, round_number):
+    try:
+        yield
+    finally:
+        evidence = next((row for row in reversed(record['round_evidence'])
+                         if row['round'] == round_number), {})
+        tree_archive.finish_round(directory, record, round_number, evidence)
+        entry = {key: deepcopy(evidence[key]) for key in (
+            'round', 'generated_assertion', 'evaluation', 'diagnosis_from_round',
+            'guidance_payload', 'generation_prompts', 'diagnosis_prompt',
+            'diagnosis_raw_response', 'inference_only_diagnosis', 'inference_only_guidance',
+            'pec_input_preparation') if key in evidence}
+        if 'inference_only_diagnosis' not in entry:
+            entry['diagnosis_skipped'] = (
+                'candidate_accepted' if (evidence.get('evaluation') or {}).get('accepted')
+                else record.get('diagnosis_skipped_reason', 'not_run'))
+        errors = [row for row in record.get('round_failures', []) if row['round'] == round_number]
+        if errors:
+            entry['errors'] = errors
+        exception_type, exception, _ = sys.exc_info()
+        if exception_type is not None:
+            entry['interruption'] = {'type': exception_type.__name__, 'message': str(exception)}
+        inputs = record['inputs']
+        document = record.setdefault('_inference_only_trace', {
+            'case': {key: inputs[key] for key in ('case_number', 'design_name', 'task_id')},
+            'rounds': [],
+        })
+        document['rounds'].append(entry)
+        path = Path(directory) / 'inference_only_trace.json'
+        run_io._atomic_write(path, json.dumps(document, ensure_ascii=False, indent=2) + '\n')
+        summary = Path(record.get('summary_directory', directory))
+        record['inference_trace_file'] = str(path.relative_to(summary)) if path.is_relative_to(summary) else str(path)
+
+
+def run_inference_only_pipeline(directory, record: dict, *, retriever=None) -> int:
+    """Stop on PEC/BLEU success or exhaustion of the configured attempt budget.
+
+    Ordinary generation, extraction, checker, diagnosis and rule-output errors
+    are round outcomes. KeyboardInterrupt/SystemExit are deliberately not caught.
+    File-system failures can still prevent reliable recording and must propagate.
+    """
+    if record["settings"].get("phase") != "inference_only":
+        raise ValueError("The inference-only pipeline requires phase=inference_only.")
+    if retriever is not None:
+        raise ValueError("inference_only does not accept a retriever.")
+    from new_agent import inference_only_assertion_generator as assertion_generator
+    from new_agent import inference_only_diagnosis as diagnosis
+    from new_agent.inference_only_examples import get_examples
+    from new_agent.training_prompt_context import statement_template
+    inputs = record["inputs"]
+    policy = formal_check.get_evaluation_policy(inputs.get("dataset", config.DATASET))
+    template = statement_template(inputs.get("dataset", config.DATASET))
+    record["settings"].update(
+        inference_workflow="requirement_tb_diagnosis_no_retrieval",
+        inference_feedback="latest_requirement_parts_categories_located_corrections",
+        inference_example_source="three_fixed_handwritten_examples",
+        inference_retrieval="disabled",
+    )
+    example_cases = get_examples(inputs.get("dataset", config.DATASET))
+    previous_assertion = None
+    client = None
+    latest_diagnosis_guidance = None
+    latest_diagnosis_round = None
+    previous_round = None
+
+    for round_number in range(1, config.MAX_ROUNDS + 1):
+        with _save_inference_only_trace(directory, record, round_number):
+            run_io.start_usage_round(record, round_number)
+            # Record the feedback source before start_attempt writes its debug event.
+            record["inference_feedback_round"] = latest_diagnosis_round
+            # A failed call before extraction must never associate old text with new scores.
+            attempt = run_io.start_attempt(
+                directory, record, round_number,
+                system_prompt=assertion_generator.SYSTEM_PROMPT,
+                user_prompt="", rules=[],
+            )
+            evidence = record["round_evidence"][-1]
+            evidence.pop("rules_used", None)
+            evidence.pop("rules_generated", None)
+            evidence["diagnosis_from_round"] = latest_diagnosis_round
+            # Persistent formal diagnostics disabled. To restore later, import
+            # nullcontext from contextlib, restore check_dir below, and replace
+            # TemporaryDirectory with nullcontext(str(check_dir)). Also restore
+            # persistent paths/cleanup at the marked block below.
+            # check_dir = Path(directory) / "formal_rounds" / f"round_{round_number:04d}"
+            # check_dir.mkdir(parents=True, exist_ok=False)
+            with TemporaryDirectory(prefix="fv_formal_round_", ignore_cleanup_errors=True) as temporary_check_dir:
+                check_dir = Path(temporary_check_dir)
+                generated_assertion = None
+                stage = "generation"
+                try:
+                    stage = "generation"
+                    generation_inputs = {
+                        "requirement": inputs["requirement"], "testbench": inputs["testbench"],
+                        "examples": example_cases, "previous_assertion": previous_assertion,
+                        "previous_round": previous_round, "diagnosis_guidance": latest_diagnosis_guidance,
+                        "previous_evaluation": evaluation_feedback((record.get('formal') or {}).get('status')),
+                        "assertion_template": template,
+                    }
+                    user_prompt = assertion_generator.build_generation_prompt(**generation_inputs)
+                    evidence['guidance_payload'] = deepcopy(latest_diagnosis_guidance)
+                    run_io.save_debug_event(directory, record, 'guidance_context',
+                                            source_round=latest_diagnosis_round,
+                                            payload=latest_diagnosis_guidance)
+                    # Only the latest diagnosis response is used. No assertion history,
+                    # old rules, native logs, scores or reference enters this prompt.
+                    latest_diagnosis_guidance = latest_diagnosis_round = None
+                    attempt["prompts"]["user"] = user_prompt
+                    run_io.update_run(directory, record, stage=stage)
+                    if client is None:
+                        client = OpenAI()
+                    with run_io.measure_stage(record, "assertion") as capture_usage:
+                        response_text = model_io.request_text(
+                            client=client, model=config.ASSERTION_MODEL,
+                            instructions=assertion_generator.SYSTEM_PROMPT, user_prompt=user_prompt,
+                            usage_callback=capture_usage,
+                        )
+                    attempt["generation"]["raw_response"] = response_text
+                    run_io.save_debug_event(directory, record, "assertion_response", raw_response=response_text)
+                    stage = "extraction"
+                    run_io.update_run(directory, record, stage=stage)
+                    generated_assertion = model_io.extract_assertion(response_text)
+                    response_text, generated_assertion = reconsider_repeat(
+                        directory=directory, record=record, attempt=attempt,
+                        assertion=generated_assertion, response_text=response_text,
+                        user_prompt=user_prompt, instructions=assertion_generator.SYSTEM_PROMPT,
+                        client=client, model=config.ASSERTION_MODEL)
+                    attempt['generation']['raw_response'] = response_text
+                    evidence['generation_prompts'] = deepcopy(attempt['prompts'])
+                    attempt["generation"]["assertion"] = generated_assertion
+                    record["round_evidence"][-1]["generated_assertion"] = generated_assertion
+                    previous_assertion = generated_assertion
+                    previous_round = round_number
+                    stage = "formal_check"
+                    run_io.update_run(directory, record, stage=stage)
+                    with run_io.measure_stage(record, "tool"):
+                        formal_result = evaluate_once(record, round_number,
+                            generated_assertion=generated_assertion,
+                            reference_assertion=inputs["reference_assertion"],
+                            testbench=inputs["testbench"], requirement=inputs["requirement"],
+                            run_dir=check_dir, timeout_seconds=config.JASPER_TIMEOUT_SECONDS,
+                            task_id=inputs["task_id"], dataset=inputs.get("dataset", config.DATASET),
+                            model_name=config.ASSERTION_MODEL,
+                        )
+                except Exception as error:
+                    _remember_round_error(directory, record, round_number, stage, error)
+                    status = {"generation": "GENERATION_ERROR", "extraction": "FORMAT_ERROR"}.get(stage, "TOOL_ERROR")
+                    formal_result = _failed_round(
+                        check_dir, round_number, status, f"{stage}: {type(error).__name__}: {error}", policy,
+                    )
+
+                # Persistent diagnostics disabled: the surrounding temporary-directory
+                # context owns every native tool file, including failures/interruption.
+                # Comment out this block when restoring persistent formal diagnostics.
+                retain_checker_failure(directory, record, round_number, formal_result)
+                formal_result["log_path"] = formal_result["input_path"] = None
+                formal_result["cleanup"] = {
+                    "retained": False,
+                    "reason": "Temporary native work removed; small checker-failure diagnostics retained when tracing is enabled.",
+                }
+                formal_check.apply_acceptance_policy(formal_result)
+                run_io.record_formal_result(directory, record, attempt, formal_result)
+                # Build inspection trees after native SYN/PEC evaluation, even on failure.
+                # Tree/archive errors must never replace an obtained tool verdict.
+                inspection_trees = None
+                if generated_assertion is not None:
+                    stage = "tree_recording"
+                    try:
+                        with run_io.measure_stage(record, "diagnosis") as capture_tree_usage:
+                            inspection_trees = tree_archive.record_generated(
+                                directory, record, round_number, generated_assertion, include_reference=False)
+                            capture_tree_usage({"input_tokens": 0, "output_tokens": 0})
+                    except Exception as error:
+                        _remember_round_error(directory, record, round_number, stage, error)
+                if formal_result.get("pec_input_preparation") is not None:
+                    record["round_evidence"][-1]["pec_input_preparation"] = formal_result["pec_input_preparation"]
+                run_io.update_run(directory, record, stage="cleanup")
+                run_io.cleanup_formal_work(directory, record, formal_check.cleanup_work)
+                status = formal_result["status"]
+                pec_pass = formal_result["acceptance_reason"] == "pec"
+                passed = formal_result["accepted"]
+                print(f"Round {round_number}/{config.MAX_ROUNDS}: {status} | "
+                      f"PEC={formal_result.get('pec')} | BLEU={formal_result.get('bleu')}", flush=True)
+                if passed:
+                    run_io.update_run(
+                        directory, record, status="PASSED", passed=True, stage="finished",
+                        stop_reason="passed" if pec_pass else "bleu_match",
+                        diagnosis_skipped_reason=(
+                            "The supplied PEC checker reported full equivalence."
+                            if pec_pass else
+                            "BLEU is 1.0; accepted under FVRuleLearner's PEC-or-BLEU policy. "
+                            "Reported PEC and relaxed PEC are 1.0; raw scores remain in raw_scores/native_metrics."
+                        ),
+                    )
+                    return 0
+
+                if status == 'PEC_COMPILE_ERROR':
+                    run_io.update_run(
+                        directory, record, status='BLOCKED_PEC_COMPILE', passed=False,
+                        stage='finished', stop_reason='pec_compile_error',
+                        diagnosis_skipped_reason='Native PEC compilation failed; no semantic verdict. '
+                                                 'Inspect native diagnostics before assertion revision.')
+                    return 1
+
+                # No detailed checker feedback is sent to assertion generation.
+                if round_number == config.MAX_ROUNDS:
+                    run_io.update_run(directory, record, diagnosis_skipped_reason="Round budget exhausted.")
+                    continue
+                if inspection_trees is None:
+                    run_io.update_run(directory, record,
+                                      diagnosis_skipped_reason="Tree archive unavailable after evaluation.")
+                    continue
+                if status not in {"IMPLIES", "NO_EQUIVALENCE", "SYNTAX_ERROR"}:
+                    run_io.update_run(
+                        directory, record,
+                        diagnosis_skipped_reason="No eligible comparison outcome; retry assertion generation without diagnosis guidance.",
+                    )
+                    continue
+
+                stage = "diagnosis"
+                try:
+                    tree = inspection_trees["generated"]
+                    evidence = record["round_evidence"][-1]
+                    evidence["generated_tree"] = tree
+                    run_io.update_run(directory, record, stage=stage)
+                    prompt = diagnosis.build_diagnosis_prompt(
+                        inputs["requirement"], inputs["testbench"], generated_assertion,
+                        tree=tree, evaluation_status=status,
+                        previous_transition=_previous_transition(record, generated_assertion, status))
+                    evidence["diagnosis_prompt"] = prompt
+                    run_io.save_debug_event(directory, record, "inference_only_diagnosis_request")
+                    with run_io.measure_stage(record, "diagnosis") as capture_usage:
+                        response = model_io.request_text(
+                            client=client, model=config.RULE_MODEL,
+                            instructions=diagnosis.SYSTEM_PROMPT, user_prompt=prompt,
+                            json_output=True, usage_callback=capture_usage)
+                    evidence["diagnosis_raw_response"] = response
+                    run_io.save_debug_event(directory, record, "inference_only_diagnosis_response", raw_response=response)
+                    stage = "diagnosis_format"
+                    output = diagnosis.parse_response(response, tree, inputs["testbench"])
+                    evidence["inference_only_diagnosis"] = deepcopy(output)
+                    latest_diagnosis_guidance = diagnosis.make_generator_guidance(
+                        output, generated_assertion, source_round=round_number)
+                    latest_diagnosis_round = round_number
+                    evidence["inference_only_guidance"] = deepcopy(latest_diagnosis_guidance)
+                    run_io.update_run(directory, record, diagnosis=output,
+                                      diagnosis_model=config.RULE_MODEL)
+                    run_io.save_diagnosis_model(record, config.RULE_MODEL)
+                    print(f"Round {round_number}: {len(output['requirement_parts'])} requirement parts; "
+                          f"{len(output['corrections'])} located corrections.", flush=True)
+                except Exception as error:
+                    latest_diagnosis_guidance = latest_diagnosis_round = None
+                    _remember_round_error(directory, record, round_number, stage, error)
+                    run_io.update_run(directory, record,
+                        diagnosis_skipped_reason="Diagnosis unavailable; next attempt independently reviews the task.")
+                continue
+
+    # No earlier pass is possible here. Keep the latest attempt and its scores.
+    last = record["formal"]
+    resolved = last["status"] in {"IMPLIES", "NO_EQUIVALENCE", "SYNTAX_ERROR", "FORMAT_ERROR", "PEC_COMPILE_ERROR"} or (
+        last["status"] == "INPUT_ERROR" and last.get("error_origin") == "candidate"
+    )
+    run_io.update_run(
+        directory, record, status="COMPLETED" if resolved else "CHECKER_UNRESOLVED",
+        passed=False, stage="finished", stop_reason="max_rounds",
+    )
+    return 0 if resolved else 1
+
+
+
+
+

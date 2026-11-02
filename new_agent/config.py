@@ -4,6 +4,7 @@ from pathlib import Path
 
 # "train": learn rules on selected training cases.
 # "inference": exclude source training cases and retrieve learned rules.
+# "inference_only": three fixed examples and current-case diagnosis; no retrieval.
 # Launch every mode with python main.py.
 MODE = "train"
 
@@ -22,6 +23,10 @@ DATASET_PATH = (
 # These numbers are not physical CSV line numbers or source task_id values.
 TRAIN_CASE_IDS = []
 
+# Used only by MODE = "inference_only". [] runs the entire dataset without a
+# train/test split or training-run dependency; [1, 32] selects specific cases.
+INFERENCE_ONLY_CASE_IDS = []
+
 # Used only when TRAIN_CASE_IDS = []. The remainder is reserved for inference.
 # Training count = int(total cases * TRAIN_FRACTION); both parts must be nonempty.
 TRAIN_FRACTION = 0.8
@@ -32,6 +37,7 @@ SPLIT_SEED = 100
 # Models for the two generation components. Jev uses its service default.
 ASSERTION_MODEL = "gpt-5.6-terra"
 RULE_MODEL = "gpt-5.6-terra"
+# In inference_only, RULE_MODEL runs the requirement/TB diagnosis component.
 
 # Total assertion attempts: 10 = initial generation + at most nine revisions.
 MAX_ROUNDS = 10
@@ -72,6 +78,7 @@ PEC_CONTEXT_MODULE = None
 
 # Pyslang establishes SVA grouping. Unsupported translations use original source.
 ASSERTION_TREE_PARSER = "pyslang"
+
 
 
 
