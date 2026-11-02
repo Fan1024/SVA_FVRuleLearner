@@ -3,6 +3,7 @@
 import csv
 import hashlib
 import json
+from math import isclose
 from pathlib import Path
 
 
@@ -190,12 +191,33 @@ class RuleRetriever:
         return selected
 
     def retrieve_examples(self, requirement: str) -> list[dict]:
-        """Return up to three accepted generated pairs; never substitute a golden assertion."""
+        """Return up to three diverse accepted pairs from the full ranked pool.
+
+        Keep one example per numerical similarity tie, requirement text and
+        generated-assertion token sequence. Never fill a short pool with repeats.
+        """
         if not self.examples:
             return []
         query = self.model.encode([requirement])
         scores = self._cosine_similarity(query, self.example_embeddings)[0]
         order = sorted(range(len(scores)), key=lambda i: (-float(scores[i]), self.examples[i]["case_number"]))
-        return [{**self.examples[i], "similarity": float(scores[i])} for i in order[:3]]
+        from new_agent.pec_input_adapter import _tokens
+        selected, seen_requirements, seen_assertions, selected_scores = [], set(), set(), []
+        for i in order:
+            case = self.examples[i]
+            score = float(scores[i])
+            requirement_key = ' '.join(case['requirement'].split())
+            assertion_key = tuple(token.text for token in _tokens(case['solved_assertion']))
+            if (requirement_key in seen_requirements or assertion_key in seen_assertions
+                    or any(isclose(score, previous, rel_tol=0.0, abs_tol=1e-8)
+                           for previous in selected_scores)):
+                continue
+            selected.append({**case, 'similarity': score})
+            seen_requirements.add(requirement_key)
+            seen_assertions.add(assertion_key)
+            selected_scores.append(score)
+            if len(selected) == 3:
+                break
+        return selected
 
 

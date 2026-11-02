@@ -699,11 +699,16 @@ def record_formal_result(run_dir, record: dict, attempt: dict, formal: dict) -> 
     """Publish matching assertion/verdict fields and append compact round scores."""
     # Native similarity and policy-adjusted formal scores are supplied by the
     # evaluation layer. Never recompute or overwrite them here.
+    from new_agent.tool_feedback import compact_tool_feedback, POLICY_VERSION
+    dataset = record['inputs'].get('dataset', record['settings'].get('dataset', 'nl2sva_human'))
+    formal['tool_feedback'] = compact_tool_feedback(formal, dataset)
+    record['settings']['tool_feedback_policy'] = POLICY_VERSION
     metric = {"round": attempt["round"], "status": formal["status"]}
     for name in SCORE_FIELDS:
         metric[name] = formal.get(name)  # Unavailable scores remain None.
     record["round_evidence"][-1]["evaluation"] = {
         **metric,
+        "tool_feedback": deepcopy(formal['tool_feedback']),
         "raw_scores": deepcopy(formal.get("raw_scores", {})),
         "accepted": formal.get("accepted", False),
         "acceptance_reason": formal.get("acceptance_reason"),

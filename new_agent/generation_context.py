@@ -1,5 +1,8 @@
 """Model-visible generation outcomes without evaluation-policy or oracle text."""
 def outcome(value):
+    if isinstance(value, dict):
+        from new_agent.tool_feedback import feedback_text
+        return feedback_text(value)
     if not isinstance(value, str):
         return 'The previous attempt did not obtain a completed evaluation.'
     text = value.lower()

@@ -4,6 +4,7 @@ import hashlib
 import json
 from new_agent import config
 from new_agent.diagnosis_context import diagnosis_view
+from new_agent.tool_feedback import compact_tool_feedback
 
 MAX_SELECTED_RULES=5  # Compatibility name; configured limits are read per request.
 
@@ -91,6 +92,7 @@ def build_selector_prompt(requirement, testbench, tree, rule_bank, *, evaluation
     }
     data = {'requirement': requirement, 'testbench': testbench,
             'generated_assertion': tree['source_assertion'],
+            'tool_feedback': compact_tool_feedback(evaluation_status),
             'training_guidance': bank, 'selection_limits': limits(),
             'required_selection_counts': required_counts(rule_bank)}
     return TASK_INSTRUCTIONS + '\nINPUT DATA\n' + json.dumps(data, ensure_ascii=False, indent=2)
@@ -114,30 +116,26 @@ def parse_response(raw, tree, rule_bank):
     available = {_diagnosis_key(item) for item in rule_bank.get('diagnoses', [])}
     selected, ranked_diagnoses = set(), []
     for rank, item in enumerate(diagnoses, 1):
-        if not isinstance(item, dict) or set(item) != {'category', 'statement', 'rank', 'reason'}:
-            raise ValueError('Diagnoses use category and statement, with rank and reason; no IDs.')
+        if not isinstance(item, dict) or not {'category', 'statement', 'rank'} <= set(item):
+            raise ValueError('Diagnoses use an existing category and statement, with rank; no IDs.')
         key = _diagnosis_key(item)
         if key not in available or key in selected or item['rank'] != rank:
             raise ValueError('Select existing, distinct diagnoses in consecutive rank order.')
-        if not isinstance(item['reason'], str) or not item['reason'].strip():
-            raise ValueError('Selection needs a short applicability reason.')
         selected.add(key)
         ranked_diagnoses.append({'category': key[0], 'statement': key[1],
-                                  'rank': rank, 'reason': item['reason'].strip()})
+                                  'rank': rank})
     rules = data['ranked_rules']
     if not isinstance(rules, list) or len(rules) != required['rules']:
         raise ValueError(f"Select exactly {required['rules']} existing rules.")
     selected, ranked_rules, available = set(), [], bank_rule_ids(rule_bank)
     for rank, item in enumerate(rules, 1):
-        if not isinstance(item, dict) or set(item) != {'rule_id', 'rank', 'reason'}:
-            raise ValueError('Select existing rule IDs with rank and reason.')
+        if not isinstance(item, dict) or not {'rule_id', 'rank'} <= set(item):
+            raise ValueError('Select existing rule IDs with rank.')
         key = item['rule_id']
         if not isinstance(key, str) or key not in available or key in selected or item['rank'] != rank:
             raise ValueError('Selected rule IDs must exist and be distinct in consecutive rank order.')
-        if not isinstance(item['reason'], str) or not item['reason'].strip():
-            raise ValueError('Selection needs a short applicability reason.')
         selected.add(key)
-        ranked_rules.append(dict(item))
+        ranked_rules.append({'rule_id': key, 'rank': rank})
     return {'ranked_diagnoses': ranked_diagnoses, 'ranked_rules': ranked_rules}
 
 
@@ -157,8 +155,8 @@ def generator_view(guidance,assertion,source_round):
     result = {key:guidance.get(key,[]) for key in ('ranked_diagnoses','ranked_rules')}
     if any(not isinstance(items, list) or not items for items in result.values()):
         raise ValueError('Revision guidance must include both selected diagnoses and selected rules.')
-    fields = {'ranked_diagnoses': ('category', 'statement', 'rank', 'reason'),
-              'ranked_rules': ('rule_id', 'rule', 'rank', 'reason')}
+    fields = {'ranked_diagnoses': ('category', 'statement', 'rank'),
+              'ranked_rules': ('rule_id', 'rule', 'rank')}
     return {name: [{key: item[key] for key in fields[name]} for item in items]
             for name, items in result.items()}
 

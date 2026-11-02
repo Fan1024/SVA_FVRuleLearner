@@ -13,7 +13,7 @@ from openai import OpenAI
 from new_agent import config, formal_check, model_io, run_io
 from new_agent import tree_archive
 from new_agent.revision_context import reconsider_repeat, evaluate_once, last_transition, retain_checker_failure
-from new_agent.training_prompt_context import evaluation_feedback
+from new_agent.tool_feedback import feedback_for_round
 from new_agent.pipeline import (
     _failed_round, _remember_round_error,
 )
@@ -152,7 +152,7 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
                         "assertion_template": policy["assertion_template"],
                         "examples": example_cases, "previous_assertion": previous_assertion,
                         "previous_round": previous_round, "selector_guidance": latest_selector_guidance,
-                        "previous_evaluation": evaluation_feedback((record.get('formal') or {}).get('status')),
+                        "previous_evaluation": feedback_for_round(record['round_evidence'], previous_round),
                     }
                     user_prompt = assertion_generator.build_generation_prompt(**generation_inputs)
                     evidence['guidance_payload'] = deepcopy(latest_selector_guidance)
@@ -280,7 +280,7 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
                     run_io.update_run(directory, record, stage=stage)
                     prompt = selector.build_selector_prompt(
                         inputs["requirement"], inputs["testbench"], tree,
-                        record["retrieved_rule_bank"], evaluation_status=status,
+                        record["retrieved_rule_bank"], evaluation_status=formal_result['tool_feedback'],
                         previous_transition=last_transition(record['round_evidence'], generated_assertion, status))
                     evidence["selector_checker_status"] = status
                     run_io.save_debug_event(directory, record, "selector_request")

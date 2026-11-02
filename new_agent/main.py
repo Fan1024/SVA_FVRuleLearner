@@ -173,6 +173,7 @@ def main() -> int:
         settings.update(
             inference_workflow="existing_diagnosis_and_rule_selection",
             inference_selection_model=config.RULE_MODEL,
+            inference_selector_applicability_reasons=False,
             inference_feedback="latest_ranked_masked_diagnoses_and_rules",
             inference_rule_stages='rank_existing_diagnoses_and_rules_only',
             inference_rule_context='masked_diagnoses_and_rules_only',
@@ -188,7 +189,8 @@ def main() -> int:
             retrieval_passed_cases_only=True,
             retrieval_requires_diagnoses_and_rules=True,
             excluded_missing_guidance_case_ids=list(retriever.excluded_missing_guidance_case_ids),
-            example_retrieval="top_three_accepted_generated_training_pairs_by_requirement_cosine",
+            example_retrieval="top_three_distinct_accepted_generated_training_pairs_by_requirement_cosine",
+            example_diversity="unique_requirement_text_assertion_tokens_and_similarity_abs_tol_1e-8",
             missing_generated_example_case_ids=list(retriever.missing_generated_example_case_ids),
             example_pool_size=len(retriever.examples),
             source_rules_sha256=retriever.sha256,

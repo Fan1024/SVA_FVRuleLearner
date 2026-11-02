@@ -19,19 +19,20 @@ context or copy a placeholder into the target assertion.
 For each list, return min(K, number of available items), using its supplied K.
 The exact counts are supplied in required_selection_counts. Both lists are
 required and nonempty. Rank the two lists independently; no pairing is required.
-Rank weak matches last and state their limits. There is no confidence threshold.
+Rank weak matches last. There is no confidence threshold.
 Selection supplies fallible guidance; the generator decides which rules to apply.
 
 Diagnoses have no IDs: copy an existing category and statement exactly. Select
-corrections by their existing rule IDs. Give one brief relevance reason per item,
-without inventing a target diagnosis. Return only JSON in this format:
+corrections by their existing rule IDs. Output only the existing diagnosis text,
+existing rule IDs and ranks. Do not add applicability reasons, explanations,
+target diagnoses or edit directions. Return only JSON in this format:
 {
   "ranked_diagnoses":[
     {"category":"existing category", "statement":"existing statement",
-     "rank":1, "reason":"Short applicability reason."}
+     "rank":1}
   ],
   "ranked_rules":[
-    {"rule_id":"existing ID", "rank":1, "reason":"Short applicability reason."}
+    {"rule_id":"existing ID", "rank":1}
   ]
 }
 '''

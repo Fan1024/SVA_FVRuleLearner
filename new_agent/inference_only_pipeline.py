@@ -12,7 +12,7 @@ from tempfile import TemporaryDirectory
 from openai import OpenAI
 from new_agent import config, formal_check, model_io, run_io, tree_archive
 from new_agent.revision_context import reconsider_repeat, evaluate_once, retain_checker_failure
-from new_agent.training_prompt_context import evaluation_feedback
+from new_agent.tool_feedback import feedback_for_round
 from new_agent.pipeline import _failed_round, _remember_round_error
 
 
@@ -111,7 +111,7 @@ def run_inference_only_pipeline(directory, record: dict, *, retriever=None) -> i
                         "assertion_template": policy["assertion_template"],
                         "examples": example_cases, "previous_assertion": previous_assertion,
                         "previous_round": previous_round, "diagnosis_guidance": latest_diagnosis_guidance,
-                        "previous_evaluation": evaluation_feedback((record.get('formal') or {}).get('status')),
+                        "previous_evaluation": feedback_for_round(record['round_evidence'], previous_round),
                     }
                     user_prompt = assertion_generator.build_generation_prompt(**generation_inputs)
                     evidence['guidance_payload'] = deepcopy(latest_diagnosis_guidance)
