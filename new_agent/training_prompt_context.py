@@ -1,10 +1,12 @@
-"""Training-only prompt data: full assertion history and coarse tool outcomes.
+"""Training prompt data: assertion history and compact checker feedback.
 
 Never serialize raw formal results into a model request. Evaluation settings,
-metrics, logs and input-extraction policy stay outside the training prompts.
+metrics, full logs and input-extraction policy stay outside the training prompts.
 """
 
-PROMPT_VERSION = "whole_assertion_diagnoses_v8"
+from new_agent.tool_feedback import feedback_for_round
+
+PROMPT_VERSION = "whole_assertion_diagnoses_v9_tool_feedback"
 
 NOT_EQUIVALENT = (
     "JasperGold completed the functional-equivalence comparison. "
@@ -40,7 +42,7 @@ def evaluation_feedback(status):
 
 
 def assertion_history(evidence, *, before_round):
-    """One complete source assertion and one coarse result per earlier round."""
+    """Pair each earlier assertion with its own compact checker feedback."""
     history = []
     seen = set()
     for entry in evidence:
@@ -55,7 +57,7 @@ def assertion_history(evidence, *, before_round):
         history.append({
             "round": number,
             "generated_assertion": source,
-            "evaluation": evaluation_feedback((entry.get("evaluation") or {}).get("status")),
+            "evaluation": feedback_for_round(evidence, number),
         })
     return sorted(history, key=lambda entry: entry["round"])
 

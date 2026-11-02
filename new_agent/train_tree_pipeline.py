@@ -15,6 +15,7 @@ from new_agent import config, formal_check, model_io, run_io
 from new_agent import tree_archive
 from new_agent.revision_context import reconsider_repeat, evaluate_once, last_transition, retain_checker_failure
 from new_agent.correction_locations import feedback_json
+from new_agent.tool_feedback import POLICY_VERSION as TOOL_FEEDBACK_POLICY
 from new_agent.pipeline import (
     _failed_round, _remember_round_error, retained_rules, update_rule_registry,
 )
@@ -105,9 +106,9 @@ def run_training_pipeline(directory, record: dict, *, retriever=None) -> int:
     dataset = inputs.get("dataset", config.DATASET)
     record["settings"].update(
         training_prompt_version=PROMPT_VERSION,
-        training_assertion_history="latest_assertion_coarse_result_repetition_notice",
+        training_assertion_history="latest_assertion_compact_tool_feedback_repetition_notice",
         training_feedback="latest_high_level_diagnoses_located_rules",
-        training_rule_feedback="coarse_reference_equivalence_only",
+        training_rule_feedback=TOOL_FEEDBACK_POLICY,
         training_rule_schema="whole_assertion_diagnoses_v8",
     )
     registry = {}
@@ -255,8 +256,8 @@ def run_training_pipeline(directory, record: dict, *, retriever=None) -> int:
                     )
                     return 0
 
-                # Next-round feedback comes only from whitelisted history outcomes.
-                # Native logs, metrics and evaluation-policy text stay in experiment records.
+                # Forward compact statuses and extracted candidate errors only.
+                # Full logs, metrics and evaluation-policy text stay in experiment records.
                 if round_number == config.MAX_ROUNDS:
                     run_io.update_run(directory, record, diagnosis_skipped_reason="Round budget exhausted.")
                     continue
@@ -292,7 +293,7 @@ def run_training_pipeline(directory, record: dict, *, retriever=None) -> int:
                         testbench=inputs["testbench"],
                         generated_assertion=generated_assertion,
                         reference_assertion=inputs["reference_assertion"], trees=trees,
-                        evaluation_status=status,
+                        evaluation_status=formal_result['tool_feedback'],
                         previous_transition=last_transition(record['round_evidence'], generated_assertion, status),
                     )
                     record["round_evidence"][-1]["rule_prompt"] = rule_prompt

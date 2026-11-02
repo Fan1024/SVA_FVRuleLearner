@@ -1,7 +1,8 @@
 """Requirement-based generation with the latest training correction guidance."""
 import json
 from new_agent.correction_locations import feedback_json
-from new_agent.generation_context import SYSTEM_PROMPT, outcome, output_instruction, testbench_section
+from new_agent.generation_context import SYSTEM_PROMPT, output_instruction, testbench_section
+from new_agent.tool_feedback import feedback_text
 
 
 def build_generation_prompt(requirement, testbench=None, *, assertion_history=None,
@@ -15,7 +16,7 @@ def build_generation_prompt(requirement, testbench=None, *, assertion_history=No
     if history:
         latest=history[-1]
         sections.append('PREVIOUS ASSERTION\n'+latest['generated_assertion'])
-        sections.append('PREVIOUS OUTCOME\n'+outcome(latest.get('evaluation')))
+        sections.append('PREVIOUS TOOL FEEDBACK\n'+feedback_text(latest.get('evaluation')))
         if diagnosis_response is not None:
             if diagnosis_round != latest['round']:
                 raise ValueError('Training guidance must belong to the latest assertion round.')

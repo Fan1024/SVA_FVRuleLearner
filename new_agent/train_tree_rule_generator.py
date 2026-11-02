@@ -5,7 +5,7 @@ import json
 from new_agent import assertion_tree
 from new_agent.diagnosis_context import linked_diagnoses, category_label, interpretation_view
 from new_agent.correction_locations import location_for
-from new_agent.training_prompt_context import evaluation_feedback
+from new_agent.tool_feedback import compact_tool_feedback
 from new_agent.train_tree_rule_prompts import SYSTEM_PROMPT, TASK_INSTRUCTIONS
 
 
@@ -28,7 +28,7 @@ def build_trees(reference_assertion, generated_assertion):
 
 def build_rule_prompt(requirement, generated_assertion, reference_assertion,
                       testbench=None, *, trees, evaluation_status, previous_transition=None):
-    """Whitelist task data plus one fixed coarse result; never include logs/scores."""
+    """Whitelist task data and compact checker feedback; exclude full logs/scores."""
     if not isinstance(testbench, str) or not testbench.strip():
         raise ValueError('A nonempty target testbench or module context is required.')
     for side, source in (("generated", generated_assertion), ("reference", reference_assertion)):
@@ -37,7 +37,7 @@ def build_rule_prompt(requirement, generated_assertion, reference_assertion,
     data = dict(requirement=requirement, testbench=testbench,
                 generated_tree=compact_tree(trees['generated']),
                 reference_assertion=reference_assertion,
-                evaluation_feedback=evaluation_feedback(evaluation_status))
+                tool_feedback=compact_tool_feedback(evaluation_status))
     if previous_transition is not None:
         data['last_revision'] = previous_transition
     return TASK_INSTRUCTIONS + "\nINPUT DATA\n" + json.dumps(data, ensure_ascii=False, indent=2)
