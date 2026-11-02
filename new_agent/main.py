@@ -1,12 +1,12 @@
 """Run training or inference using the settings in new_agent/config.py."""
 
 from functools import partial
-from contextlib import nullcontext
 from math import isfinite
 import os
 from pathlib import Path
 import sys
 from time import perf_counter
+from tempfile import TemporaryDirectory
 
 # Support both python new_agent/main.py and python -m new_agent.main.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -237,8 +237,8 @@ def main() -> int:
     print("Experiment:", experiment_dir)
 
     # 3. Run each selected case with its own revision loop and rule registry.
-    # Retain native initialization diagnostics with the experiment.
-    with nullcontext(str(experiment_dir / "native_logs")) as native_log_dir:
+    # Native initialization files are temporary; experiment results stay separate.
+    with TemporaryDirectory(prefix="fv_native_logs_", ignore_cleanup_errors=True) as native_log_dir:
         exit_code = 0
         try:
             with stage_progress("Formal evaluator initialization"):

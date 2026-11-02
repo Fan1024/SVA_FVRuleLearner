@@ -447,7 +447,8 @@ def final_record(record: dict) -> dict:
     if record["settings"].get("inference_workflow"):
         saved["inference_trace_file"] = record.get("inference_trace_file")
     saved["summary_directory"] = record.get("summary_directory")
-    saved["formal_round_directory"] = record.get("formal_round_directory")
+    if record.get("formal_failure_log"):
+        saved["formal_failure_log"] = record["formal_failure_log"]
     saved['tree_file'] = record.get('tree_file')
     return saved
 
@@ -1030,8 +1031,8 @@ def print_summary(run_dir, record: dict) -> None:
     if record["error"]:
         error = record["error"]
         print(f"Error at {error['stage']}: {error['type']}: {error['message']}")
-    if record.get("formal_round_directory"):
-        print("Formal diagnostics:", record["formal_round_directory"])
+    if record.get("formal_failure_log"):
+        print("Formal failure log:", record["formal_failure_log"])
     if record["trace_error"]:
         print("Trace save error:", record["trace_error"])
     if record.get("round_failures"):

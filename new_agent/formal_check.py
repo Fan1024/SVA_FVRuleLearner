@@ -412,7 +412,7 @@ def evaluate_assertion(generated_assertion: str, reference_assertion: str, testb
         if result['status'] not in SEMANTIC_STATUSES:
             result['pec'] = result['relax_pec'] = None
     except KeyboardInterrupt:
-        partial_logs = sorted(directory.glob('jasper_*.stdout.log')) + sorted(directory.glob('jasper_*.stderr.log'))
+        partial_logs = sorted(directory.glob('jasper_[0-9]*.log'))
         result.update(status='INTERRUPTED', accepted=False,
                       tool_output='JASPER_INTERRUPTED: execution interrupted by the user.\n' +
                       '\n'.join(path.read_text(encoding='utf-8', errors='replace') for path in partial_logs))

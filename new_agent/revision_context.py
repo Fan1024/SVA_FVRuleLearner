@@ -1,8 +1,7 @@
 """Small revision memory and reuse of completed comparisons within one case."""
 from copy import deepcopy
 import json
-from pathlib import Path
-import shutil
+from new_agent.runtime_support import persist_failure_log
 
 from new_agent import model_io, run_io
 from new_agent.pec_input_adapter import _tokens
@@ -82,26 +81,12 @@ def evaluate_once(record, round_number, **arguments):
 
 
 def retain_checker_failure(directory, record, round_number, result):
-    """Index small failure inputs/logs alongside the persistent formal round."""
-    if (not record['settings'].get('save_debug_traces') or
-            result['status'] not in {'PEC_COMPILE_ERROR', 'TOOL_ERROR', 'INPUT_ERROR', 'SYNTAX_ERROR', 'TIMEOUT'}):
-        return
-    source = Path(result['run_dir'])
-    target = Path(directory) / 'diagnostics' / f'round_{round_number:04d}'
-    target.mkdir(parents=True, exist_ok=True)
-    files = [source / name for name in ('jasper.log', 'native_pec_inputs.json', 'evaluation_error.log',
-                                      'candidate_syn.log')]
-    files += sorted(source.glob('native_transport_*.tcl'))
-    files += sorted(source.glob('jasper_*.log')) + sorted(source.glob('jasper_*.process.json'))
-    work = Path(result['work_dir'])
-    files += sorted(work.glob('jg/*/pec/pec*.sve'))
-    saved = []
-    for path in files:
-        if path.is_file():
-            destination = target / path.name
-            shutil.copyfile(path, destination)
-            saved.append(str(destination))
-    result['retained_diagnostics'] = saved
+    """Retain one failure log, then let the round discard all temporary work."""
+    log = persist_failure_log(directory, record, round_number, result['run_dir'],
+                              result['status'], result.get('tool_output'))
+    result['retained_diagnostics'] = [log] if log else []
+    result['log_path'], result['input_path'] = log, None
+    result['cleanup'] = {'retained': False, 'reason': 'Temporary formal work removed when the round exits.'}
 
 
 

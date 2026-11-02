@@ -93,7 +93,7 @@ def run_inference_only_pipeline(directory, record: dict, *, retriever=None) -> i
             evidence.pop("rules_used", None)
             evidence.pop("rules_generated", None)
             evidence["diagnosis_from_round"] = latest_diagnosis_round
-            with formal_round_directory(directory, round_number) as check_dir:
+            with formal_round_directory(directory, round_number, record) as check_dir:
                 generated_assertion = None
                 stage = "generation"
                 try:
@@ -142,7 +142,6 @@ def run_inference_only_pipeline(directory, record: dict, *, retriever=None) -> i
                     previous_round = round_number
                     stage = "formal_check"
                     run_io.update_run(directory, record, stage=stage,
-                                      formal_round_directory=str(check_dir),
                                       generation=deepcopy(attempt["generation"]), formal=None)
                     with run_io.measure_stage(record, "tool"):
                         formal_result = evaluate_once(record, round_number,
@@ -160,7 +159,7 @@ def run_inference_only_pipeline(directory, record: dict, *, retriever=None) -> i
                         check_dir, round_number, status, f"{stage}: {type(error).__name__}: {error}", policy,
                     )
 
-                # Logs persist; cleanup below removes only evaluator-owned work.
+                # Keep one failure log; the round owns and discards temporary tool files.
                 retain_checker_failure(directory, record, round_number, formal_result)
                 formal_check.apply_acceptance_policy(formal_result)
                 run_io.record_formal_result(directory, record, attempt, formal_result)

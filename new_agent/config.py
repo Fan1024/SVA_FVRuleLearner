@@ -103,8 +103,8 @@ EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 
 # True additionally writes readable debug_trace.txt files.
 # Final scores and learned-rule evidence are saved regardless of this setting.
-# Formal round logs persist, including failures and Ctrl+C. Successful tool
-# work directories are cleaned separately.
+# Formal work is temporary. With tracing enabled, retain one combined log only
+# for formal-tool errors, timeouts or Ctrl+C; routine tool files are discarded.
 SAVE_DEBUG_TRACES = True
 
 # Expand TB signal names and bind known integral parameters in native PEC inputs.
