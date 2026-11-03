@@ -24,9 +24,10 @@ def build_generation_prompt(requirement, testbench=None, *, examples=None,
         sections.append('PREVIOUS OUTCOME\n'+outcome(previous_evaluation))
         if selector_guidance is not None:
             from new_agent.infer_rule_selector import generator_view
-            sections.append('SELECTED TRAINING GUIDANCE\n'+json.dumps(
+            sections.append('SELECTED GUIDANCE\n'+json.dumps(
                 generator_view(selector_guidance,previous_assertion,previous_round),ensure_ascii=False,indent=2))
     elif selector_guidance is not None:
         raise ValueError('Selected guidance requires a previous assertion.')
     sections.append(output_instruction(assertion_template))
     return '\n\n'.join(sections)
+

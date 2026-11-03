@@ -190,11 +190,28 @@ class RuleRetriever:
 
     def retrieve(self, requirement: str) -> list[dict]:
         """Rank eligible cases before selecting up to top_k; keep ties deterministic."""
+        self.last_retrieval_audit = {
+            'source_training_run': str(self.directory),
+            'source_rule_file': str(self.directory / 'learned_rules.jsonl'),
+            'embedding_requirement': requirement_for_retrieval(requirement),
+            'top_k_cases': self.top_k,
+            'excluded_unpassed_case_ids': list(self.excluded_unpassed_case_ids),
+            'excluded_missing_guidance_case_ids': list(self.excluded_missing_guidance_case_ids),
+            'ranked_cases': [],
+        }
         if not self.cases:
             return []
         query = self.model.encode([requirement_for_retrieval(requirement)])
         scores = self._cosine_similarity(query, self.embeddings)[0]
         order = sorted(range(len(scores)), key=lambda i: (-float(scores[i]), self.cases[i]["case_number"]))
+        self.last_retrieval_audit['ranked_cases'] = [{
+            'rank': rank, 'case_number': self.cases[i]['case_number'],
+            'design_name': self.cases[i].get('design_name'),
+            'task_id': self.cases[i].get('task_id'),
+            'similarity': float(scores[i]),
+            'selected_for_rule_pool': rank <= self.top_k,
+            'embedding_requirement': requirement_for_retrieval(self.cases[i]['requirement']),
+        } for rank, i in enumerate(order, 1)]
         from new_agent.infer_training_traces import load_case_trace
         selected = []
         for i in order[:self.top_k]:
@@ -237,5 +254,6 @@ class RuleRetriever:
             if len(selected) == 3:
                 break
         return selected
+
 
 

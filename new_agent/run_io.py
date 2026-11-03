@@ -519,7 +519,7 @@ def _debug_event_text(record: dict, event: str, data: dict) -> str:
         number = record["pending_attempt"]["round"]
         if record["settings"].get("inference_workflow") or record["settings"].get("training_workflow"):
             source = record.get("inference_feedback_round") if record["settings"].get("inference_workflow") else record.get('training_feedback_round')
-            feedback = ((f"selected training guidance from round {source}"
+            feedback = ((f"selected guidance from round {source}"
                          if record["settings"].get("inference_workflow") == "existing_diagnosis_and_rule_selection"
                          else f"complete diagnosis from round {source}") if source is not None
                         else "none available from the preceding round")
@@ -539,6 +539,8 @@ def _debug_event_text(record: dict, event: str, data: dict) -> str:
                 payload = json.loads(payload)
             except ValueError:
                 pass
+        if isinstance(payload, dict) and 'ranked_diagnoses' in payload:
+            payload = {key: payload.get(key, []) for key in ('ranked_diagnoses', 'ranked_rules')}
         return ('\nGENERATOR GUIDANCE — FROM ROUND ' + str(data.get('source_round')) + '\n'
                 + json.dumps(payload, ensure_ascii=False, indent=2))
     if event == 'revision_retry':
@@ -582,8 +584,14 @@ def _debug_event_text(record: dict, event: str, data: dict) -> str:
         return "\nRETRIEVED TRAINING EXAMPLES\n" + json.dumps(data["examples"], indent=2, ensure_ascii=False)
     if event == "retrieval":
         if 'rule_bank' in data:
-            return '\nRETRIEVED RULE BANK\n' + json.dumps(data['rule_bank'], indent=2, ensure_ascii=False)
+            pool = ('\nRETRIEVAL CASE POOL\n' + json.dumps(data['case_pool'], indent=2, ensure_ascii=False)
+                    if data.get('case_pool') is not None else '')
+            return pool + '\nRETRIEVED AND PREDEFINED RULE BANK\n' + json.dumps(data['rule_bank'], indent=2, ensure_ascii=False)
         return "\nRETRIEVED TRAINING CASES\n" + json.dumps(data["cases"], indent=2)
+    if event == 'selector_unselected':
+        return (f"\nUNSELECTED GUIDANCE — ROUND {data['round']}\n" +
+                json.dumps({'diagnoses': data['diagnoses'], 'rules': data['rules']},
+                           indent=2, ensure_ascii=False))
     if event == "rule_request":
         return "\nRULE GENERATOR OUTPUT"
     if event == "selector_request":
@@ -1049,6 +1057,7 @@ def print_summary(run_dir, record: dict) -> None:
     for key, label in (("trace_error", "Trace save error"), ("summary_error", "Summary save error")):
         if record.get(key):
             print(f"  {label}: {record[key]}", flush=True)
+
 
 
 

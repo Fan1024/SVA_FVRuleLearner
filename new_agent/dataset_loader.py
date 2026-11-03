@@ -181,14 +181,14 @@ def load_training_cases(
 
 
 def load_inference_cases(
-    dataset_path: str | Path, training_metadata: dict,
+    dataset_path: str | Path, training_metadata: dict, case_ids: list[int] | None = None,
 ) -> list[dict]:
-    """Select every CSV case outside the chosen training run's full selection.
+    """Use explicit case IDs or the chosen training run's held-out complement.
 
-    selected_cases is authoritative, even when a selected case produced no
-    rules or did not pass. Saved split settings and current training settings
-    do not choose or restrict inference cases. The caller verifies CSV identity
-    through select_training_run before loading this selection.
+    Explicit IDs support diagnostic reruns, including source training cases.
+    Without explicit IDs, selected_cases defines the held-out complement, even
+    when a training case produced no rules or did not pass. The caller verifies
+    CSV identity through select_training_run before loading this selection.
     """
     cases = read_dataset(dataset_path)
     case_map = {case["case_number"]: case for case in cases}
@@ -204,7 +204,10 @@ def load_inference_cases(
         if any(saved.get(key) != current[key] for key in ("design_name", "task_id")):
             raise ValueError("Training case identities do not match the current CSV.")
     training_set = set(training_ids)
+    if case_ids:
+        return load_cases(dataset_path, case_ids)
     inference = [case for case in cases if case["case_number"] not in training_set]
     if not inference:
         raise ValueError("The selected training run leaves no held-out inference cases.")
     return inference
+

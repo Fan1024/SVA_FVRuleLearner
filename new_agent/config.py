@@ -3,14 +3,14 @@
 from pathlib import Path
 
 # "train": learn rules on selected training cases.
-# "inference": exclude source training cases and retrieve learned rules.
+# "inference": retrieve learned rules from the selected Train run.
 # "inference_only": three fixed examples; no retrieval or separate diagnosis.
 # Launch every mode with python main.py.
-MODE = "train"
+MODE = "inference"
 
 
 # Supported datasets: nl2sva_human, nl2sva_machine, nl2sva_opencore.
-DATASET = "nl2sva_machine"
+DATASET = "nl2sva_human"
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DATASET_PATH = (
     REPO_ROOT / "FVEval" / "data_1k" / "module_sva_nl_manual_editing.csv"
@@ -18,16 +18,14 @@ DATASET_PATH = (
     REPO_ROOT / "FVEval" / "data_nl2sva" / "data" / f"{DATASET}.csv"
 )
 
-# [] = split the full dataset and train only on the training portion.
-# [1] or [1, 5, 20] = run exactly these examples, bypassing the random split.
+# Nonempty IDs run exactly these cases, in this order, under the selected MODE.
+# []: train uses the split; inference uses held-out cases from its Train source;
+# inference_only runs the full dataset. Explicit inference IDs may overlap Train
+# cases for diagnostic reruns; the overlap is recorded in run_metadata.json.
 # These numbers are not physical CSV line numbers or source task_id values.
-TRAIN_CASE_IDS = []
+CASE_IDS = [31, 32, 79]
 
-# Used only by MODE = "inference_only". [] runs the entire dataset without a
-# train/test split or training-run dependency; [1, 32] selects specific cases.
-INFERENCE_ONLY_CASE_IDS = []
-
-# Used only when TRAIN_CASE_IDS = []. The remainder is reserved for inference.
+# Used only when MODE = "train" and CASE_IDS = [].
 # Training count = int(total cases * TRAIN_FRACTION); both parts must be nonempty.
 TRAIN_FRACTION = 0.8
 
@@ -79,7 +77,7 @@ MAX_ROUNDS = 10
 # An unmodified launcher's fixed limit (e.g. 60 s) remains authoritative.
 JASPER_TIMEOUT_SECONDS = 300
 
-# Minimum confidence for training statements and inference rule applicability.
+# Retained training compatibility setting; inference uses model-selected relevance.
 CONFIDENCE_THRESHOLD = 0.2
 
 # Every invocation creates a separate experiment directory here.
@@ -88,23 +86,19 @@ RUNS_DIR = Path(__file__).resolve().parent / "runs"
 # Used only by MODE = "inference". Ignored by train.
 # None selects the most recently completed compatible Train run.
 # An absolute path or a directory name relative to RUNS_DIR selects one run.
-# This SAME run determines the excluded training cases and the retrieval bank.
+# This SAME run supplies the retrieval bank and the default held-out selection.
 TRAINING_RUN_DIR = None
-
-# Inference always runs every dataset case outside the selected training run.
-# Case IDs are determined automatically; there is no inference ID override.
 
 # Retrieve up to this many cases WITH rules, ranked by requirement similarity.
 TOP_K_CASES = 5
-# Independently rank existing training diagnoses and correction rules.
+# Maximum diagnoses and rules selected independently from the combined pool.
 TOP_K_DIAGNOSES = 5
 TOP_K_RULES = 5
 EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 
 # True additionally writes readable debug_trace.txt files.
 # Final scores and learned-rule evidence are saved regardless of this setting.
-# Formal work is temporary. With tracing enabled, retain one combined log only
-# for formal-tool errors, timeouts or Ctrl+C; routine tool files are discarded.
+# Formal work is temporary; tool-error details are appended to debug_trace.txt.
 SAVE_DEBUG_TRACES = True
 
 # Expand TB signal names and bind known integral parameters in native PEC inputs.
@@ -115,6 +109,7 @@ PEC_CONTEXT_MODULE = None
 
 # Pyslang establishes SVA grouping. Unsupported translations use original source.
 ASSERTION_TREE_PARSER = "pyslang"
+
 
 
 

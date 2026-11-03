@@ -48,7 +48,7 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
         inference_workflow="existing_diagnosis_and_rule_selection",
         inference_rule_stages="rank_existing_diagnoses_and_rules_only",
         inference_feedback="latest_ranked_masked_diagnoses_and_rules",
-        inference_rule_context="masked_diagnoses_and_rules_only",
+        inference_rule_context="retrieved_and_predefined_diagnoses_and_rules",
         inference_example_source="accepted_generated_training_assertions",
         inference_retrieval="once_per_target_case",
         inference_max_selected_rules=selector.limits()["rules"],
@@ -103,7 +103,7 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
                                             source_round=latest_selector_round,
                                             payload=latest_selector_guidance)
                     # Retain current guidance if generation/extraction fails.
-                    # Only masked selected diagnoses and rules enter revision guidance.
+                    # Only selected retrieved or predefined guidance enters revision.
                     attempt["prompts"]["user"] = user_prompt
                     run_io.update_run(directory, record, stage=stage)
                     if client is None:
@@ -208,7 +208,8 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
                             {"case_number": case["case_number"], "similarity": case["similarity"]}
                             for case in retrieved])
                         run_io.save_debug_event(directory, record, "retrieval",
-                                                rule_bank=record["retrieved_rule_bank"])
+                                                rule_bank=record["retrieved_rule_bank"],
+                                                case_pool=getattr(retriever, 'last_retrieval_audit', None))
                     tree = inspection_trees["generated"]
                     evidence = record["round_evidence"][-1]
                     evidence["generated_tree"] = tree
@@ -221,7 +222,7 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
                     evidence["selector_checker_status"] = status
                     run_io.save_debug_event(directory, record, "selector_request")
                     # Reuse the existing 'rule' usage column for selector cost only.
-                    # One selector call; enforce the requested counts without semantic filtering.
+                    # One selector call; the model selects up to each configured limit.
                     with run_io.measure_stage(record, "rule") as capture_usage:
                         response = model_io.request_text(
                             client=client, model=config.MODEL,
@@ -233,6 +234,15 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
                     stage = "selector_response_format"
                     selection = selector.parse_response(response, tree, record["retrieved_rule_bank"])
                     evidence["inference_selection"] = deepcopy(selection)
+                    selected_diagnoses = {(item['category'], item['statement'])
+                                          for item in selection['ranked_diagnoses']}
+                    selected_rules = {item['rule_id'] for item in selection['ranked_rules']}
+                    run_io.save_debug_event(directory, record, 'selector_unselected',
+                        round=round_number,
+                        diagnoses=[item for item in record['retrieved_rule_bank']['diagnoses']
+                                   if (item['category'], item['statement']) not in selected_diagnoses],
+                        rules=[item for item in record['retrieved_rule_bank']['rules']
+                               if item['id'] not in selected_rules])
                     latest_selector_guidance = selector.make_generator_guidance(
                         selection, record["retrieved_rule_bank"], tree, source_round=round_number)
                     latest_selector_round = round_number
@@ -246,8 +256,7 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
                     run_io.update_run(directory, record,
                         status='BLOCKED_SELECTION', passed=False, stage='finished',
                         stop_reason='selection_unavailable',
-                        diagnosis_skipped_reason='Selection unavailable; no revision will run '
-                                                 'without selected diagnoses and rules.')
+                        diagnosis_skipped_reason='The selector response could not be obtained or parsed.')
                     return 1
                 continue
 
@@ -261,6 +270,7 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
         passed=False, stage="finished", stop_reason="max_rounds",
     )
     return 0 if resolved else 1
+
 
 
 

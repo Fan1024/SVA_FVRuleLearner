@@ -1,6 +1,5 @@
 """Independent selection of existing training explanations and correction rules."""
 from copy import deepcopy
-import hashlib
 import json
 from new_agent import config
 from new_agent.diagnosis_context import diagnosis_view
@@ -30,7 +29,7 @@ def compact_tree(tree, *, include_source=True):
 
 
 def compact_rule_bank(candidates):
-    """Keep only masked diagnosis text and rules, including learned trace entries."""
+    """Combine masked retrieved guidance with the predefined general candidates."""
     diagnoses, rules, seen_diagnoses, seen_rules = [], [], set(), set()
 
     def add_diagnosis(value):
@@ -60,6 +59,10 @@ def compact_rule_bank(candidates):
                 add_diagnosis(item)
             for item in entry.get('corrections', []):
                 add_rule(item)
+    for item in PREDEFINED_DIAGNOSES:
+        add_diagnosis(item)
+    for item in PREDEFINED_RULES:
+        add_rule(item)
     return {'diagnoses': diagnoses, 'rules': rules}
 
 
@@ -72,13 +75,9 @@ def _rule_map(bank):
 
 
 def required_counts(rule_bank):
-    """Both lists are required; count existing items without judging relevance."""
+    """Bound each selection by its configured maximum and available entries."""
     available = {'diagnoses': len({_diagnosis_key(item) for item in rule_bank.get('diagnoses', [])}),
                  'rules': len(bank_rule_ids(rule_bank))}
-    missing = [name for name, count in available.items() if count == 0]
-    if missing:
-        raise ValueError('Retrieved training guidance has no ' + ' or '.join(missing)
-                         + '; both diagnoses and rules are required before a revision.')
     return {name: min(limits()[name], count) for name, count in available.items()}
 
 
@@ -93,8 +92,20 @@ def build_selector_prompt(requirement, testbench, tree, rule_bank, *, evaluation
     data = {'requirement': requirement, 'testbench': testbench,
             'generated_assertion': tree['source_assertion'],
             'tool_feedback': compact_tool_feedback(evaluation_status),
-            'training_guidance': bank, 'selection_limits': limits(),
-            'required_selection_counts': required_counts(rule_bank)}
+            'guidance_pool': bank, 'selection_limits': required_counts(rule_bank)}
+    if previous_transition is not None:
+        previous_guidance = previous_transition.get('previous_guidance') or {}
+        data['previous_revision'] = {
+            'before_assertion': previous_transition.get('before_assertion'),
+            'after_assertion': previous_transition.get('after_assertion'),
+            'previous_selection': {
+                'ranked_diagnoses': [{key: item[key] for key in ('category', 'statement', 'rank')}
+                                    for item in previous_guidance.get('ranked_diagnoses', [])],
+                'ranked_rules': [{key: item[key] for key in ('rule_id', 'rank')}
+                                for item in previous_guidance.get('ranked_rules', [])],
+            },
+            'outcome': previous_transition.get('outcome'),
+        }
     return TASK_INSTRUCTIONS + '\nINPUT DATA\n' + json.dumps(data, ensure_ascii=False, indent=2)
 
 
@@ -111,8 +122,8 @@ def parse_response(raw, tree, rule_bank):
         raise ValueError('Expected ranked_diagnoses and ranked_rules only.')
     required = required_counts(rule_bank)
     diagnoses = data['ranked_diagnoses']
-    if not isinstance(diagnoses, list) or len(diagnoses) != required['diagnoses']:
-        raise ValueError(f"Select exactly {required['diagnoses']} existing diagnoses.")
+    if not isinstance(diagnoses, list) or len(diagnoses) > required['diagnoses']:
+        raise ValueError(f"Select up to {required['diagnoses']} existing diagnoses.")
     available = {_diagnosis_key(item) for item in rule_bank.get('diagnoses', [])}
     selected, ranked_diagnoses = set(), []
     for rank, item in enumerate(diagnoses, 1):
@@ -125,8 +136,8 @@ def parse_response(raw, tree, rule_bank):
         ranked_diagnoses.append({'category': key[0], 'statement': key[1],
                                   'rank': rank})
     rules = data['ranked_rules']
-    if not isinstance(rules, list) or len(rules) != required['rules']:
-        raise ValueError(f"Select exactly {required['rules']} existing rules.")
+    if not isinstance(rules, list) or len(rules) > required['rules']:
+        raise ValueError(f"Select up to {required['rules']} existing rules.")
     selected, ranked_rules, available = set(), [], bank_rule_ids(rule_bank)
     for rank, item in enumerate(rules, 1):
         if not isinstance(item, dict) or not {'rule_id', 'rank'} <= set(item):
@@ -143,22 +154,24 @@ def make_generator_guidance(selection, rule_bank, tree, *, source_round):
     selection = parse_response(selection, tree, rule_bank)
     rules = _rule_map(rule_bank)
     return {'for_round': source_round,
-            'assertion_sha256': hashlib.sha256(tree['source_assertion'].encode()).hexdigest(),
             'ranked_diagnoses': deepcopy(selection['ranked_diagnoses']),
             'ranked_rules': [{**item, 'rule': rules[item['rule_id']]['rule']}
                              for item in selection['ranked_rules']]}
 
 
 def generator_view(guidance,assertion,source_round):
-    if guidance.get('for_round')!=source_round or guidance.get('assertion_sha256')!=hashlib.sha256(assertion.encode()).hexdigest():
-        raise ValueError('Selected guidance belongs to another assertion or round.')
+    if guidance.get('for_round') != source_round:
+        raise ValueError('Selected guidance belongs to another round.')
     result = {key:guidance.get(key,[]) for key in ('ranked_diagnoses','ranked_rules')}
-    if any(not isinstance(items, list) or not items for items in result.values()):
-        raise ValueError('Revision guidance must include both selected diagnoses and selected rules.')
+    if any(not isinstance(items, list) for items in result.values()):
+        raise ValueError('Revision guidance uses diagnosis and rule arrays.')
     fields = {'ranked_diagnoses': ('category', 'statement', 'rank'),
               'ranked_rules': ('rule_id', 'rule', 'rank')}
     return {name: [{key: item[key] for key in fields[name]} for item in items]
             for name, items in result.items()}
 
 
-from new_agent.infer_rule_selector_prompts import SYSTEM_PROMPT
+from new_agent.infer_rule_selector_prompts import (
+    SYSTEM_PROMPT, PREDEFINED_DIAGNOSES, PREDEFINED_RULES,
+)
+

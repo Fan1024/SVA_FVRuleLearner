@@ -32,6 +32,9 @@ def validate_config() -> None:
     """Check active settings once, before creating a run or making API calls."""
     if config.MODE not in {"train", "inference", "inference_only"}:
         raise ValueError('MODE must be "train", "inference" or "inference_only".')
+    ids = config.CASE_IDS
+    if not isinstance(ids, list) or any(type(n) is not int or n < 1 for n in ids) or len(set(ids)) != len(ids):
+        raise ValueError("CASE_IDS must be a list of unique positive integers.")
     if config.MODE == "inference":
         if type(config.TOP_K_CASES) is not int or config.TOP_K_CASES < 1:
             raise ValueError("TOP_K_CASES must be a positive integer.")
@@ -41,9 +44,6 @@ def validate_config() -> None:
             if type(getattr(config,name)) is not int or getattr(config,name)<1:
                 raise ValueError(name+' must be a positive integer.')
     if config.MODE == "inference_only":
-        ids = config.INFERENCE_ONLY_CASE_IDS
-        if not isinstance(ids, list) or any(type(n) is not int or n < 1 for n in ids) or len(set(ids)) != len(ids):
-            raise ValueError("INFERENCE_ONLY_CASE_IDS must be a list of unique positive integers.")
         from new_agent.inference_only_examples import get_examples
         get_examples(config.DATASET)
     if not isinstance(config.DATASET, str) or not config.DATASET.strip():
@@ -96,11 +96,11 @@ def main() -> int:
     dataset_split = None
     if phase == "train":
         cases, dataset_split = dataset_loader.load_training_cases(
-            config.DATASET_PATH, config.TRAIN_CASE_IDS,
+            config.DATASET_PATH, config.CASE_IDS,
             train_fraction=config.TRAIN_FRACTION, split_seed=config.SPLIT_SEED,
         )
     elif phase == "inference_only":
-        cases = dataset_loader.load_cases(config.DATASET_PATH, config.INFERENCE_ONLY_CASE_IDS)
+        cases = dataset_loader.load_cases(config.DATASET_PATH, config.CASE_IDS)
     else:
         dataset_path = dataset_loader.resolve_dataset_path(config.DATASET_PATH)
         source_dir, source_metadata = run_io.select_training_run(
@@ -108,7 +108,7 @@ def main() -> int:
             runs_root=config.RUNS_DIR, training_run_dir=config.TRAINING_RUN_DIR,
         )
         cases = dataset_loader.load_inference_cases(
-            dataset_path, source_metadata,
+            dataset_path, source_metadata, config.CASE_IDS,
         )
         from new_agent.infer_retrieval import RuleRetriever, RETRIEVAL_REQUIREMENT_POLICY
         training_ids = {c["case_number"] for c in source_metadata["selected_cases"]}
@@ -138,8 +138,8 @@ def main() -> int:
         "revision_rules": "previous_round_only",
         "round_policy": "pec_or_bleu_or_max_rounds",
         "pec_compile_error_policy": "block_on_native_pec_compile_failure",
-        "case_ids": ([case["case_number"] for case in cases]
-                     if phase != "train" else list(config.TRAIN_CASE_IDS)),
+        "case_ids": [case["case_number"] for case in cases],
+        "requested_case_ids": list(config.CASE_IDS),
         "dataset_split": dataset_split,
         "max_rounds": config.MAX_ROUNDS,
         "timeout_seconds": config.JASPER_TIMEOUT_SECONDS,
@@ -173,8 +173,11 @@ def main() -> int:
             inference_max_selected_diagnoses=config.TOP_K_DIAGNOSES,
             training_evidence_masking="after_unmasked_cosine; requirements_rules_revision_traces; role_based_unique_per_case",
             source_training_run=str(source_dir),
-            inference_case_selection="all_dataset_cases_minus_source_selected_cases",
+            inference_case_selection=("explicit_case_ids" if config.CASE_IDS else
+                                      "all_dataset_cases_minus_source_selected_cases"),
             training_case_ids=[c["case_number"] for c in source_metadata["selected_cases"]],
+            source_training_case_overlap=[case['case_number'] for case in cases
+                                          if case['case_number'] in training_ids],
             retrieval_top_k=config.TOP_K_CASES, embedding_model=config.EMBEDDING_MODEL,
             retrieval_requirement_text=RETRIEVAL_REQUIREMENT_POLICY,
             retrieval_eligible_cases=len(retriever.cases),
@@ -263,6 +266,7 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
 
 
 
