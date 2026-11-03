@@ -81,12 +81,14 @@ def evaluate_once(record, round_number, **arguments):
 
 
 def retain_checker_failure(directory, record, round_number, result):
-    """Retain one failure log, then let the round discard all temporary work."""
+    """Use the case debug trace for failure details; discard native work."""
     log = persist_failure_log(directory, record, round_number, result['run_dir'],
                               result['status'], result.get('tool_output'))
     result['retained_diagnostics'] = [log] if log else []
+    result['diagnostics_in_debug_trace'] = bool(log)
     result['log_path'], result['input_path'] = log, None
     result['cleanup'] = {'retained': False, 'reason': 'Temporary formal work removed when the round exits.'}
+
 
 
 

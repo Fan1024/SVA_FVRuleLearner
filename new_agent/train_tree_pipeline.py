@@ -6,9 +6,6 @@ and a short repetition notice. Complete history remains in saved round evidence.
 """
 from copy import deepcopy
 from contextlib import contextmanager
-import json
-from pathlib import Path
-import sys
 from new_agent.runtime_support import formal_round_directory
 from new_agent.model_gateway import ModelGateway
 from new_agent.model_output_schemas import TRAINING_RULES
@@ -24,66 +21,13 @@ from new_agent.pipeline import (
 
 @contextmanager
 def _save_round_trace(directory, record, round_number):
-    """Lazy indented JSON, atomically updated after each round/interruption."""
-    from new_agent.train_tree_rule_generator import compact_tree
+    """Attach outcomes to inspection trees; case outputs use the shared trace."""
     try:
         yield
     finally:
-        evidence = next((item for item in reversed(record["round_evidence"])
-                         if item["round"] == round_number), {})
+        evidence = next((row for row in reversed(record["round_evidence"])
+                         if row["round"] == round_number), {})
         tree_archive.finish_round(directory, record, round_number, evidence)
-        failures = [item for item in record.get("round_failures", [])
-                    if item["round"] == round_number]
-        output = evidence.get("tree_rule_diagnosis")
-        raw = evidence.get("tree_rule_raw_response")
-        trees = evidence.get("assertion_trees")
-        evaluation = evidence.get("evaluation")
-        error_type, error, _ = sys.exc_info()
-        entry = {
-            "round": round_number,
-            "assertion": evidence.get("generated_assertion"),
-            "evaluation": ({key: value for key, value in evaluation.items()
-                            if key != "pec_context_preparation"} if evaluation else None),
-            "pec_input_preparation": evidence.get("pec_input_preparation"),
-            "pec_context_preparation": (evaluation or {}).get("pec_context_preparation"),
-            "diagnosis_from_round": evidence.get("diagnosis_from_round"),
-            "diagnosis_basis": evidence.get("diagnosis_basis"),
-            "guidance_payload": evidence.get("guidance_payload"),
-            "generation_prompts": evidence.get('generation_prompts'),
-        }
-        if trees and "generated" in trees:
-            entry["generated_tree"] = compact_tree(trees["generated"], include_source=False)
-        if output is not None:
-            # Store the response once as readable JSON, not raw + parsed + extracted copies.
-            entry["diagnosis"] = output
-        elif raw is not None:
-            entry["diagnosis_raw"] = raw
-        else:
-            entry["diagnosis_skipped"] = (
-                "candidate_accepted" if evaluation and evaluation.get("accepted") else
-                "round_budget_exhausted" if round_number == config.MAX_ROUNDS else
-                record.get("diagnosis_skipped_reason", "not_run"))
-        if failures:
-            entry["errors"] = failures
-        if error_type is not None:
-            entry["interruption"] = {"type": error_type.__name__, "message": str(error)}
-        inputs = record["inputs"]
-        root = Path(record.get("summary_directory", directory)) / "rules"
-        path = root / f"case_{inputs['case_number']:04d}.json"
-        document = record.setdefault("_rule_trace_document", {
-            "case": {key: inputs[key] for key in ("case_number", "design_name", "task_id")},
-            "reference_assertion": inputs.get("reference_assertion"),
-            "rounds": [],
-        })
-        document["rounds"].append(entry)
-        if trees and "reference" in trees and "reference_tree" not in document:
-            document["reference_tree"] = compact_tree(trees["reference"], include_source=False)
-        # Keep early rounds in memory until a trace is needed. Initial successes
-        # create neither a file nor a rules directory. Once created, save all rounds.
-        if path.exists() or raw is not None or output is not None or trees is not None or failures:
-            root.mkdir(parents=True, exist_ok=True)
-            run_io._atomic_write(path, json.dumps(document, ensure_ascii=False, indent=2) + "\n")
-            record["rule_trace_file"] = f"rules/{path.name}"
 
 
 def run_training_pipeline(directory, record: dict, *, retriever=None) -> int:
@@ -151,14 +95,6 @@ def run_training_pipeline(directory, record: dict, *, retriever=None) -> int:
                     run_io.save_debug_event(directory, record, 'guidance_context',
                                             source_round=latest_diagnosis_round,
                                             payload=latest_diagnosis_response)
-                    if previous_assertion is not None:
-                        if latest_diagnosis_response is not None:
-                            print(f"Round {round_number}: forwarding complete diagnosis from round "
-                                  f"{latest_diagnosis_round} to assertion generator "
-                                  f"({len(latest_diagnosis_response)} characters).", flush=True)
-                        else:
-                            print(f"Round {round_number}: no diagnosis response from the preceding round; "
-                                  "no rule feedback is available.", flush=True)
                     # Assertion history is cumulative; correction guidance is latest-round only.
                     latest_diagnosis_response = latest_diagnosis_round = None
                     attempt["prompts"]["user"] = user_prompt
@@ -229,8 +165,7 @@ def run_training_pipeline(directory, record: dict, *, retriever=None) -> int:
                 status = formal_result["status"]
                 pec_pass = formal_result["acceptance_reason"] == "pec"
                 passed = formal_result["accepted"]
-                print(f"Round {round_number}/{config.MAX_ROUNDS}: {status} | "
-                      f"PEC={formal_result.get('pec')} | BLEU={formal_result.get('bleu')}", flush=True)
+                run_io.print_round_summary(round_number, config.MAX_ROUNDS, formal_result)
                 if passed:
                     run_io.update_run(
                         directory, record, status="PASSED", passed=True, stage="finished",
@@ -269,12 +204,7 @@ def run_training_pipeline(directory, record: dict, *, retriever=None) -> int:
                         trees = inspection_trees
                         capture_tree_usage({"input_tokens": 0, "output_tokens": 0})
                     record["round_evidence"][-1]["assertion_trees"] = trees
-                    for side in ("generated", "reference"):
-                        if "parse_error" in trees[side]:
-                            print(f"Round {round_number}: {side} tree unsupported; "
-                                  f"using explicit source anchor: {trees[side]['parse_error']}", flush=True)
                     stage = "rule_generation"
-                    print(f"Round {round_number}: running LLM tree diagnosis and rule generation.", flush=True)
                     run_io.update_run(directory, record, stage=stage)
                     rule_prompt = rule_generator.build_rule_prompt(
                         requirement=inputs["requirement"],
@@ -335,6 +265,7 @@ def run_training_pipeline(directory, record: dict, *, retriever=None) -> int:
         passed=False, stage="finished", stop_reason="max_rounds",
     )
     return 0 if resolved else 1
+
 
 
 

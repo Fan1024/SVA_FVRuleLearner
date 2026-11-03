@@ -444,7 +444,7 @@ def final_record(record: dict) -> dict:
     saved["error"] = None if error is None else {
         name: error[name] for name in ("stage", "type", "message") if name in error
     }
-    if record["settings"].get("inference_workflow"):
+    if record.get("inference_trace_file"):
         saved["inference_trace_file"] = record.get("inference_trace_file")
     saved["summary_directory"] = record.get("summary_directory")
     if record.get("formal_failure_log"):
@@ -513,6 +513,8 @@ def _debug_diagnosis_text(diagnosis: dict, statements: dict | None) -> str:
 
 def _debug_event_text(record: dict, event: str, data: dict) -> str:
     """Render only the outputs and decisions useful when inspecting a case."""
+    if event == "formal_diagnostics":
+        return f"\nFORMAL TOOL DETAILS — ROUND {data['round']}\n{data['details']}"
     if event == "assertion_request":
         number = record["pending_attempt"]["round"]
         if record["settings"].get("inference_workflow") or record["settings"].get("training_workflow"):
@@ -554,7 +556,8 @@ def _debug_event_text(record: dict, event: str, data: dict) -> str:
         ):
             value = formal.get(key)
             lines.append(f"{label}: {'unavailable' if value is None else value}")
-        if formal["status"] not in {"FULL_EQUIVALENCE", "IMPLIES", "NO_EQUIVALENCE"}:
+        if (formal["status"] not in {"FULL_EQUIVALENCE", "IMPLIES", "NO_EQUIVALENCE"}
+                and not formal.get('diagnostics_in_debug_trace')):
             feedback = formal.get("feedback", "")
             details = feedback.partition("Tool details:\n")[2] or feedback
             if details:
@@ -814,6 +817,21 @@ def _update_case_collection(path: Path, entry: dict) -> list[dict]:
     return entries
 
 
+def _retrieval_rounds(record):
+    """Store only generated revisions, located guidance and comparison outcomes."""
+    from new_agent.infer_training_traces import compact_rounds
+    return [{
+        'round': row['round'],
+        'generated_assertion': row['assertion'],
+        'evaluation': row['evaluation'],
+        'diagnosis_from_round': row['diagnosis_from_round'],
+        'tree_rule_diagnosis': {
+            'diagnoses': row['diagnoses'],
+            'corrections': row['corrections'],
+        },
+    } for row in compact_rounds(record['round_evidence'])]
+
+
 def save_summaries(summary_dir, record: dict) -> None:
     """Save final scores and learned guidance, replacing repeated case entries.
 
@@ -837,7 +855,7 @@ def save_summaries(summary_dir, record: dict) -> None:
         _update_case_collection(directory / "inference_cases.jsonl", {
             "case_number": row["case_number"], "design_name": row["design_name"],
             "task_id": row["task_id"], "requirement": record["inputs"]["requirement"],
-            "passed": record["passed"], "trace_file": record.get("inference_trace_file"),
+            "passed": record["passed"],
             "tree_file": record.get("tree_file"),
         })
         return
@@ -870,21 +888,18 @@ def save_summaries(summary_dir, record: dict) -> None:
         "rule_rounds": rule_rounds,
         "rule_locations": rule_locations,
         "diagnoses": deepcopy(record.get("diagnosis_registry",[])),
-        "round_evidence": record["round_evidence"],
+        "round_evidence": (_retrieval_rounds(record)
+                           if record['settings'].get('phase', 'train') == 'train' else []),
     }
     if rule_diagnoses:
         learning["rule_diagnoses"] = rule_diagnoses
     if record["settings"].get("flat_training_output"):
-        # Full per-round outputs live in rules/case_NNNN.json exactly once.
-        # Keep the existing rule index for the unchanged inference reader.
-        learning.pop("round_evidence", None)
-        learning["trace_file"] = record.get("rule_trace_file")
+        # Revision evidence is stored inline for both case-folder and flat runs.
         learning["round_failure_count"] = len(record.get("round_failures", []))
         learning["error"] = (None if record.get("error") is None else {
             key: record["error"].get(key) for key in ("stage", "type", "message")})
     if record["settings"].get("inference_workflow"):
         learning.pop("round_evidence", None)
-        learning["trace_file"] = record.get("inference_trace_file")
     learning['tree_file'] = record.get('tree_file')
     _update_case_collection(directory / "learned_rules.jsonl", learning)
 
@@ -1009,42 +1024,32 @@ def run_experiment(
 
 # Terminal summary.
 
+def print_round_summary(number, maximum, formal):
+    """One score line per completed assertion attempt."""
+    def score(name):
+        value = formal.get(name)
+        if value is None:
+            return "-"
+        return f"{value:.4f}" if name == "bleu" else f"{value:g}"
+    print(f"Round {number}/{maximum} | {formal['status']} | SYN={score('syntax')} | "
+          f"PEC={score('pec')} | RelaxPEC={score('relax_pec')} | BLEU={score('bleu')}", flush=True)
+
+
 def print_summary(run_dir, record: dict) -> None:
-    """Print the outcome and result path; terminal output is not saved."""
-    print(f"Case: {record['case_id']} | Pipeline: {record['status']}")
-    print(
-        f"Rounds: {record['rounds_used']} | Passed: {record['passed']} | "
-        f"Stop reason: {record['stop_reason'] or '(not stopped)'}"
-    )
-    formal = record["formal"]
-    if formal is not None:
-        print(f"Acceptance: {formal.get('acceptance_reason')} | Native PEC passed: {formal.get('native_pec_passed', False)}")
-        print(
-            f"Formal: {formal['status']} | Syntax: {formal['syntax']} | "
-            f"Strict: {formal['pec']} | Relaxed: {formal['relax_pec']}"
-        )
-        print(f"Native BLEU: {formal.get('bleu')} | ROUGE-L: {formal.get('rouge')} | "
-              f"Exact match: {formal.get('exact_match')}")
-        cleanup = formal.get("cleanup")
-        if cleanup and cleanup["retained"]:
-            print("Work retained:", cleanup["reason"])
-    if record["error"]:
+    """Keep the case conclusion compact; detailed evidence stays in files."""
+    print(f"Case {record['case_id']} | {record['status']} | Passed={record['passed']} | "
+          f"Rounds={record['rounds_used']} | Stop={record['stop_reason'] or '-'}", flush=True)
+    if record.get("error"):
         error = record["error"]
-        print(f"Error at {error['stage']}: {error['type']}: {error['message']}")
-    if record.get("formal_failure_log"):
-        print("Formal failure log:", record["formal_failure_log"])
-    if record["trace_error"]:
-        print("Trace save error:", record["trace_error"])
+        message = str(error.get('message', '')).splitlines()
+        message = message[0][:180] if message else ''
+        print(f"  {error['stage']}: {error['type']}: {message}", flush=True)
     if record.get("round_failures"):
-        target = (record.get("rule_trace_file", "rules/case_NNNN.json") + " errors"
-                  if record["settings"].get("flat_training_output") else "result.json round_failures")
-        print(f"Round-stage errors: {len(record['round_failures'])}; see {target}.")
-    if record["summary_error"]:
-        print("Summary save error:", record["summary_error"])
-    if record["settings"].get("flat_training_output"):
-        print("Evaluation:", Path(run_dir) / "evaluation.csv")
-    else:
-        print("Result:", Path(run_dir) / "result.json")
+        print(f"  Stage errors: {len(record['round_failures'])}", flush=True)
+    for key, label in (("trace_error", "Trace save error"), ("summary_error", "Summary save error")):
+        if record.get(key):
+            print(f"  {label}: {record[key]}", flush=True)
+
 
 
 

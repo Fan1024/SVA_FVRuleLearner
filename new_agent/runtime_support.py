@@ -25,28 +25,22 @@ def console_status(message):
 
 
 @contextmanager
-def stage_progress(label, interval=15.0):
-    """Report a synchronous stage without changing its result or exceptions."""
+def stage_progress(label, interval=60.0):
+    """Keep routine stages quiet; report only prolonged waits."""
     started = monotonic()
     finished = Event()
 
     def heartbeat():
         while not finished.wait(interval):
-            console_status(f"{label}: still running ({monotonic() - started:.0f}s elapsed).")
+            console_status(f"Waiting: {label} ({monotonic() - started:.0f}s elapsed).")
 
-    console_status(f"{label}: started.")
     worker = Thread(target=heartbeat, daemon=True)
     worker.start()
-    outcome = "completed"
     try:
         yield
-    except BaseException as error:
-        outcome = "interrupted" if isinstance(error, KeyboardInterrupt) else "failed"
-        raise
     finally:
         finished.set()
         worker.join(timeout=1)
-        console_status(f"{label}: {outcome} ({monotonic() - started:.1f}s).")
 
 
 @contextmanager
@@ -64,7 +58,7 @@ def formal_round_directory(directory, round_number, record=None):
 
 
 def persist_failure_log(directory, record, round_number, source, status, output=None):
-    """Save one useful error log; ordinary semantic mismatches need no tool files."""
+    """Append tool diagnostics to the existing case trace."""
     failures = {"PEC_COMPILE_ERROR", "TOOL_ERROR", "INPUT_ERROR", "SYNTAX_ERROR", "TIMEOUT", "INTERRUPTED"}
     if not record.get("settings", {}).get("save_debug_traces") or status not in failures:
         return None
@@ -87,9 +81,10 @@ def persist_failure_log(directory, record, round_number, source, status, output=
     path = source / "native_pec_inputs.json"
     if status in {"PEC_COMPILE_ERROR", "INPUT_ERROR"} and path.is_file():
         parts.append("\nPEC inputs\n" + path.read_text(encoding="utf-8", errors="replace"))
-    target = Path(directory) / "diagnostics" / f"round_{round_number:04d}.log"
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text("\n\n".join(parts).rstrip() + "\n", encoding="utf-8")
+    from new_agent.run_io import save_debug_event
+    save_debug_event(directory, record, "formal_diagnostics", round=round_number,
+                     details="\n\n".join(parts).rstrip())
+    target = Path(directory) / "debug_trace.txt"
     record["formal_failure_log"] = str(target)
     return str(target)
 
@@ -144,7 +139,6 @@ def run_jasper(command, directory, original, *args, **kwargs):
                                    start_new_session=(os.name == "posix"), **options)
         timed_out = False
         try:
-            console_status(f"JasperGold: PID {process.pid}; timeout {timeout}s.")
             process.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
             timed_out = True
@@ -166,3 +160,4 @@ def run_jasper(command, directory, original, *args, **kwargs):
     if check:
         result.check_returncode()
     return result
+

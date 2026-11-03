@@ -101,8 +101,6 @@ def main() -> int:
         )
     elif phase == "inference_only":
         cases = dataset_loader.load_cases(config.DATASET_PATH, config.INFERENCE_ONLY_CASE_IDS)
-        print("Inference-only baseline: three fixed examples; no diagnosis or retrieval.", flush=True)
-        print("Selected case IDs:", [case["case_number"] for case in cases], flush=True)
     else:
         dataset_path = dataset_loader.resolve_dataset_path(config.DATASET_PATH)
         source_dir, source_metadata = run_io.select_training_run(
@@ -112,11 +110,6 @@ def main() -> int:
         cases = dataset_loader.load_inference_cases(
             dataset_path, source_metadata,
         )
-        print("Training source:", source_dir, flush=True)
-        print("Inference selection: all dataset cases excluding the source training selection.", flush=True)
-        print("Training case IDs excluded:", [c["case_number"] for c in source_metadata["selected_cases"]], flush=True)
-        print(f"Automatically selected inference case IDs ({len(cases)}):",
-              [case["case_number"] for case in cases], flush=True)
         from new_agent.infer_retrieval import RuleRetriever, RETRIEVAL_REQUIREMENT_POLICY
         training_ids = {c["case_number"] for c in source_metadata["selected_cases"]}
         retriever = RuleRetriever(
@@ -124,8 +117,6 @@ def main() -> int:
             training_cases=dataset_loader.load_cases(dataset_path, sorted(training_ids)),
             top_k=config.TOP_K_CASES, model_name=config.EMBEDDING_MODEL,
         )
-        print(f"Rule retrieval pool: {len(retriever.cases)} passed training cases with diagnoses and rules; "
-              f"{len(retriever.excluded_unpassed_case_ids)} unpassed cases excluded.", flush=True)
     dataset_path = Path(cases[0]["dataset_path"])
     models = {"model": config.MODEL}
     from new_agent.pec_context_adapter import context_mode, VERSION as PEC_CONTEXT_VERSION
@@ -220,20 +211,10 @@ def main() -> int:
         import json
         run_io._atomic_write(experiment_dir / "fixed_examples.json",
                              json.dumps(fixed_examples, ensure_ascii=False, indent=2) + "\n")
-    print("Dataset:", dataset_path)
-    print("Evaluation scope:", policy["scope"])
+    print(f"Mode={config.MODE} | Dataset={config.DATASET} | Model={config.MODEL} | "
+          f"Cases={len(cases)} | Max rounds={config.MAX_ROUNDS}", flush=True)
     if phase == "infer":
-        print("Retrieval cases with rules:", len(retriever.cases) if retriever is not None else 0)
-    elif dataset_split is not None:
-        print(
-            f"Random split: {len(cases)} training | "
-            f"{len(dataset_split['inference_case_ids'])} reserved for inference | "
-            f"seed {dataset_split['seed']}"
-        )
-    else:
-        print("Explicit case selection: random splitting is not applied.")
-    if phase == "train":
-        print("Selected case IDs:", [case["case_number"] for case in cases])
+        print("Training source:", source_dir, flush=True)
     print("Experiment:", experiment_dir)
 
     # 3. Run each selected case with its own revision loop and rule registry.
@@ -282,6 +263,7 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
 
 
 

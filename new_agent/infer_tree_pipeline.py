@@ -5,9 +5,6 @@ unchanged. The active selector never generates or rewrites rules.
 """
 from copy import deepcopy
 from contextlib import contextmanager
-import json
-from pathlib import Path
-import sys
 from new_agent.runtime_support import formal_round_directory
 from new_agent.model_gateway import ModelGateway
 from new_agent.model_output_schemas import INFERENCE_SELECTION
@@ -22,60 +19,13 @@ from new_agent.pipeline import (
 
 @contextmanager
 def _save_inference_trace(directory, record, round_number):
-    """Readable lazy per-case JSON; no target reference in diagnosis evidence."""
-    from new_agent.infer_rule_selector import compact_tree
+    """Attach outcomes to inspection trees; case outputs use the shared trace."""
     try:
         yield
     finally:
         evidence = next((row for row in reversed(record["round_evidence"])
                          if row["round"] == round_number), {})
         tree_archive.finish_round(directory, record, round_number, evidence)
-        entry = {key: evidence.get(key) for key in
-                 ("round", "generated_assertion", "evaluation", "diagnosis_from_round",
-                  "pec_input_preparation")}
-        entry['guidance_payload'] = evidence.get('guidance_payload')
-        entry['generation_prompts'] = evidence.get('generation_prompts')
-        entry["pec_context_preparation"] = (evidence.get("evaluation") or {}).get("pec_context_preparation")
-        if isinstance(entry.get("evaluation"), dict):
-            entry["evaluation"] = {key: value for key, value in entry["evaluation"].items()
-                                   if key != "pec_context_preparation"}
-        tree = evidence.get("generated_tree")
-        if tree is not None:
-            entry["generated_tree"] = compact_tree(tree, include_source=False)
-        output, raw = evidence.get("inference_selection"), evidence.get("selector_raw_response")
-        if output is not None:
-            entry["selector"] = output
-        elif raw is not None:
-            entry["selector_raw"] = raw
-        else:
-            entry["diagnosis_skipped"] = (
-                "candidate_accepted" if (evidence.get("evaluation") or {}).get("accepted")
-                else record.get("diagnosis_skipped_reason", "not_run"))
-        for key in ('selector_checker_status', 'selector_guidance'):
-            if key in evidence:
-                entry[key] = deepcopy(evidence[key])
-        errors = [row for row in record.get("round_failures", []) if row["round"] == round_number]
-        if errors:
-            entry["errors"] = errors
-        exception_type, exception, _ = sys.exc_info()
-        if exception_type is not None:
-            entry["interruption"] = {"type": exception_type.__name__, "message": str(exception)}
-        inputs = record["inputs"]
-        document = record.setdefault("_inference_trace", {
-            "case": {key: inputs[key] for key in ("case_number", "design_name", "task_id")},
-            "rounds": [],
-        })
-        if 'retrieved_rule_bank' in record and 'retrieved_rule_bank' not in document:
-            document['retrieved_rule_bank'] = record['retrieved_rule_bank']
-        document["rounds"].append(entry)
-        path = Path(directory) / "inference_trace.json"
-        if path.exists() or tree is not None or raw is not None or errors:
-            run_io._atomic_write(path, json.dumps(document, ensure_ascii=False, indent=2) + "\n")
-            summary = Path(record.get("summary_directory", directory))
-            try:
-                record["inference_trace_file"] = str(path.relative_to(summary))
-            except ValueError:
-                record["inference_trace_file"] = str(path)
 
 
 def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
@@ -138,7 +88,6 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
                             {"case_number": case["case_number"], "similarity": case["similarity"]}
                             for case in example_cases])
                         run_io.save_debug_event(directory, record, "example_retrieval", examples=example_cases)
-                        print("Example case IDs:", [c["case_number"] for c in example_cases], flush=True)
                     stage = "generation"
                     generation_inputs = {
                         "requirement": inputs["requirement"],
@@ -224,8 +173,7 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
                 status = formal_result["status"]
                 pec_pass = formal_result["acceptance_reason"] == "pec"
                 passed = formal_result["accepted"]
-                print(f"Round {round_number}/{config.MAX_ROUNDS}: {status} | "
-                      f"PEC={formal_result.get('pec')} | BLEU={formal_result.get('bleu')}", flush=True)
+                run_io.print_round_summary(round_number, config.MAX_ROUNDS, formal_result)
                 if passed:
                     run_io.update_run(
                         directory, record, status="PASSED", passed=True, stage="finished",
@@ -292,8 +240,6 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
                     run_io.update_run(directory, record, diagnosis=selection,
                                       diagnosis_model=config.MODEL)
                     run_io.save_diagnosis_model(record, config.MODEL)
-                    print(f"Round {round_number}: {len(selection['ranked_rules'])} existing rules ranked; "
-                          f"{len(selection['ranked_diagnoses'])} existing diagnoses ranked.", flush=True)
                 except Exception as error:
                     latest_selector_guidance = latest_selector_round = None
                     _remember_round_error(directory, record, round_number, stage, error)
@@ -315,6 +261,7 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
         passed=False, stage="finished", stop_reason="max_rounds",
     )
     return 0 if resolved else 1
+
 
 
 

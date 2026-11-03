@@ -5,9 +5,6 @@ enters either model request. Native evaluation and score policy are reused.
 """
 from copy import deepcopy
 from contextlib import contextmanager
-import json
-from pathlib import Path
-import sys
 from new_agent.runtime_support import formal_round_directory
 from new_agent.model_gateway import ModelGateway
 from new_agent import config, formal_check, model_io, run_io, tree_archive
@@ -18,36 +15,13 @@ from new_agent.pipeline import _failed_round, _remember_round_error
 
 @contextmanager
 def _save_inference_only_trace(directory, record, round_number):
+    """Attach outcomes to inspection trees; case outputs use the shared trace."""
     try:
         yield
     finally:
-        evidence = next((row for row in reversed(record['round_evidence'])
-                         if row['round'] == round_number), {})
+        evidence = next((row for row in reversed(record["round_evidence"])
+                         if row["round"] == round_number), {})
         tree_archive.finish_round(directory, record, round_number, evidence)
-        entry = {key: deepcopy(evidence[key]) for key in (
-            'round', 'generated_assertion', 'evaluation', 'diagnosis_from_round',
-            'guidance_payload', 'generation_prompts',
-            'pec_input_preparation') if key in evidence}
-        if 'inference_only_diagnosis' not in entry:
-            entry['diagnosis_skipped'] = (
-                'candidate_accepted' if (evidence.get('evaluation') or {}).get('accepted')
-                else record.get('diagnosis_skipped_reason', 'not_run'))
-        errors = [row for row in record.get('round_failures', []) if row['round'] == round_number]
-        if errors:
-            entry['errors'] = errors
-        exception_type, exception, _ = sys.exc_info()
-        if exception_type is not None:
-            entry['interruption'] = {'type': exception_type.__name__, 'message': str(exception)}
-        inputs = record['inputs']
-        document = record.setdefault('_inference_only_trace', {
-            'case': {key: inputs[key] for key in ('case_number', 'design_name', 'task_id')},
-            'rounds': [],
-        })
-        document['rounds'].append(entry)
-        path = Path(directory) / 'inference_only_trace.json'
-        run_io._atomic_write(path, json.dumps(document, ensure_ascii=False, indent=2) + '\n')
-        summary = Path(record.get('summary_directory', directory))
-        record['inference_trace_file'] = str(path.relative_to(summary)) if path.is_relative_to(summary) else str(path)
 
 
 def run_inference_only_pipeline(directory, record: dict, *, retriever=None) -> int:
@@ -182,8 +156,7 @@ def run_inference_only_pipeline(directory, record: dict, *, retriever=None) -> i
                 status = formal_result["status"]
                 pec_pass = formal_result["acceptance_reason"] == "pec"
                 passed = formal_result["accepted"]
-                print(f"Round {round_number}/{config.MAX_ROUNDS}: {status} | "
-                      f"PEC={formal_result.get('pec')} | BLEU={formal_result.get('bleu')}", flush=True)
+                run_io.print_round_summary(round_number, config.MAX_ROUNDS, formal_result)
                 if passed:
                     run_io.update_run(
                         directory, record, status="PASSED", passed=True, stage="finished",
@@ -211,6 +184,7 @@ def run_inference_only_pipeline(directory, record: dict, *, retriever=None) -> i
         passed=False, stage="finished", stop_reason="max_rounds",
     )
     return 0 if resolved else 1
+
 
 
 

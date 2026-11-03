@@ -59,7 +59,9 @@ def _remember_round_error(directory, record, number, stage, error):
         "type": type(error).__name__, "message": str(error),
     })
     run_io.update_run(directory, record, round_failures=failures)
-    print(f"Round {number}: {stage}: {type(error).__name__}: {error}; continuing.", flush=True)
+    message = str(error).splitlines()
+    message = message[0][:180] if message else ""
+    print(f"Round {number} | {stage}: {type(error).__name__}: {message}", flush=True)
 
 
 def run_pipeline(directory, record: dict, *, retriever=None) -> int:
@@ -113,7 +115,6 @@ def run_pipeline(directory, record: dict, *, retriever=None) -> int:
                         for case in example_cases
                     ])
                     run_io.save_debug_event(directory, record, "example_retrieval", examples=example_cases)
-                    print("Example case IDs:", [case["case_number"] for case in example_cases], flush=True)
                 stage = "generation"
                 generation_inputs = {
                     "requirement": inputs["requirement"], "testbench": inputs["testbench"],
@@ -172,8 +173,7 @@ def run_pipeline(directory, record: dict, *, retriever=None) -> int:
             status = formal_result["status"]
             pec_pass = formal_result["acceptance_reason"] == "pec"
             passed = formal_result["accepted"]
-            print(f"Round {round_number}/{config.MAX_ROUNDS}: {status} | "
-                  f"PEC={formal_result.get('pec')} | BLEU={formal_result.get('bleu')}", flush=True)
+            run_io.print_round_summary(round_number, config.MAX_ROUNDS, formal_result)
             if passed:
                 run_io.update_run(
                     directory, record, status="PASSED", passed=True, stage="finished",
@@ -219,11 +219,6 @@ def run_pipeline(directory, record: dict, *, retriever=None) -> int:
                 )
                 continue
 
-            if status == "PEC_COMPILE_ERROR":
-                print(
-                    f"Round {round_number}: PEC verdict unavailable; continuing "
-                    f"with {'requirement-based' if inference else 'reference-based'} diagnosis and rule generation.", flush=True,
-                )
             stage = "diagnosis"
             try:
                 if inference and retrieved_cases is None:
@@ -235,10 +230,7 @@ def run_pipeline(directory, record: dict, *, retriever=None) -> int:
                                 for c in retrieved_cases]
                     run_io.update_run(directory, record, retrieved_cases=evidence)
                     run_io.save_debug_event(directory, record, "retrieval", cases=retrieved_cases)
-                    print("Retrieved case IDs:", [c["case_number"] for c in retrieved_cases], flush=True)
                 stage = "diagnosis"
-                print(f"Round {round_number}: running Jev "
-                      f"{'rule applicability' if inference else 'diagnosis'}.", flush=True)
                 run_io.update_run(directory, record, stage=stage)
                 with run_io.measure_stage(record, "diagnosis") as capture_usage:
                     diagnosis_inputs = {
@@ -273,8 +265,6 @@ def run_pipeline(directory, record: dict, *, retriever=None) -> int:
                     }
                     run_io.save_debug_event(directory, record, "diagnosis", diagnosis=diagnosis, selected_rules=selected)
                     run_io.save_debug_event(directory, record, "rule_selection", selected_rules=selected)
-                    print(f"Round {round_number}: Jev selected {len(selected)}/"
-                          f"{len(diagnosis['answers'])} retrieved rules.", flush=True)
                 else:
                     stage = "formatting"
                     run_io.update_run(directory, record, stage=stage)
@@ -286,7 +276,6 @@ def run_pipeline(directory, record: dict, *, retriever=None) -> int:
                     run_io.update_run(directory, record, statements=statements)
                     run_io.save_debug_event(directory, record, "statements", statements=statements)
                 stage = "rule_generation"
-                print(f"Round {round_number}: running rule generation.", flush=True)
                 run_io.update_run(directory, record, stage=stage)
                 rule_inputs = {
                     "requirement": inputs["requirement"],
@@ -342,6 +331,7 @@ def run_pipeline(directory, record: dict, *, retriever=None) -> int:
         passed=False, stage="finished", stop_reason="max_rounds",
     )
     return 0 if resolved else 1
+
 
 
 
