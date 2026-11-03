@@ -89,7 +89,7 @@ RUNS_DIR = Path(__file__).resolve().parent / "runs"
 # This SAME run supplies the retrieval bank and the default held-out selection.
 TRAINING_RUN_DIR = None
 
-# Retrieve cases with linked feedback leading to a strict successful assertion.
+# Retrieve passed cases with recorded guidance from all training rounds.
 TOP_K_CASES = 8
 # Select this many diagnoses/rules, or the whole pool when it contains fewer.
 TOP_K_DIAGNOSES = 5

@@ -1,4 +1,4 @@
-"""Select masked final-feedback diagnoses and demonstrated corrections."""
+"""Select masked diagnoses and corrections from all recorded training rounds."""
 from copy import deepcopy
 import json
 from new_agent import config
@@ -29,7 +29,7 @@ def compact_tree(tree, *, include_source=True):
 
 
 def compact_rule_bank(candidates):
-    """Keep final-feedback diagnoses, located rules and shared repair examples."""
+    """Keep every round's guidance, locations and recorded revision examples."""
     diagnoses, rules, examples = [], [], []
     seen_diagnoses, seen_rules = set(), {}
 
@@ -47,7 +47,7 @@ def compact_rule_bank(candidates):
         location = value.get('location', '').strip()
         if not text:
             return None
-        key = (text, location, value['before_assertion'], value['after_assertion'])
+        key = (text, location, value.get('before_assertion'), value.get('after_assertion'))
         if key not in seen_rules:
             seen_rules[key] = value['id']
             rules.append({'id': value['id'], 'rule': text, 'location': location})
@@ -57,29 +57,35 @@ def compact_rule_bank(candidates):
 
     for case in candidates:
         trace = case.get('revision_trace', [])
-        after = trace[-1] if trace else {}
-        before = next((entry for entry in trace
-                       if entry['round'] == after.get('diagnosis_from_round')), None)
-        if before is None or not before.get('assertion') or not after.get('assertion'):
-            continue
-        for item in before.get('diagnoses', []):
+        for item in case.get('diagnoses', []):
             add_diagnosis(item)
-        rule_ids = []
-        for correction in before.get('corrections', []):
-            rule_id = add_rule({**correction,
-                'before_assertion': before['assertion'], 'after_assertion': after['assertion']})
-            if rule_id and rule_id not in rule_ids:
-                rule_ids.append(rule_id)
-        if rule_ids:
-            example = next((entry for entry in examples
-                if entry['before_assertion'] == before['assertion']
-                and entry['after_assertion'] == after['assertion']), None)
-            if example is None:
-                example = {'rule_ids': [], 'before_assertion': before['assertion'],
-                           'after_assertion': after['assertion']}
-                examples.append(example)
-            example['rule_ids'].extend(rule_id for rule_id in rule_ids
-                                       if rule_id not in example['rule_ids'])
+        for before in trace:
+            for item in before.get('diagnoses', []):
+                add_diagnosis(item)
+            after = next((entry for entry in trace if entry.get('assertion')
+                          and entry.get('diagnosis_from_round') == before['round']), {})
+            status = (after.get('evaluation') or {}).get('status') or 'UNAVAILABLE'
+            rule_ids = []
+            for correction in before.get('corrections', []):
+                rule_id = add_rule({**correction,
+                    'before_assertion': before.get('assertion'),
+                    'after_assertion': after.get('assertion')})
+                if rule_id and rule_id not in rule_ids:
+                    rule_ids.append(rule_id)
+            if rule_ids and before.get('assertion'):
+                example = next((entry for entry in examples
+                    if entry['before_assertion'] == before['assertion']
+                    and entry['after_assertion'] == after.get('assertion')
+                    and entry['after_status'] == status), None)
+                if example is None:
+                    example = {'rule_ids': [], 'before_assertion': before['assertion'],
+                               'after_assertion': after.get('assertion'), 'after_status': status}
+                    examples.append(example)
+                example['rule_ids'].extend(rule_id for rule_id in rule_ids
+                                           if rule_id not in example['rule_ids'])
+        if not any(entry.get('corrections') for entry in trace):
+            for rule in case.get('rules', []):
+                add_rule(rule)
     return {'diagnoses': diagnoses, 'rules': rules, 'correction_examples': examples}
 
 
@@ -104,11 +110,12 @@ def build_selector_prompt(requirement, testbench, tree, rule_bank, *, evaluation
         raise ValueError('A nonempty target testbench or module context is required.')
     counts = required_counts(rule_bank)
     bank = {
-        'diagnoses': [diagnosis_view(item) for item in rule_bank['diagnoses']],
+        'diagnoses': [{'position': position, **diagnosis_view(item)}
+                      for position, item in enumerate(rule_bank['diagnoses'], 1)],
         'rules': [{key: item[key] for key in ('id', 'rule', 'location')}
                   for item in rule_bank['rules']],
         'correction_examples': [{key: item[key] for key in
-            ('rule_ids', 'before_assertion', 'after_assertion')}
+            ('rule_ids', 'before_assertion', 'after_assertion', 'after_status')}
             for item in rule_bank['correction_examples']],
     }
     data = {'requirement': requirement, 'testbench': testbench, 'guidance_pool': bank}
@@ -152,11 +159,17 @@ def parse_response(raw, tree, rule_bank):
     available = {_diagnosis_key(item) for item in rule_bank['diagnoses']}
     seen, selected_diagnoses = set(), []
     for item in diagnoses:
+        if type(item) is int:
+            if not 1 <= item <= len(rule_bank['diagnoses']):
+                raise ValueError(f'Diagnosis pool position {item} is outside the supplied pool.')
+            item = rule_bank['diagnoses'][item - 1]
         if not isinstance(item, dict) or set(item) != {'category', 'statement'}:
-            raise ValueError('A diagnosis contains its existing category and statement.')
+            raise ValueError('Select diagnoses using their integer pool positions.')
         key = _diagnosis_key(item)
-        if key not in available or key in seen:
-            raise ValueError('Select distinct existing diagnoses.')
+        if key not in available:
+            raise ValueError('Diagnosis text differs from the pool; select its integer position.')
+        if key in seen:
+            raise ValueError('Select distinct diagnosis pool positions.')
         seen.add(key)
         selected_diagnoses.append({'category': key[0], 'statement': key[1]})
     selected = data['selected_rules']
@@ -187,6 +200,7 @@ def make_generator_guidance(selection, rule_bank, tree, *, source_round):
                 'rule_ids': [rule_id for rule_id in example['rule_ids'] if rule_id in selected_ids],
                 'before_assertion': example['before_assertion'],
                 'after_assertion': example['after_assertion'],
+                'after_status': example['after_status'],
             } for example in rule_bank['correction_examples']
               if any(rule_id in selected_ids for rule_id in example['rule_ids'])]}
 
@@ -203,7 +217,7 @@ def generator_view(guidance, assertion, source_round):
         'selected_rules': [{key: item[key] for key in ('rule_id', 'rule', 'location')}
                            for item in result['selected_rules']],
         'correction_examples': [{key: item[key] for key in
-            ('rule_ids', 'before_assertion', 'after_assertion')}
+            ('rule_ids', 'before_assertion', 'after_assertion', 'after_status')}
             for item in result['correction_examples']],
     }
 

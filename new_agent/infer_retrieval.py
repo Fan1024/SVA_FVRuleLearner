@@ -65,7 +65,7 @@ def _legacy_generated_assertion(directory, number, case):
 
 
 class RuleRetriever:
-    """Index accepted examples and the feedback used by strict successful repairs."""
+    """Index accepted examples and all recorded guidance from passed cases."""
 
     def __init__(self, training_run_dir, *, training_case_ids, training_cases,
                  top_k: int, model_name: str):
@@ -122,37 +122,39 @@ class RuleRetriever:
             source = {'trace_file': case.get('trace_file'),
                       'round_evidence': case.get('round_evidence', [])}
             trace, trace_status = load_case_trace(self.directory, number, source)
-            after = trace[-1] if trace else {}
-            evaluation = after.get('evaluation', {})
-            feedback_round = after.get('diagnosis_from_round')
-            before = next((entry for entry in trace
-                           if entry['round'] == feedback_round), None)
-            strict_pass = (evaluation.get('acceptance_reason') not in ('bleu', 'bleu_match') and
-                           (evaluation.get('status') == 'FULL_EQUIVALENCE' or
-                            evaluation.get('pec') == 1.0))
-            if (not strict_pass or not after.get('assertion') or before is None
-                    or not before.get('assertion') or not before.get('corrections')):
+            corrections = [(entry['round'], correction) for entry in trace
+                           for correction in entry.get('corrections', [])]
+            rules = {f'round_{entry["round"]}:correction_{index}': correction['rule']
+                     for entry in trace
+                     for index, correction in enumerate(entry.get('corrections', []), 1)}
+            # Legacy runs may retain their rules only in the flat case registry.
+            if not rules:
+                rules = {key: value for key, value in case.get('rules', {}).items()
+                         if isinstance(value, str) and value.strip()}
+            if not rules:
                 self.excluded_missing_guidance_case_ids.append(number)
                 continue
-            corrections = before['corrections']
-            keys = [f"round_{before['round']}:correction_{index}"
-                    for index in range(1, len(corrections) + 1)]
-            rules = {key: correction['rule'] for key, correction in zip(keys, corrections)}
-            diagnoses = before.get('diagnoses', [])
+            keys = list(rules)
+            diagnoses = [item for entry in trace for item in entry.get('diagnoses', [])]
+            if not corrections:
+                diagnoses = case.get('diagnoses', [])
             self._trace_sources[number] = source
-            self._trace_cache[number] = ([before, after], trace_status)
+            self._trace_cache[number] = (trace, trace_status)
             self.cases.append({
                 "case_number": number, "design_name": case.get("design_name"),
                 "task_id": case.get("task_id"), "requirement": requirement.strip(),
                 "passed": True, "rules": rules, "diagnoses": diagnoses,
                 "rule_groups": {},
-                "rule_diagnoses": {key: correction.get('diagnoses', [])
-                                   for key, correction in zip(keys, corrections)},
-                "rule_locations": {key: correction['location']
-                                   for key, correction in zip(keys, corrections)
-                                   if correction.get('location')},
-                "rule_rounds": {key: before['round'] for key in keys},
-                "feedback_round": before['round'], "after_round": after['round'],
+                "rule_diagnoses": ({key: correction.get('diagnoses', [])
+                                    for key, (_, correction) in zip(keys, corrections)}
+                                   if corrections else case.get('rule_diagnoses', {})),
+                "rule_locations": ({key: correction['location']
+                                    for key, (_, correction) in zip(keys, corrections)
+                                    if correction.get('location')}
+                                   if corrections else case.get('rule_locations', {})),
+                "rule_rounds": ({key: number for key, (number, _) in zip(keys, corrections)}
+                                if corrections else case.get('rule_rounds', {})),
+                "correction_rounds": sorted({number for number, _ in corrections}),
             })
         self.examples.sort(key=lambda case: case["case_number"])
         if not self.examples and not self.cases:
@@ -192,8 +194,7 @@ class RuleRetriever:
             'task_id': self.cases[i].get('task_id'),
             'similarity': float(scores[i]),
             'selected_for_rule_pool': rank <= self.top_k,
-            'feedback_round': self.cases[i]['feedback_round'],
-            'after_round': self.cases[i]['after_round'],
+            'correction_rounds': self.cases[i]['correction_rounds'],
             'embedding_requirement': requirement_for_retrieval(self.cases[i]['requirement']),
         } for rank, i in enumerate(order, 1)]
         selected = []

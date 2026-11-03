@@ -48,7 +48,7 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
         inference_workflow="existing_diagnosis_and_rule_selection",
         inference_rule_stages="select_existing_diagnoses_and_corrections",
         inference_feedback="selected_masked_training_repairs",
-        inference_rule_context="masked_final_feedback_locations_and_generated_before_after",
+        inference_rule_context="masked_all_round_guidance_locations_and_generated_before_after",
         inference_example_source="accepted_generated_training_assertions",
         inference_retrieval="once_per_target_case",
         inference_max_selected_rules=selector.limits()["rules"],
@@ -192,6 +192,8 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
                 except Exception as error:
                     _remember_round_error(directory, record, round_number, stage, error)
                     if stage.startswith("initial_"):
+                        run_io.save_debug_event(directory, record, 'selector_error',
+                            stage=stage, reason=f'{type(error).__name__}: {error}')
                         run_io.update_run(directory, record,
                             status='BLOCKED_SELECTION', passed=False, stage='finished',
                             stop_reason='selection_unavailable',
@@ -295,6 +297,8 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
                 except Exception as error:
                     latest_selector_guidance = latest_selector_round = None
                     _remember_round_error(directory, record, round_number, stage, error)
+                    run_io.save_debug_event(directory, record, 'selector_error',
+                        stage=stage, reason=f'{type(error).__name__}: {error}')
                     run_io.update_run(directory, record,
                         status='BLOCKED_SELECTION', passed=False, stage='finished',
                         stop_reason='selection_unavailable',

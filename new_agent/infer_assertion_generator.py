@@ -2,11 +2,12 @@
 import json
 from new_agent.generation_context import outcome, output_instruction, testbench_section
 
-PROMPT_VERSION='final_feedback_correction_examples_v10'
+PROMPT_VERSION='all_round_correction_examples_v11'
 REVISION_PROCEDURE=''
 
 SYSTEM_PROMPT = '''Generate a SystemVerilog assertion for the natural-language requirement. Choose
 the sequential or combinational form that fits the requested behavior.
+READ THE REQUIREMENT CAREFULLY!!!!
 
 Use the supplied testbench or module context to resolve declarations, widths,
 parameters, clock/reset signals and helper behavior relevant to the requirement.

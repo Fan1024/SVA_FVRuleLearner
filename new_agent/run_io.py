@@ -622,9 +622,18 @@ def _debug_event_text(record: dict, event: str, data: dict) -> str:
     if event == "selector_response":
         raw = data["raw_response"]
         try:
-            return json.dumps(json.loads(raw), indent=2, ensure_ascii=False)
+            selection = json.loads(raw)
+            diagnoses = selection.get('selected_diagnoses') if isinstance(selection, dict) else None
+            pool = record.get('retrieved_rule_bank', {}).get('diagnoses', [])
+            if isinstance(diagnoses, list):
+                selection['selected_diagnoses'] = [pool[item - 1]
+                    if type(item) is int and 1 <= item <= len(pool) else item
+                    for item in diagnoses]
+            return json.dumps(selection, indent=2, ensure_ascii=False)
         except ValueError:
             return raw
+    if event == 'selector_error':
+        return '\nSELECTOR ERROR\nStage: ' + data['stage'] + '\n' + data['reason']
     if event == "rule_response":
         raw = data["raw_response"]
         try:
