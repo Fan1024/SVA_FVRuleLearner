@@ -1,4 +1,4 @@
-"""Inference with existing-rule ranking and independent issue locations.
+"""Selector-first inference using existing diagnosis statements and rule text.
 
 Native extraction/checking/scoring and the installed tree implementation stay
 unchanged. The active selector never generates or rewrites rules.
@@ -10,7 +10,7 @@ from new_agent.model_gateway import ModelGateway
 from new_agent.model_output_schemas import INFERENCE_SELECTION
 from new_agent import config, formal_check, model_io, run_io
 from new_agent import tree_archive
-from new_agent.revision_context import reconsider_repeat, evaluate_once, last_transition, retain_checker_failure
+from new_agent.revision_context import reconsider_repeat, evaluate_once, retain_checker_failure
 from new_agent.tool_feedback import feedback_for_round
 from new_agent.pipeline import (
     _failed_round, _remember_round_error,
@@ -46,9 +46,9 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
     policy = formal_check.get_evaluation_policy(inputs.get("dataset", config.DATASET))
     record["settings"].update(
         inference_workflow="existing_diagnosis_and_rule_selection",
-        inference_rule_stages="select_existing_diagnoses_and_corrections",
-        inference_feedback="selected_masked_training_repairs",
-        inference_rule_context="masked_all_round_guidance_locations_and_generated_before_after",
+        inference_rule_stages="rank_existing_diagnoses_and_rules_only",
+        inference_feedback="latest_ranked_masked_diagnoses_and_rules",
+        inference_rule_context="masked_diagnoses_and_rules_only",
         inference_example_source="accepted_generated_training_assertions",
         inference_retrieval="once_per_target_case",
         inference_max_selected_rules=selector.limits()["rules"],
@@ -120,8 +120,8 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
                         selection = selector.parse_response(response, None, record["retrieved_rule_bank"])
                         evidence["initial_inference_selection"] = deepcopy(selection)
                         selected_diagnoses = {(item['category'], item['statement'])
-                                              for item in selection['selected_diagnoses']}
-                        selected_rules = {item['rule_id'] for item in selection['selected_rules']}
+                                              for item in selection['ranked_diagnoses']}
+                        selected_rules = {item['rule_id'] for item in selection['ranked_rules']}
                         run_io.save_debug_event(directory, record, 'selector_unselected',
                             initial=True, round=round_number,
                             diagnoses=[item for item in record['retrieved_rule_bank']['diagnoses']
@@ -149,7 +149,7 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
                                             source_round=latest_selector_round,
                                             payload=latest_selector_guidance)
                     # Retain current guidance if generation/extraction fails.
-                    # Selected masked training repairs guide generation and revision.
+                    # Selected masked diagnosis statements and rules guide each attempt.
                     attempt["prompts"]["user"] = user_prompt
                     run_io.update_run(directory, record, stage=stage)
                     if client is None:
@@ -261,8 +261,7 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
                     run_io.update_run(directory, record, stage=stage)
                     prompt = selector.build_selector_prompt(
                         inputs["requirement"], inputs["testbench"], tree,
-                        record["retrieved_rule_bank"], evaluation_status=formal_result['tool_feedback'],
-                        previous_transition=last_transition(record['round_evidence'], generated_assertion, status))
+                        record["retrieved_rule_bank"], evaluation_status=formal_result['tool_feedback'])
                     evidence["selector_checker_status"] = status
                     run_io.save_debug_event(directory, record, "selector_request")
                     # Reuse the existing 'rule' usage column for selector cost only.
@@ -279,8 +278,8 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
                     selection = selector.parse_response(response, tree, record["retrieved_rule_bank"])
                     evidence["inference_selection"] = deepcopy(selection)
                     selected_diagnoses = {(item['category'], item['statement'])
-                                          for item in selection['selected_diagnoses']}
-                    selected_rules = {item['rule_id'] for item in selection['selected_rules']}
+                                          for item in selection['ranked_diagnoses']}
+                    selected_rules = {item['rule_id'] for item in selection['ranked_rules']}
                     run_io.save_debug_event(directory, record, 'selector_unselected',
                         round=round_number,
                         diagnoses=[item for item in record['retrieved_rule_bank']['diagnoses']

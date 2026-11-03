@@ -551,6 +551,8 @@ def _debug_event_text(record: dict, event: str, data: dict) -> str:
         if isinstance(payload, dict) and 'selected_diagnoses' in payload:
             payload = {key: payload.get(key, []) for key in
                        ('selected_diagnoses', 'selected_rules', 'correction_examples')}
+        elif isinstance(payload, dict) and 'ranked_diagnoses' in payload:
+            payload = {key: payload.get(key, []) for key in ('ranked_diagnoses', 'ranked_rules')}
         heading = ('\nGENERATOR GUIDANCE — INITIAL SELECTION\n'
                    if record.get('settings', {}).get('phase') == 'infer'
                    and data.get('source_round') is None and payload is not None else

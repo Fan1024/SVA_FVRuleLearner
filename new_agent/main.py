@@ -168,13 +168,13 @@ def main() -> int:
         settings.update(
             inference_workflow="existing_diagnosis_and_rule_selection",
             inference_selector_applicability_reasons=False,
-            inference_feedback="selected_masked_training_repairs",
-            inference_rule_stages='select_existing_diagnoses_and_corrections',
-            inference_rule_context='masked_all_round_guidance_locations_and_generated_before_after',
+            inference_feedback="latest_ranked_masked_diagnoses_and_rules",
+            inference_rule_stages='rank_existing_diagnoses_and_rules_only',
+            inference_rule_context='masked_diagnoses_and_rules_only',
             inference_rule_generation_enabled=False,
             inference_max_selected_rules=config.TOP_K_RULES,
             inference_max_selected_diagnoses=config.TOP_K_DIAGNOSES,
-            training_evidence_masking="after_unmasked_cosine; all_round_diagnoses_rules_locations_before_after; consistent_per_case",
+            training_evidence_masking="after_unmasked_cosine; all_round_diagnoses_and_rules; consistent_per_case",
             source_training_run=str(source_dir),
             inference_case_selection=("explicit_case_ids" if config.CASE_IDS else
                                       "all_dataset_cases_minus_source_selected_cases"),
