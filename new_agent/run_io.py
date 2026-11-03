@@ -517,6 +517,13 @@ def _debug_event_text(record: dict, event: str, data: dict) -> str:
         return f"\nFORMAL TOOL DETAILS — ROUND {data['round']}\n{data['details']}"
     if event == "assertion_request":
         number = record["pending_attempt"]["round"]
+        if record["settings"].get("inference_workflow") == "existing_diagnosis_and_rule_selection":
+            if number == 1:
+                return f"\nROUND {number}\n=======\n"
+            source = record.get("inference_feedback_round")
+            feedback = (f"selected guidance from round {source}" if source is not None
+                        else "requirement-based guidance")
+            return f"\nROUND {number}\n=======\nDiagnosis feedback: {feedback}\n"
         if record["settings"].get("inference_workflow") or record["settings"].get("training_workflow"):
             source = record.get("inference_feedback_round") if record["settings"].get("inference_workflow") else record.get('training_feedback_round')
             feedback = ((f"selected guidance from round {source}"
@@ -532,6 +539,8 @@ def _debug_event_text(record: dict, event: str, data: dict) -> str:
             f"\nROUND {number}\n=======\nRule groups used: {groups}\n\n"
             "ASSERTION GENERATOR OUTPUT"
         )
+    if event == "assertion_generation":
+        return "\nASSERTION GENERATOR OUTPUT"
     if event == 'guidance_context':
         payload = data.get('payload')
         if isinstance(payload, str):
@@ -539,10 +548,14 @@ def _debug_event_text(record: dict, event: str, data: dict) -> str:
                 payload = json.loads(payload)
             except ValueError:
                 pass
-        if isinstance(payload, dict) and 'ranked_diagnoses' in payload:
-            payload = {key: payload.get(key, []) for key in ('ranked_diagnoses', 'ranked_rules')}
-        return ('\nGENERATOR GUIDANCE — FROM ROUND ' + str(data.get('source_round')) + '\n'
-                + json.dumps(payload, ensure_ascii=False, indent=2))
+        if isinstance(payload, dict) and 'selected_diagnoses' in payload:
+            payload = {key: payload.get(key, []) for key in
+                       ('selected_diagnoses', 'selected_rules', 'correction_examples')}
+        heading = ('\nGENERATOR GUIDANCE — INITIAL SELECTION\n'
+                   if record.get('settings', {}).get('phase') == 'infer'
+                   and data.get('source_round') is None and payload is not None else
+                   '\nGENERATOR GUIDANCE — FROM ROUND ' + str(data.get('source_round')) + '\n')
+        return heading + json.dumps(payload, ensure_ascii=False, indent=2)
     if event == 'revision_retry':
         return '\nREVISION REASSESSMENT\nRepeated a known non-equivalent attempt from rounds ' + str(data['rounds'])
     if event == "assertion_response":
@@ -586,16 +599,18 @@ def _debug_event_text(record: dict, event: str, data: dict) -> str:
         if 'rule_bank' in data:
             pool = ('\nRETRIEVAL CASE POOL\n' + json.dumps(data['case_pool'], indent=2, ensure_ascii=False)
                     if data.get('case_pool') is not None else '')
-            return pool + '\nRETRIEVED AND PREDEFINED RULE BANK\n' + json.dumps(data['rule_bank'], indent=2, ensure_ascii=False)
+            return pool + '\nRETRIEVED RULE BANK\n' + json.dumps(data['rule_bank'], indent=2, ensure_ascii=False)
         return "\nRETRIEVED TRAINING CASES\n" + json.dumps(data["cases"], indent=2)
     if event == 'selector_unselected':
-        return (f"\nUNSELECTED GUIDANCE — ROUND {data['round']}\n" +
+        heading = ('\nUNSELECTED GUIDANCE — INITIAL SELECTION\n' if data.get('initial') else
+                   f"\nUNSELECTED GUIDANCE — ROUND {data['round']}\n")
+        return (heading +
                 json.dumps({'diagnoses': data['diagnoses'], 'rules': data['rules']},
                            indent=2, ensure_ascii=False))
     if event == "rule_request":
         return "\nRULE GENERATOR OUTPUT"
     if event == "selector_request":
-        return "\nRULE SELECTOR OUTPUT"
+        return "\nINITIAL RULE SELECTOR OUTPUT" if data.get('initial') else "\nRULE SELECTOR OUTPUT"
     if event == "inference_only_diagnosis_request":
         return "\nREQUIREMENT/TB DIAGNOSIS OUTPUT"
     if event == "inference_only_diagnosis_response":

@@ -46,9 +46,9 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
     policy = formal_check.get_evaluation_policy(inputs.get("dataset", config.DATASET))
     record["settings"].update(
         inference_workflow="existing_diagnosis_and_rule_selection",
-        inference_rule_stages="rank_existing_diagnoses_and_rules_only",
-        inference_feedback="latest_ranked_masked_diagnoses_and_rules",
-        inference_rule_context="retrieved_and_predefined_diagnoses_and_rules",
+        inference_rule_stages="select_existing_diagnoses_and_corrections",
+        inference_feedback="selected_masked_training_repairs",
+        inference_rule_context="masked_final_feedback_locations_and_generated_before_after",
         inference_example_source="accepted_generated_training_assertions",
         inference_retrieval="once_per_target_case",
         inference_max_selected_rules=selector.limits()["rules"],
@@ -88,7 +88,53 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
                             {"case_number": case["case_number"], "similarity": case["similarity"]}
                             for case in example_cases])
                         run_io.save_debug_event(directory, record, "example_retrieval", examples=example_cases)
+                    if candidates is None:
+                        stage = "initial_retrieval"
+                        run_io.update_run(directory, record, stage=stage)
+                        retrieved = retriever.retrieve(inputs["requirement"])
+                        candidates = prepare_candidates(retrieved, getattr(retriever, "masking_contexts", {}))
+                        record["retrieved_rule_bank"] = selector.compact_rule_bank(candidates)
+                        run_io.update_run(directory, record, retrieved_cases=[
+                            {"case_number": case["case_number"], "similarity": case["similarity"]}
+                            for case in retrieved])
+                        run_io.save_debug_event(directory, record, "retrieval",
+                            rule_bank=record["retrieved_rule_bank"],
+                            case_pool=getattr(retriever, 'last_retrieval_audit', None))
+                        stage = "initial_rule_selection"
+                        run_io.update_run(directory, record, stage=stage)
+                        if client is None:
+                            client = ModelGateway()
+                        prompt = selector.build_selector_prompt(
+                            inputs["requirement"], inputs["testbench"], None,
+                            record["retrieved_rule_bank"])
+                        run_io.save_debug_event(directory, record, "selector_request", initial=True)
+                        with run_io.measure_stage(record, "rule") as capture_usage:
+                            response = model_io.request_text(
+                                client=client, model=config.MODEL,
+                                instructions=selector.SYSTEM_PROMPT, user_prompt=prompt,
+                                json_output=True, usage_callback=capture_usage,
+                                output_schema=INFERENCE_SELECTION)
+                        evidence["initial_selector_raw_response"] = response
+                        run_io.save_debug_event(directory, record, "selector_response", raw_response=response)
+                        stage = "initial_selector_response_format"
+                        selection = selector.parse_response(response, None, record["retrieved_rule_bank"])
+                        evidence["initial_inference_selection"] = deepcopy(selection)
+                        selected_diagnoses = {(item['category'], item['statement'])
+                                              for item in selection['selected_diagnoses']}
+                        selected_rules = {item['rule_id'] for item in selection['selected_rules']}
+                        run_io.save_debug_event(directory, record, 'selector_unselected',
+                            initial=True, round=round_number,
+                            diagnoses=[item for item in record['retrieved_rule_bank']['diagnoses']
+                                       if (item['category'], item['statement']) not in selected_diagnoses],
+                            rules=[item for item in record['retrieved_rule_bank']['rules']
+                                   if item['id'] not in selected_rules])
+                        latest_selector_guidance = selector.make_generator_guidance(
+                            selection, record["retrieved_rule_bank"], None, source_round=None)
+                        run_io.update_run(directory, record, diagnosis=selection,
+                                          diagnosis_model=config.MODEL)
+                        run_io.save_diagnosis_model(record, config.MODEL)
                     stage = "generation"
+                    run_io.save_debug_event(directory, record, "assertion_generation")
                     generation_inputs = {
                         "requirement": inputs["requirement"],
                         "testbench": inputs["testbench"],
@@ -103,7 +149,7 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
                                             source_round=latest_selector_round,
                                             payload=latest_selector_guidance)
                     # Retain current guidance if generation/extraction fails.
-                    # Only selected retrieved or predefined guidance enters revision.
+                    # Selected masked training repairs guide generation and revision.
                     attempt["prompts"]["user"] = user_prompt
                     run_io.update_run(directory, record, stage=stage)
                     if client is None:
@@ -145,6 +191,12 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
                         )
                 except Exception as error:
                     _remember_round_error(directory, record, round_number, stage, error)
+                    if stage.startswith("initial_"):
+                        run_io.update_run(directory, record,
+                            status='BLOCKED_SELECTION', passed=False, stage='finished',
+                            stop_reason='selection_unavailable',
+                            diagnosis_skipped_reason='Initial guidance could not be retrieved or selected.')
+                        return 1
                     status = {"generation": "GENERATION_ERROR", "extraction": "FORMAT_ERROR"}.get(stage, "TOOL_ERROR")
                     formal_result = _failed_round(
                         check_dir, round_number, status, f"{stage}: {type(error).__name__}: {error}", policy,
@@ -198,18 +250,8 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
                 if inspection_trees is None:
                     inspection_trees = {'generated': tree_archive.build(generated_assertion, 'G')}
 
-                stage = "retrieval"
+                stage = "rule_selection"
                 try:
-                    if candidates is None:
-                        retrieved = retriever.retrieve(inputs["requirement"])
-                        candidates = prepare_candidates(retrieved, getattr(retriever, "masking_contexts", {}))
-                        record["retrieved_rule_bank"] = selector.compact_rule_bank(candidates)
-                        run_io.update_run(directory, record, retrieved_cases=[
-                            {"case_number": case["case_number"], "similarity": case["similarity"]}
-                            for case in retrieved])
-                        run_io.save_debug_event(directory, record, "retrieval",
-                                                rule_bank=record["retrieved_rule_bank"],
-                                                case_pool=getattr(retriever, 'last_retrieval_audit', None))
                     tree = inspection_trees["generated"]
                     evidence = record["round_evidence"][-1]
                     evidence["generated_tree"] = tree
@@ -222,7 +264,7 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
                     evidence["selector_checker_status"] = status
                     run_io.save_debug_event(directory, record, "selector_request")
                     # Reuse the existing 'rule' usage column for selector cost only.
-                    # One selector call; the model selects up to each configured limit.
+                    # Select the configured counts or every entry in a smaller pool.
                     with run_io.measure_stage(record, "rule") as capture_usage:
                         response = model_io.request_text(
                             client=client, model=config.MODEL,
@@ -235,8 +277,8 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
                     selection = selector.parse_response(response, tree, record["retrieved_rule_bank"])
                     evidence["inference_selection"] = deepcopy(selection)
                     selected_diagnoses = {(item['category'], item['statement'])
-                                          for item in selection['ranked_diagnoses']}
-                    selected_rules = {item['rule_id'] for item in selection['ranked_rules']}
+                                          for item in selection['selected_diagnoses']}
+                    selected_rules = {item['rule_id'] for item in selection['selected_rules']}
                     run_io.save_debug_event(directory, record, 'selector_unselected',
                         round=round_number,
                         diagnoses=[item for item in record['retrieved_rule_bank']['diagnoses']

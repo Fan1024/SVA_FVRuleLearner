@@ -89,9 +89,9 @@ RUNS_DIR = Path(__file__).resolve().parent / "runs"
 # This SAME run supplies the retrieval bank and the default held-out selection.
 TRAINING_RUN_DIR = None
 
-# Retrieve up to this many cases WITH rules, ranked by requirement similarity.
-TOP_K_CASES = 5
-# Maximum diagnoses and rules selected independently from the combined pool.
+# Retrieve cases with linked feedback leading to a strict successful assertion.
+TOP_K_CASES = 8
+# Select this many diagnoses/rules, or the whole pool when it contains fewer.
 TOP_K_DIAGNOSES = 5
 TOP_K_RULES = 5
 EMBEDDING_MODEL = "all-MiniLM-L6-v2"

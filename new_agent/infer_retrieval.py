@@ -65,7 +65,7 @@ def _legacy_generated_assertion(directory, number, case):
 
 
 class RuleRetriever:
-    """Share one embedding model; rank training examples and rule cases separately."""
+    """Index accepted examples and the feedback used by strict successful repairs."""
 
     def __init__(self, training_run_dir, *, training_case_ids, training_cases,
                  top_k: int, model_name: str):
@@ -91,6 +91,7 @@ class RuleRetriever:
         self._trace_sources = {}
         self._trace_cache = {}
         seen = set()
+        from new_agent.infer_training_traces import load_case_trace
         for line_number, line in enumerate(data.decode("utf-8-sig").splitlines(), 1):
             if not line.strip():
                 continue
@@ -114,63 +115,44 @@ class RuleRetriever:
                                       "solved_assertion": example_source})
             else:
                 self.missing_generated_example_case_ids.append(number)
-            requirement = case.get("requirement")
-            rules = case.get("rules")
-            if not isinstance(requirement, str) or not requirement.strip() or not isinstance(rules, dict):
-                continue
-            rules = {key: value.strip() for key, value in rules.items()
-                     if isinstance(value, str) and value.strip()}
-            diagnoses = case.get('diagnoses', [])
-            diagnoses = [item for item in diagnoses if isinstance(item, dict)
-                         and isinstance(item.get('category'), str) and item['category'].strip()
-                         and isinstance(item.get('statement'), str) and item['statement'].strip()
-                         ] if isinstance(diagnoses, list) else []
-            if not rules or not diagnoses:
+            requirement = source_cases[number].get("requirement")
+            if not isinstance(requirement, str) or not requirement.strip():
                 self.excluded_missing_guidance_case_ids.append(number)
                 continue
-            self._trace_sources[number] = {
-                'trace_file': case.get('trace_file'),
-                'round_evidence': case.get('round_evidence', []),
-            }
-            groups = case.get("rule_groups", {})
-            if not isinstance(groups, dict):
-                raise ValueError(f"Invalid rule_groups for case {number}.")
-            locations = case.get('rule_locations', {})
-            if not isinstance(locations, dict):
-                locations = {}
-            # Only selected TRAINING generated revisions can enter selector
-            # evidence. The selector's allowlist removes scores and diagnostics.
-            round_evidence = []
-            for evidence in case.get("round_evidence", []):
-                evaluation = evidence.get("evaluation")
-                round_evidence.append({
-                    "round": evidence["round"],
-                    "tree_rule_diagnosis": evidence.get("tree_rule_diagnosis", evidence.get("diagnosis")),
-                    "generated_assertion": evidence.get("generated_assertion"),
-                    "evaluation": None if evaluation is None else {
-                        key: evaluation.get(key) for key in (
-                            "status", "syntax", "pec", "relax_pec", "bleu", "rouge",
-                            "exact_match", "accepted", "acceptance_reason",
-                        )
-                    },
-                    "rules_used": [{key: rule.get(key) for key in (
-                        "group", "rule", "updated_round",
-                    )} for rule in evidence.get("rules_used", [])],
-                    "rules_generated": {
-                        rule_id: {"group": rule["group"], "rule": rule["rule"], "diagnoses": rule.get("diagnoses", [])}
-                        for rule_id, rule in evidence.get("rules_generated", {}).items()
-                    },
-                })
+            source = {'trace_file': case.get('trace_file'),
+                      'round_evidence': case.get('round_evidence', [])}
+            trace, trace_status = load_case_trace(self.directory, number, source)
+            after = trace[-1] if trace else {}
+            evaluation = after.get('evaluation', {})
+            feedback_round = after.get('diagnosis_from_round')
+            before = next((entry for entry in trace
+                           if entry['round'] == feedback_round), None)
+            strict_pass = (evaluation.get('acceptance_reason') not in ('bleu', 'bleu_match') and
+                           (evaluation.get('status') == 'FULL_EQUIVALENCE' or
+                            evaluation.get('pec') == 1.0))
+            if (not strict_pass or not after.get('assertion') or before is None
+                    or not before.get('assertion') or not before.get('corrections')):
+                self.excluded_missing_guidance_case_ids.append(number)
+                continue
+            corrections = before['corrections']
+            keys = [f"round_{before['round']}:correction_{index}"
+                    for index in range(1, len(corrections) + 1)]
+            rules = {key: correction['rule'] for key, correction in zip(keys, corrections)}
+            diagnoses = before.get('diagnoses', [])
+            self._trace_sources[number] = source
+            self._trace_cache[number] = ([before, after], trace_status)
             self.cases.append({
                 "case_number": number, "design_name": case.get("design_name"),
                 "task_id": case.get("task_id"), "requirement": requirement.strip(),
-                "passed": case.get("passed"), "rules": rules, "diagnoses": diagnoses,
-                "rule_groups": {key: groups.get(key, []) for key in rules},
-                "rule_diagnoses": {key: case.get("rule_diagnoses", {}).get(key, []) for key in rules},
-                "rule_locations": {key: locations[key] for key in rules
-                                   if isinstance(locations.get(key), str) and locations[key].strip()},
-                "rule_rounds": {key: case.get("rule_rounds", {}).get(key) for key in rules},
-                "round_evidence": round_evidence,
+                "passed": True, "rules": rules, "diagnoses": diagnoses,
+                "rule_groups": {},
+                "rule_diagnoses": {key: correction.get('diagnoses', [])
+                                   for key, correction in zip(keys, corrections)},
+                "rule_locations": {key: correction['location']
+                                   for key, correction in zip(keys, corrections)
+                                   if correction.get('location')},
+                "rule_rounds": {key: before['round'] for key in keys},
+                "feedback_round": before['round'], "after_round": after['round'],
             })
         self.examples.sort(key=lambda case: case["case_number"])
         if not self.examples and not self.cases:
@@ -210,16 +192,14 @@ class RuleRetriever:
             'task_id': self.cases[i].get('task_id'),
             'similarity': float(scores[i]),
             'selected_for_rule_pool': rank <= self.top_k,
+            'feedback_round': self.cases[i]['feedback_round'],
+            'after_round': self.cases[i]['after_round'],
             'embedding_requirement': requirement_for_retrieval(self.cases[i]['requirement']),
         } for rank, i in enumerate(order, 1)]
-        from new_agent.infer_training_traces import load_case_trace
         selected = []
         for i in order[:self.top_k]:
             case = self.cases[i]
             number = case['case_number']
-            if number not in self._trace_cache:
-                self._trace_cache[number] = load_case_trace(
-                    self.directory, number, self._trace_sources[number])
             trace, status = self._trace_cache[number]
             selected.append({**case, 'similarity': float(scores[i]),
                              'revision_trace': trace, 'trace_status': status})

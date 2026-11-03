@@ -16,7 +16,6 @@ TRAINING_RULES = _object(
 )
 
 INFERENCE_SELECTION = _object(
-    ranked_diagnoses=_array(_object(category={'type': 'string'}, statement={'type': 'string'},
-                                   rank={'type': 'integer'})),
-    ranked_rules=_array(_object(rule_id={'type': 'string'}, rank={'type': 'integer'})),
+    selected_diagnoses=_array(_object(category={'type': 'string'}, statement={'type': 'string'})),
+    selected_rules=_array(_object(rule_id={'type': 'string'})),
 )
