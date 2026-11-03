@@ -5,6 +5,7 @@ import json
 from new_agent import assertion_tree
 from new_agent.diagnosis_context import linked_diagnoses, category_label, interpretation_view
 from new_agent.correction_locations import location_for
+from new_agent.generation_context import model_testbench
 from new_agent.tool_feedback import compact_tool_feedback
 from new_agent.train_tree_rule_prompts import SYSTEM_PROMPT, TASK_INSTRUCTIONS
 
@@ -34,7 +35,7 @@ def build_rule_prompt(requirement, generated_assertion, reference_assertion,
     for side, source in (("generated", generated_assertion), ("reference", reference_assertion)):
         if trees[side].get("source_assertion") != source:
             raise ValueError(f"The {side} tree does not belong to the current source assertion.")
-    data = dict(requirement=requirement, testbench=testbench,
+    data = dict(requirement=requirement, testbench=model_testbench(testbench),
                 generated_tree=compact_tree(trees['generated']),
                 reference_assertion=reference_assertion,
                 tool_feedback=compact_tool_feedback(evaluation_status))

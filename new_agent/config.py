@@ -23,7 +23,11 @@ DATASET_PATH = (
 # inference_only runs the full dataset. Explicit inference IDs may overlap Train
 # cases for diagnostic reruns; the overlap is recorded in run_metadata.json.
 # These numbers are not physical CSV line numbers or source task_id values.
-CASE_IDS = [31, 32, 79]
+CASE_IDS = [79]
+
+# True keeps // and /* */ comments in every LLM's testbench/module context.
+# False removes them from prompt copies; formal checking uses the original source.
+LLM_TESTBENCH_COMMENTS_VISIBLE = False
 
 # Used only when MODE = "train" and CASE_IDS = [].
 # Training count = int(total cases * TRAIN_FRACTION); both parts must be nonempty.

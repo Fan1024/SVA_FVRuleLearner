@@ -3,6 +3,7 @@ from copy import deepcopy
 import json
 from new_agent import config
 from new_agent.diagnosis_context import diagnosis_view
+from new_agent.generation_context import model_testbench
 from new_agent.tool_feedback import compact_tool_feedback
 
 MAX_SELECTED_RULES=5  # Compatibility name; configured limits are read per request.
@@ -118,7 +119,7 @@ def build_selector_prompt(requirement, testbench, tree, rule_bank, *, evaluation
             ('rule_ids', 'before_assertion', 'after_assertion', 'after_status')}
             for item in rule_bank['correction_examples']],
     }
-    data = {'requirement': requirement, 'testbench': testbench, 'guidance_pool': bank}
+    data = {'requirement': requirement, 'testbench': model_testbench(testbench), 'guidance_pool': bank}
     if tree is not None:
         data['generated_assertion'] = tree['source_assertion']
     if evaluation_status is not None:

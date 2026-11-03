@@ -68,6 +68,8 @@ def validate_config() -> None:
         raise ValueError("CONFIDENCE_THRESHOLD must be a number between 0 and 1.")
     if type(config.SAVE_DEBUG_TRACES) is not bool:
         raise ValueError("SAVE_DEBUG_TRACES must be True or False.")
+    if type(config.LLM_TESTBENCH_COMMENTS_VISIBLE) is not bool:
+        raise ValueError("LLM_TESTBENCH_COMMENTS_VISIBLE must be True or False.")
     try:
         import pyslang
     except ImportError as error:
@@ -146,6 +148,7 @@ def main() -> int:
         "confidence_threshold": config.CONFIDENCE_THRESHOLD,
         "runs_dir": str(config.RUNS_DIR),
         "save_debug_traces": config.SAVE_DEBUG_TRACES,
+        "llm_testbench_comments_visible": config.LLM_TESTBENCH_COMMENTS_VISIBLE,
         "diagnosis_categories": list(DIAGNOSIS_CATEGORIES),
         "tree_parser": config.ASSERTION_TREE_PARSER,
         "candidate_syn_policy": "insert_full_candidate_into_native_human_machine_tb",

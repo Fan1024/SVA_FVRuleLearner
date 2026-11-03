@@ -1,4 +1,7 @@
 """Model-visible generation outcomes without evaluation-policy or oracle text."""
+import re
+
+
 def outcome(value):
     if isinstance(value, dict):
         from new_agent.tool_feedback import feedback_text
@@ -37,11 +40,24 @@ conditions or add obligations unsupported by the task.
 '''
 
 
+def model_testbench(testbench):
+    """Apply comment visibility to a prompt copy, preserving strings and identifiers."""
+    from new_agent import config
+    if getattr(config, 'LLM_TESTBENCH_COMMENTS_VISIBLE', True):
+        return testbench
+    return re.sub(
+        r'"(?:\\[\s\S]|[^"\\])*"|\\[^\s]+|//[^\r\n]*|/\*[\s\S]*?\*/',
+        lambda match: re.sub(r'[^\r\n]+', ' ', match.group())
+        if match.group().startswith(('//', '/*')) else match.group(),
+        testbench,
+    )
+
+
 def testbench_section(testbench):
-    """Include the complete supplied source without rewriting its contents."""
+    """Include executable source with the configured visibility of comments."""
     if not isinstance(testbench, str) or not testbench.strip():
         raise ValueError('A nonempty testbench or module context is required.')
-    return 'TESTBENCH / MODULE CONTEXT\n' + testbench
+    return 'TESTBENCH / MODULE CONTEXT\n' + model_testbench(testbench)
 
 
 def output_instruction(assertion_template=None):
