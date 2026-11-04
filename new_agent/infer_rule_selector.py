@@ -30,8 +30,9 @@ def compact_tree(tree, *, include_source=True):
 
 
 def compact_rule_bank(candidates):
-    """Keep only masked diagnosis text and rules, including learned trace entries."""
+    """Keep all-round masked text, deduplicating rules and assigning short IDs."""
     diagnoses, rules, seen_diagnoses, seen_rules = [], [], set(), set()
+    rule_counts = {}
 
     def add_diagnosis(value):
         item = diagnosis_view(value)
@@ -42,11 +43,13 @@ def compact_rule_bank(candidates):
             seen_diagnoses.add(key)
             diagnoses.append({'category': category, 'statement': statement})
 
-    def add_rule(value):
+    def add_rule(value, case_number):
         text = value.get('rule', '').strip()
         if text and text not in seen_rules:
             seen_rules.add(text)
-            rules.append({'id': value['id'], 'rule': text})
+            rule_counts[case_number] = rule_counts.get(case_number, 0) + 1
+            rule_id = f"C{case_number:04d}:rule_{rule_counts[case_number]}"
+            rules.append({'id': rule_id, 'rule': text})
         for item in value.get('diagnoses', []):
             add_diagnosis(item)
 
@@ -54,12 +57,12 @@ def compact_rule_bank(candidates):
         for item in case.get('diagnoses', []):
             add_diagnosis(item)
         for item in case.get('rules', []):
-            add_rule(item)
+            add_rule(item, case['case_number'])
         for entry in case.get('revision_trace', []):
             for item in entry.get('diagnoses', []):
                 add_diagnosis(item)
             for item in entry.get('corrections', []):
-                add_rule(item)
+                add_rule(item, case['case_number'])
     return {'diagnoses': diagnoses, 'rules': rules}
 
 
