@@ -31,9 +31,11 @@ def request_text(client, model: str, instructions: str, user_prompt: str, *,
 
 
 def extract_assertion(response_text: str) -> str:
-    """Extract exactly one nonempty systemverilog code block."""
-    match = re.fullmatch(r"\s*```systemverilog\s*(.*?)\s*```\s*", response_text, re.DOTALL)
-    if match is None or not match.group(1).strip() or "```" in match.group(1):
+    """Extract one nonempty systemverilog block, allowing surrounding prose."""
+    parts = response_text.split("```")
+    match = (re.fullmatch(r"systemverilog\s*(.*?)\s*", parts[1], re.DOTALL)
+             if len(parts) == 3 else None)
+    if match is None or not match.group(1).strip():
         raise ValueError("Expected one nonempty systemverilog Markdown code block.")
     return match.group(1).strip()
 
@@ -64,5 +66,6 @@ def parse_rules(response_text: str) -> dict:
         if not isinstance(entry["rule"], str) or not entry["rule"].strip():
             raise ValueError(f"{name}.rule must contain an editing instruction.")
     return rules
+
 
 
