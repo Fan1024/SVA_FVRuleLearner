@@ -37,6 +37,9 @@ previous assertion, evaluation outcome and relevant correction guidance. Apply o
 adapt suggestions according to the current requirement. Interpret each location
 within the assertion to which its guidance belongs. Do not copy unrelated source
 conditions or add obligations unsupported by the task.
+
+ONLY OUTPUT THE ASSERTION!!! NO ANY OTHER CONTENT!!!
+Enclose the assertion in ```systemverilog and ```.
 '''
 
 
@@ -64,7 +67,8 @@ def output_instruction(assertion_template=None):
     instruction = ('Output exactly one complete assert property statement, optionally labelled. '
                    'Express the obligation within that one property; do not emit generate/for blocks, '
                    'module declarations, named property declarations, or multiple assertions. '
-                   'Enclose the statement in ```systemverilog and ```. Output no other text.')
+                   'ONLY OUTPUT THE ASSERTION!!! NO ANY OTHER CONTENT!!! '
+                   'Enclose the assertion in ```systemverilog and ```.')
     if assertion_template:
         instruction += '\nSTATEMENT TEMPLATE\n' + assertion_template
     return instruction
