@@ -1,10 +1,10 @@
 """Call this repository's native evaluation.py directly, in the current process.
 
-The native evaluator invokes its original Jasper launcher/Tcl/PEC. Immediately
+The native evaluator invokes its original Jasper launcher and PEC. Immediately
 before launch, our source-boundary adapter replaces the two property-expression
 arguments, binds TB integral parameters, and supplies a prepared signal-name list.
-A temporary Tcl bootstrap transfers literal input data and sources the unchanged
-native Tcl. Native analyze commands and PEC logic remain untouched.
+A temporary Tcl bootstrap transfers literal input data and sources the driver.
+OpenCore uses a local one-comparison driver; Human/Machine use native Tcl.
 Human/Machine SYN checking includes the full candidate in the TB. BLEU matches
 retain the pre-v7 PEC reporting policy after a completed comparison; missing
 PEC verdicts remain unavailable.
@@ -63,7 +63,7 @@ def get_evaluation_policy(dataset: str) -> dict:
     if dataset == "nl2sva_opencore":
         return {
             "scope": (
-                "Use the native NL2SVA-OpenCore evaluator and run_jg_nl2sva_opencore.tcl. "
+                "Use the native NL2SVA-OpenCore evaluator with the new_agent Tcl driver. "
                 "The provided context is a module interface, not a complete testbench. "
                 "Use the actual clock signal and edge required by the requirement/interface; "
                 "do not invent a signal named clk or tb_reset. Replace EDGE and CLOCK_SIGNAL "
@@ -71,8 +71,7 @@ def get_evaluation_policy(dataset: str) -> dict:
                 "Our PEC input adapter removes the leading clock event from a wrapped "
                 "assertion; remaining reset/disable iff logic stays in the formula. "
                 "Do not add reset disabling absent from the requirement. "
-                "The native Tcl checks candidate against itself, then candidate against reference; "
-                "the native OpenCore scorer requires two full-equivalence reports. "
+                "The Tcl driver checks candidate against reference once. "
                 "Do not edit an assertion solely to repair PEC declaration/compilation issues."
             ),
             "include_reset": True,
@@ -146,11 +145,13 @@ def _initialize_evaluator(log_dir, dataset: str, timeout_seconds: float = 300):
     function extraction, separate checkout, process, or environment are used.
     """
     global _SESSION
-    get_evaluation_policy(dataset)
+    policy = get_evaluation_policy(dataset)
     repo = validate_backend()
-    active_tcl = "FVEval/tool_scripts/" + get_evaluation_policy(dataset)["tcl_file"]
-    if not (repo / active_tcl).is_file():
-        raise FileNotFoundError(f"Missing native evaluator script: {repo / active_tcl}")
+    tcl_directory = "new_agent" if dataset == "nl2sva_opencore" else "FVEval/tool_scripts"
+    active_tcl = f"{tcl_directory}/{policy['tcl_file']}"
+    tcl_path = repo / active_tcl
+    if not tcl_path.is_file():
+        raise FileNotFoundError(f"Missing evaluator script: {tcl_path}")
     if type(timeout_seconds) not in (int, float) or not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
         raise ValueError("timeout_seconds must be finite and positive.")
     started = perf_counter()
@@ -174,7 +175,7 @@ def _initialize_evaluator(log_dir, dataset: str, timeout_seconds: float = 300):
             flags = native_config.FLAGS
             flags.global_task = "train"
             flags.task = dataset
-            flags.tcl_eval_file_path = str(repo / "FVEval" / "tool_scripts" / f"run_jg_{dataset}.tcl")
+            flags.tcl_eval_file_path = str(tcl_path)
             flags.jg_timeout_seconds = timeout_seconds
             flags.debug = False
             evaluation = importlib.import_module("FVEval.fv_eval.evaluation")
@@ -199,13 +200,16 @@ def _initialize_evaluator(log_dir, dataset: str, timeout_seconds: float = 300):
     session.flags.global_task = "train"
     session.flags.task = dataset
     session.flags.jg_timeout_seconds = timeout_seconds
-    session.flags.tcl_eval_file_path = str(repo / "FVEval" / "tool_scripts" / f"run_jg_{dataset}.tcl")
+    session.flags.tcl_eval_file_path = str(tcl_path)
     if dataset not in session.evaluators:
         kwargs = {"llm_output_dir": "", "model_name": "experiment",
                   "temp_dir": str(session.log_dir), "save_dir": str(session.log_dir),
                   "parallel_jobs": 1, "cleanup_temp_files": False, "debug": False}
         evaluator = (session.evaluation.NL2SVAHumanEvaluator(**kwargs) if dataset == "nl2sva_human"
                      else session.evaluation.NL2SVAMachineEvaluator(task=dataset, **kwargs))
+        if dataset == "nl2sva_opencore":
+            # Keep OpenCore input preparation and use the native one-comparison scorer.
+            evaluator.calculate_jg_metric_opencore = evaluator.calculate_jg_metric
         session.evaluators[dataset] = evaluator
         session.source.setdefault("initialization_seconds", {})[dataset] = perf_counter() - started
         _write_json(session.log_dir / "source.json", session.source)
@@ -404,11 +408,6 @@ def evaluate_assertion(generated_assertion: str, reference_assertion: str, testb
         if result["status"] in SEMANTIC_STATUSES | {"SYNTAX_ERROR", "PEC_COMPILE_ERROR"}:
             for target, source in (("syntax", "syntax"), ("pec", "functionality"), ("relax_pec", "func_relaxed")):
                 result[target] = scores[source]
-            if dataset == "nl2sva_opencore" and result["status"] in SEMANTIC_STATUSES:
-                # One of OpenCore's two checks may say Full equivalence. The
-                # supplied native scorer, not that first message, is authoritative.
-                result["status"] = ("FULL_EQUIVALENCE" if scores["functionality"] == 1.0 else
-                                    "IMPLIES" if scores["func_relaxed"] == 1.0 else "NO_EQUIVALENCE")
         if result['status'] not in SEMANTIC_STATUSES:
             result['pec'] = result['relax_pec'] = None
     except KeyboardInterrupt:
