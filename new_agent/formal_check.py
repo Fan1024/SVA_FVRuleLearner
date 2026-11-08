@@ -2,7 +2,7 @@
 
 The native evaluator invokes its original Jasper launcher and PEC. Immediately
 before launch, our source-boundary adapter replaces the two property-expression
-arguments, binds TB integral parameters, and supplies a prepared signal-name list.
+arguments with source slices and supplies a prepared signal-name list.
 A temporary Tcl bootstrap transfers literal input data and sources the driver.
 OpenCore uses a local one-comparison driver; Human/Machine use native Tcl.
 Human/Machine SYN checking includes the full candidate in the TB. BLEU matches
@@ -25,12 +25,10 @@ import tempfile
 from time import perf_counter
 import traceback
 from types import SimpleNamespace
-from new_agent.pec_input_adapter import (
-    ExtractionError, compound_sampled_calls, normalize_human_selects, prepare_pec_inputs,
-)
+from new_agent.pec_input_adapter import ExtractionError, compound_sampled_calls, prepare_pec_inputs
 from new_agent.pec_context_adapter import (
-    OpenCoreContextError, bind_parameter_constants, collect_signal_names, context_mode,
-    prepare_opencore_context, prepare_signal_list,
+    NativeParameterContextError, OpenCoreContextError, collect_signal_names, context_mode,
+    prepare_opencore_context, prepare_signal_list, referenced_parameters,
 )
 from new_agent.native_tcl_transport import literal_define_transport, COMPLETED_MARKER
 from new_agent.runtime_support import stage_progress
@@ -389,32 +387,29 @@ def evaluate_assertion(generated_assertion: str, reference_assertion: str, testb
                 testbench, bound.arguments.get("signal_list_text", ""), mode=mode, module_name=module_name)
         bound.arguments["signal_list_text"] = effective_names
         result["pec_context_preparation"] = context_preparation
-        human_declarations = None
-        if dataset == "nl2sva_human" and context_preparation.get("typed_interface_profile"):
-            human_declarations = collect_signal_names(context_source, module_name)['declarations']['range_fragments']
-        parameter_bindings = {}
+        parameters = (set(collect_signal_names(context_source, module_name)['parameters'])
+                      if mode == 'expanded_names' else set())
+        unavailable_parameters = {}
         for side, argument in (('generated', 'lm_assertion_text'), ('reference', 'ref_assertion_text')):
             formula = preparation[side]['formula']
-            bindings = {}
-            if context_preparation['mode'] == 'expanded_names':
-                formula, bindings = bind_parameter_constants(formula, context_source, module_name)
-            if human_declarations is not None:
-                formula, normalization = normalize_human_selects(formula, human_declarations)
-                if normalization:
-                    preparation[side]['normalization'] = normalization
+            names = referenced_parameters(formula, parameters)
+            if names:
+                unavailable_parameters[side] = names
             if dataset == 'nl2sva_machine':
                 calls = compound_sampled_calls(formula)
                 if calls:
                     preparation[side]['compound_sampled_calls'] = calls
             preparation[side]['native_formula'] = formula
-            preparation[side]['parameter_bindings'] = bindings
-            parameter_bindings.update(bindings)
             bound.arguments[argument] = formula
-        context_preparation['parameter_bindings'] = parameter_bindings
+        context_preparation['unavailable_parameters'] = unavailable_parameters
         _write_json(directory / "native_pec_inputs.json", {
             "args": list(bound.args), "kwargs": bound.kwargs,
             "preparation": preparation,
         })
+        if unavailable_parameters:
+            names = sorted({name for names in unavailable_parameters.values() for name in names})
+            raise NativeParameterContextError(
+                "Native PEC cannot declare fixed parameter values through its signal list: " + ", ".join(names))
         try:
             with literal_define_transport(_SESSION.execution, directory):
                 output = original_launcher(*bound.args, **bound.kwargs)
@@ -452,7 +447,9 @@ def evaluate_assertion(generated_assertion: str, reference_assertion: str, testb
         result["status"] = observed if observed in {
             "TIMEOUT", "PEC_COMPILE_ERROR", "SYNTAX_ERROR", "TB_COMPILE_ERROR"
         } else "TOOL_ERROR"
-        if isinstance(error, OpenCoreContextError):
+        if isinstance(error, NativeParameterContextError):
+            result.update(status="PEC_CONTEXT_ERROR", error_origin="native_parameter_context")
+        elif isinstance(error, OpenCoreContextError):
             if error.side == "reference":
                 result.update(status="PEC_CONTEXT_ERROR", error_origin="reference_context")
             else:

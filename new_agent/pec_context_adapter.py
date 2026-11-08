@@ -22,6 +22,10 @@ class OpenCoreContextError(ValueError):
         self.audit = audit
 
 
+class NativeParameterContextError(ValueError):
+    """A native signal-list interface cannot convey an SVA parameter value."""
+
+
 def declaration_entry(typ, name, profile):
     """Format a signal-list entry only for a server-verified declaration profile."""
     unpacked, packed = [], []
@@ -143,6 +147,15 @@ def prepare_opencore_context(interface, formulas, module_name=None):
     """Prefer the dataset interface and use matched upstream types when needed."""
     fingerprint = hashlib.sha256(interface.strip().encode('utf-8')).hexdigest()
     supplement = _opencore_contexts().get(fingerprint)
+    formula_key = hashlib.sha256(formulas['reference'].strip().encode('utf-8')).hexdigest()
+    reference_context = (supplement or {}).get('reference_contexts', {}).get(formula_key, {})
+    if reference_context.get('conflicts'):
+        conflicts = reference_context['conflicts']
+        audit = {'adapter_version': VERSION, 'mode': 'expanded_names',
+                 'context_source': 'assertionbench_harm_scopes', 'ambiguous_symbols': conflicts}
+        raise OpenCoreContextError(
+            'Flattened OpenCore reference has ambiguous RTL scope for: '
+            + ', '.join(conflicts), 'reference', audit)
     try:
         original = _prepare_opencore_context(interface, formulas, module_name)
     except OpenCoreContextError as error:
@@ -150,16 +163,21 @@ def prepare_opencore_context(interface, formulas, module_name=None):
             raise
         original = None
         original_error = error
-    if supplement and (original is None or not original[1]['typed_interface_profile']):
+    if supplement and (reference_context or original is None or not original[1]['typed_interface_profile']):
+        context = reference_context.get('module_interface', supplement['module_interface'])
         try:
             entries, audit, source = _prepare_opencore_context(
-                supplement['module_interface'], formulas, module_name)
+                context, formulas, module_name)
         except OpenCoreContextError:
             if original is None:
                 raise original_error
         else:
             audit.update(context_source='assertionbench_checker_declarations',
                          context_provenance=supplement['source'])
+            if reference_context:
+                audit.update(context_source='assertionbench_harm_scopes',
+                             scoped_symbols=reference_context['scoped_symbols'],
+                             scope_provenance=supplement['reference_context_source'])
             return entries, audit, source
     return original
 
@@ -229,20 +247,14 @@ def _prepare_opencore_context(interface, formulas, module_name=None):
     return ','.join(entries), audit, source
 
 
-def bind_parameter_constants(formula, testbench, module_name=None):
-    """Bind bare TB parameter identifiers in a PEC argument, never a checker file.
-
-    Use the same elaborated default TB instance as name collection. Sized signed
-    or unsigned literals preserve integral value, width and signedness. Original
-    assertions stay unchanged; both comparison arguments get identical bindings.
-    """
-    from new_agent.pec_input_adapter import _tokens, ExtractionError
-    literals = collect_signal_names(testbench, module_name)['parameter_literals']
+def referenced_parameters(formula, parameters):
+    """Find bare parameter identifiers without substituting their values."""
+    from new_agent.pec_input_adapter import _tokens
     tokens = _tokens(formula)
-    replacements, bindings = [], {}
+    referenced = set()
     for index, token in enumerate(tokens):
         name = token.text
-        if name not in literals:
+        if name not in parameters:
             continue
         previous = tokens[index - 1].text if index else ''
         # Keep literal digits, member names, scoped names and macros untouched.
@@ -250,15 +262,8 @@ def bind_parameter_constants(formula, testbench, module_name=None):
         scoped_right = [item.text for item in tokens[index + 1:index + 3]] == [':', ':']
         if previous in {"'", '.', '`'} or scoped_left or scoped_right:
             continue
-        literal = literals[name]
-        if literal is None:
-            raise ExtractionError(f'TB parameter {name} cannot be represented by a known integral literal.')
-        replacements.append((token.start, token.end, literal))
-        bindings[name] = literal
-    result = formula
-    for start, end, literal in reversed(replacements):
-        result = result[:start] + literal + result[end:]
-    return result, bindings
+        referenced.add(name)
+    return sorted(referenced)
 
 
 def prepare_signal_list(testbench, native_signal_list, *, mode=None, module_name=None):
@@ -273,7 +278,7 @@ def prepare_signal_list(testbench, native_signal_list, *, mode=None, module_name
     audit = {'adapter_version': VERSION, 'mode': mode, 'native_signal_list': original,
              'effective_signal_list': list(original), 'added_names': [],
              'removed_parameters': [], 'not_added': [],
-             'note': 'Signal names only; TB constants are bound in the property arguments. Native Tcl/PEC files stay unchanged.'}
+             'note': 'Only signal declarations are supplied to native PEC.'}
     if mode == 'legacy':
         audit['status'] = 'native_names_unchanged'
         return native_signal_list, audit
