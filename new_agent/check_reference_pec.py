@@ -3,8 +3,8 @@
 Place this file in new_agent/ and run from the repository root:
     python new_agent/check_reference_pec.py
 
-Human and Machine read inline testbenches. OpenCore reads module interfaces
-and uses its native two-comparison PEC flow. Block reads clean context paths
+Human and Machine read inline testbenches. OpenCore uses its native signal
+list and two-comparison PEC flow. Block reads clean context paths
 from the CSV and uses the Machine backend. Relative paths start at the repo
 root. Original Block sources, missing templates, and immediate assertions
 are reported as skipped.
@@ -16,6 +16,7 @@ import csv
 from datetime import datetime, timezone
 import json
 import math
+import os
 from pathlib import Path
 import shutil
 import sys
@@ -32,7 +33,7 @@ DATASET_PATHS = {
 SUMMARY_FIELDS = (
     "dataset", "native_backend", "case_number", "design_name", "task_id", "testbench",
     "preflight_status", "formal_status", "syntax", "syntax_check", "native_pec",
-    "native_relax_pec", "bleu", "typed_profile", "interface_note",
+    "native_relax_pec", "bleu", "pec_context_mode", "typed_profile", "interface_note",
     "native_self_check_passed", "self_check_passed", "error", "evidence_dir",
 )
 
@@ -129,6 +130,7 @@ def summarize_case(dataset, case, context_path, result, directory=None):
         "native_pec": native.get("functionality"),
         "native_relax_pec": native.get("func_relaxed"),
         "bleu": result.get("bleu"),
+        "pec_context_mode": interface.get("mode"),
         "typed_profile": typed_profile,
         "interface_note": interface.get("typed_interface_note"),
         "native_self_check_passed": native_pass,
@@ -235,7 +237,7 @@ def main(argv=None):
         parser.error("Set --repo-root to the SVA_FVRuleLearner checkout or place this file in new_agent/.")
     sys.path.insert(0, str(repo))
     from new_agent import config, formal_check, model_io
-    from new_agent.pec_context_adapter import verified_interface_profile
+    from new_agent.pec_context_adapter import context_mode, verified_interface_profile
 
     timeout = config.JASPER_TIMEOUT_SECONDS if args.timeout is None else args.timeout
     if not math.isfinite(timeout) or timeout <= 0:
@@ -250,8 +252,14 @@ def main(argv=None):
     output.mkdir(parents=True, exist_ok=False)
     profile, profile_note = verified_interface_profile()
     write_json(output / "run_metadata.json", {
-        "datasets": {dataset: {"csv_path": str(csv_paths[dataset]), "native_backend": native_backend(dataset)}
-                     for dataset in datasets},
+        "datasets": {
+            dataset: {
+                "csv_path": str(csv_paths[dataset]),
+                "native_backend": native_backend(dataset),
+                "pec_context_mode": "legacy" if dataset == "nl2sva_opencore" else context_mode(),
+            }
+            for dataset in datasets
+        },
         "case_ids": args.case_ids,
         "python": sys.executable,
         "extractor_file": str(Path(model_io.__file__).resolve()),
@@ -272,12 +280,23 @@ def main(argv=None):
             for dataset in datasets:
                 directory = output / dataset
                 directory.mkdir()
+                previous_mode = os.environ.get("FVRULE_PEC_CONTEXT_MODE")
+                if dataset == "nl2sva_opencore":
+                    # OpenCore provides interface fragments. Use the native
+                    # quoted signal list without elaborating those fragments.
+                    os.environ["FVRULE_PEC_CONTEXT_MODE"] = "legacy"
                 try:
                     summary = run_dataset(repo, dataset, csv_paths[dataset], directory, args, timeout, writer, stream)
                 except Exception as error:
                     (directory / "dataset_error.log").write_text(traceback.format_exc(), encoding="utf-8")
                     summary = dict.fromkeys(("cases", "checked", "passed", "failed", "skipped"))
                     summary.update(dataset=dataset, error=f"{type(error).__name__}: {error}")
+                finally:
+                    if dataset == "nl2sva_opencore":
+                        if previous_mode is None:
+                            os.environ.pop("FVRULE_PEC_CONTEXT_MODE", None)
+                        else:
+                            os.environ["FVRULE_PEC_CONTEXT_MODE"] = previous_mode
                 dataset_summaries.append(summary)
                 if summary["error"]:
                     print(f"{dataset} | DATASET_ERROR | {summary['error']}", flush=True)
