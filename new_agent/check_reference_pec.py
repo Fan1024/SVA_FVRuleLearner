@@ -3,8 +3,8 @@
 Place this file in new_agent/ and run from the repository root:
     python new_agent/check_reference_pec.py
 
-Human and Machine read inline testbenches. OpenCore uses its native signal
-list and two-comparison PEC flow. Block reads clean context paths
+Human and Machine read inline testbenches. OpenCore reads module interfaces
+and calls native PEC once. Block reads clean context paths
 from the CSV and uses the Machine backend. Relative paths start at the repo
 root. Original Block sources, missing templates, and immediate assertions
 are reported as skipped.
@@ -16,7 +16,6 @@ import csv
 from datetime import datetime, timezone
 import json
 import math
-import os
 from pathlib import Path
 import shutil
 import sys
@@ -35,6 +34,7 @@ SUMMARY_FIELDS = (
     "preflight_status", "formal_status", "syntax", "syntax_check", "native_pec",
     "native_relax_pec", "bleu", "pec_context_mode", "typed_profile", "interface_note",
     "native_self_check_passed", "self_check_passed", "error", "evidence_dir",
+    "normalization", "compound_sampled_calls", "context_source",
 )
 
 
@@ -100,8 +100,9 @@ def check_case(dataset, case, context_path, directory, timeout):
 
 
 def summarize_case(dataset, case, context_path, result, directory=None):
-    native = result.get("native_metrics", {})
+    native = {} if result["status"] == "TB_COMPILE_ERROR" else result.get("native_metrics", {})
     interface = result.get("pec_context_preparation", {})
+    reference_input = result.get("pec_input_preparation", {}).get("reference", {})
     typed_profile = interface.get("typed_interface_profile")
     native_pass = (
         result["status"] == "FULL_EQUIVALENCE"
@@ -109,7 +110,9 @@ def summarize_case(dataset, case, context_path, result, directory=None):
         and native.get("functionality") == 1.0
     )
     if native_pass:
-        preflight_status = "UNVERIFIED_INTERFACE" if dataset == "nl2sva_block" and not typed_profile else "PASS"
+        context_requires_types = dataset == "nl2sva_block" or (
+            dataset == "nl2sva_opencore" and interface.get("mode") == "expanded_names")
+        preflight_status = "UNVERIFIED_INTERFACE" if context_requires_types and not typed_profile else "PASS"
     else:
         preflight_status = result.get("skip_status") or (
             "NATIVE_SCORE_MISMATCH" if result["status"] == "FULL_EQUIVALENCE" else result["status"]
@@ -137,6 +140,10 @@ def summarize_case(dataset, case, context_path, result, directory=None):
         "self_check_passed": preflight_status == "PASS",
         "error": result.get("evaluation_error"),
         "evidence_dir": str(directory) if directory is not None else None,
+        "normalization": reference_input.get("normalization"),
+        "compound_sampled_calls": json.dumps(reference_input["compound_sampled_calls"])
+        if reference_input.get("compound_sampled_calls") else None,
+        "context_source": interface.get("context_source"),
     }
 
 
@@ -222,15 +229,23 @@ def main(argv=None):
     parser.add_argument("--repo-root", type=Path, default=Path(__file__).resolve().parents[1])
     parser.add_argument("--dataset", choices=DATASET_PATHS, help="Default: all four datasets.")
     parser.add_argument("--csv", type=Path, help="Override the CSV for one selected dataset.")
+    parser.add_argument("--opencore-csv", type=Path,
+                        help="Override the OpenCore CSV, including when checking all four datasets.")
     parser.add_argument("--case-ids", nargs="+", type=int, help="One-based rows in one selected dataset.")
     parser.add_argument("--testbench", type=Path, help="Override the clean context for one Block case.")
     parser.add_argument("--timeout", type=float, help="Override the configured Jasper timeout in seconds.")
     parser.add_argument("--output-dir", type=Path, help="New directory for this run's evidence.")
+    parser.add_argument("--repair-block-tb", action="store_true",
+                        help="Make input net types explicit in the Block CSV testbench templates before checking.")
     args = parser.parse_args(argv)
     if (args.csv or args.case_ids) and not args.dataset:
         parser.error("--csv and --case-ids require --dataset.")
     if args.testbench and args.dataset != "nl2sva_block":
         parser.error("--testbench requires --dataset nl2sva_block.")
+    if args.repair_block_tb and (args.dataset not in (None, "nl2sva_block") or args.testbench):
+        parser.error("--repair-block-tb requires the Block dataset with its CSV testbench paths.")
+    if args.opencore_csv and (args.csv or args.dataset not in (None, "nl2sva_opencore")):
+        parser.error("--opencore-csv requires OpenCore or an all-dataset run and cannot be combined with --csv.")
 
     repo = args.repo_root.expanduser().resolve()
     if not (repo / "new_agent/formal_check.py").is_file():
@@ -246,6 +261,13 @@ def main(argv=None):
     datasets = (args.dataset,) if args.dataset else tuple(DATASET_PATHS)
     csv_paths = {dataset: (repo / (args.csv or Path(DATASET_PATHS[dataset])).expanduser()).resolve()
                  for dataset in datasets}
+    if args.opencore_csv:
+        csv_paths["nl2sva_opencore"] = (repo / args.opencore_csv.expanduser()).resolve()
+    block_repair = None
+    if args.repair_block_tb:
+        from new_agent.repair_block_testbenches import repair_block_testbenches
+
+        block_repair = repair_block_testbenches(repo, csv_paths["nl2sva_block"])
 
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%fZ")
     output = (args.output_dir or config.RUNS_DIR / f"PEC_selfcheck_{stamp}").expanduser().resolve()
@@ -256,7 +278,7 @@ def main(argv=None):
             dataset: {
                 "csv_path": str(csv_paths[dataset]),
                 "native_backend": native_backend(dataset),
-                "pec_context_mode": "legacy" if dataset == "nl2sva_opencore" else context_mode(),
+                "pec_context_mode": context_mode(),
             }
             for dataset in datasets
         },
@@ -267,6 +289,7 @@ def main(argv=None):
         "timeout_seconds": timeout,
         "typed_profile": profile,
         "interface_note": profile_note,
+        "block_testbench_repair": block_repair,
     })
     print(f"Evidence directory: {output}\nInterface: {profile_note}", flush=True)
 
@@ -280,23 +303,12 @@ def main(argv=None):
             for dataset in datasets:
                 directory = output / dataset
                 directory.mkdir()
-                previous_mode = os.environ.get("FVRULE_PEC_CONTEXT_MODE")
-                if dataset == "nl2sva_opencore":
-                    # OpenCore provides interface fragments. Use the native
-                    # quoted signal list without elaborating those fragments.
-                    os.environ["FVRULE_PEC_CONTEXT_MODE"] = "legacy"
                 try:
                     summary = run_dataset(repo, dataset, csv_paths[dataset], directory, args, timeout, writer, stream)
                 except Exception as error:
                     (directory / "dataset_error.log").write_text(traceback.format_exc(), encoding="utf-8")
                     summary = dict.fromkeys(("cases", "checked", "passed", "failed", "skipped"))
                     summary.update(dataset=dataset, error=f"{type(error).__name__}: {error}")
-                finally:
-                    if dataset == "nl2sva_opencore":
-                        if previous_mode is None:
-                            os.environ.pop("FVRULE_PEC_CONTEXT_MODE", None)
-                        else:
-                            os.environ["FVRULE_PEC_CONTEXT_MODE"] = previous_mode
                 dataset_summaries.append(summary)
                 if summary["error"]:
                     print(f"{dataset} | DATASET_ERROR | {summary['error']}", flush=True)

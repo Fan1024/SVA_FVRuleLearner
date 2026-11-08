@@ -13,6 +13,15 @@ import re
 VERSION = 'native_signal_list_v9_in_range_probe'
 
 
+class OpenCoreContextError(ValueError):
+    """The property cannot be resolved against the supplied OpenCore interface."""
+
+    def __init__(self, message, side, audit):
+        super().__init__(message)
+        self.side = side
+        self.audit = audit
+
+
 def declaration_entry(typ, name, profile):
     """Format a signal-list entry only for a server-verified declaration profile."""
     unpacked, packed = [], []
@@ -122,6 +131,102 @@ def _collect(source, module_name):
 
 def collect_signal_names(testbench, module_name=None):
     return deepcopy(_collect(testbench, module_name))
+
+
+@lru_cache(maxsize=1)
+def _opencore_contexts():
+    path = Path(__file__).with_name('opencore_pec_contexts.json')
+    return json.loads(path.read_text(encoding='utf-8')) if path.is_file() else {}
+
+
+def prepare_opencore_context(interface, formulas, module_name=None):
+    """Prefer the dataset interface and use matched upstream types when needed."""
+    fingerprint = hashlib.sha256(interface.strip().encode('utf-8')).hexdigest()
+    supplement = _opencore_contexts().get(fingerprint)
+    try:
+        original = _prepare_opencore_context(interface, formulas, module_name)
+    except OpenCoreContextError as error:
+        if not supplement:
+            raise
+        original = None
+        original_error = error
+    if supplement and (original is None or not original[1]['typed_interface_profile']):
+        try:
+            entries, audit, source = _prepare_opencore_context(
+                supplement['module_interface'], formulas, module_name)
+        except OpenCoreContextError:
+            if original is None:
+                raise original_error
+        else:
+            audit.update(context_source='assertionbench_checker_declarations',
+                         context_provenance=supplement['source'])
+            return entries, audit, source
+    return original
+
+
+def _prepare_opencore_context(interface, formulas, module_name=None):
+    """Use declared OpenCore symbols instead of native prompt-derived names."""
+    import pyslang
+    from new_agent.pec_input_adapter import _tokens
+
+    source = interface.strip()
+    if source.startswith('"') and source.endswith('"'):
+        source = source[1:-1].strip()
+    # Some CSV fragments repeat a module heading as a display prefix.
+    source = re.sub(r'^module\s+[A-Za-z_][\w$]*\s+(?=module\s)', '', source, count=1)
+    if not any(token.text == 'endmodule' for token in _tokens(source)):
+        source += '\nendmodule\n'
+    audit = {'adapter_version': VERSION, 'mode': 'expanded_names',
+             'context_source': 'module_interface', 'typed_interface_profile': None,
+             'typed_interface_note': None, 'unresolved_symbols': {}}
+    try:
+        collected = collect_signal_names(source, module_name)
+    except ValueError as error:
+        raise OpenCoreContextError(str(error), 'reference', audit) from error
+
+    signals = [name for name in collected['signals'] if re.fullmatch(r'[A-Za-z_][A-Za-z0-9_$]*', name)]
+    available = set(signals) | set(collected['parameters'])
+    referenced = set()
+    audit.update(module=collected['module'], parser_version=collected['parser_version'])
+    identifier_kinds = {pyslang.syntax.SyntaxKind.IdentifierName,
+                        pyslang.syntax.SyntaxKind.IdentifierSelectName}
+    for side in ('reference', 'generated'):
+        tree = pyslang.syntax.SyntaxTree.fromText(
+            'module __pec_input; assert property (' + formulas[side] + '\n); endmodule')
+        if any(diagnostic.isError() for diagnostic in tree.diagnostics):
+            raise OpenCoreContextError('Unable to parse the OpenCore property body.', side, audit)
+        names = set()
+
+        def visit(node):
+            if node.kind in identifier_kinds:
+                names.add(node.identifier.valueText)
+
+        tree.root.visit(visit)
+        missing = sorted(names - available)
+        if missing:
+            audit['unresolved_symbols'][side] = missing
+            raise OpenCoreContextError('OpenCore interface lacks declarations for: ' + ', '.join(missing),
+                                       side, audit)
+        referenced.update(names)
+
+    profile, note = verified_interface_profile()
+    audit['typed_interface_note'] = note
+    entries = signals
+    if profile:
+        declarations = collected['declarations'][profile]
+        unsupported = [name for name in signals if declarations.get(name) is None]
+        required_unsupported = sorted(referenced.intersection(unsupported))
+        if required_unsupported:
+            audit['untyped_references'] = required_unsupported
+            audit['typed_interface_note'] = (
+                'Names-only PEC because the context has no usable type for: ' + ', '.join(required_unsupported))
+        else:
+            entries = [declarations[name] for name in signals if declarations.get(name) is not None]
+            audit['omitted_unused_untyped_signals'] = unsupported
+            audit['typed_interface_profile'] = profile
+    audit.update(effective_signal_list=signals, effective_signal_entries=entries,
+                 status='signal_names_expanded')
+    return ','.join(entries), audit, source
 
 
 def bind_parameter_constants(formula, testbench, module_name=None):

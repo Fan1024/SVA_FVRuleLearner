@@ -187,6 +187,14 @@ def run_pipeline(directory, record: dict, *, retriever=None) -> int:
                 )
                 return 0
 
+            if status == "PEC_CONTEXT_ERROR":
+                run_io.update_run(
+                    directory, record, status="CHECKER_UNRESOLVED", passed=False, stage="finished",
+                    stop_reason="reference_context_unavailable",
+                    diagnosis_skipped_reason="The supplied context cannot resolve the reference property.",
+                )
+                return 1
+
             # Feedback for generation never includes the reference or PEC's expressions.
             if not inference and status == "INPUT_ERROR" and formal_result.get("error_origin") == "candidate":
                 revision_feedback = formal_result["tool_output"]

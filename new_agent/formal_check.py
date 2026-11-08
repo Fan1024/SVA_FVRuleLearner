@@ -25,8 +25,13 @@ import tempfile
 from time import perf_counter
 import traceback
 from types import SimpleNamespace
-from new_agent.pec_input_adapter import ExtractionError, prepare_pec_inputs
-from new_agent.pec_context_adapter import prepare_signal_list, bind_parameter_constants
+from new_agent.pec_input_adapter import (
+    ExtractionError, compound_sampled_calls, normalize_human_selects, prepare_pec_inputs,
+)
+from new_agent.pec_context_adapter import (
+    OpenCoreContextError, bind_parameter_constants, collect_signal_names, context_mode,
+    prepare_opencore_context, prepare_signal_list,
+)
 from new_agent.native_tcl_transport import literal_define_transport, COMPLETED_MARKER
 from new_agent.runtime_support import stage_progress
 
@@ -230,6 +235,9 @@ def _execution_status(output: str) -> str:
     errors = [line for line in lines if re.match(r"^\s*\[?\s*(?:ERROR|FATAL)\b", line, re.I)]
     if any(re.search(r"(?:^|[/\\])pec\.sve(?:\(|:)", line, re.I) for line in errors):
         return "PEC_COMPILE_ERROR"
+    if any(re.search(r"\bVERI-1906\b.*\.sva(?:\(|:)", line, re.I)
+           and "default_nettype is none" in line.lower() for line in errors):
+        return "TB_COMPILE_ERROR"
     if any(re.search(r"VERI-|ENL\d+|syntax error|previous errors", line, re.I) for line in errors):
         return "SYNTAX_ERROR"
     if re.search(r"^\s*Full equivalence between\b", text, re.M):
@@ -361,21 +369,43 @@ def evaluate_assertion(generated_assertion: str, reference_assertion: str, testb
                 "native_formulas": native_formulas,
             }
             raise
-        from new_agent import config
-        effective_names, context_preparation = prepare_signal_list(
-            testbench, bound.arguments.get("signal_list_text", ""),
-            module_name=getattr(config, "PEC_CONTEXT_MODULE", None))
-        bound.arguments["signal_list_text"] = effective_names
-        result["pec_context_preparation"] = context_preparation
         preparation["native_formulas"] = native_formulas
         result["pec_input_preparation"] = preparation
+        from new_agent import config
+        mode = context_mode()
+        module_name = getattr(config, "PEC_CONTEXT_MODULE", None)
+        context_source = testbench
+        if dataset == "nl2sva_opencore" and mode == "expanded_names":
+            try:
+                effective_names, context_preparation, context_source = prepare_opencore_context(
+                    testbench, {side: preparation[side]["formula"] for side in ("generated", "reference")},
+                    module_name=module_name)
+            except OpenCoreContextError as error:
+                result["pec_context_preparation"] = error.audit
+                raise
+            context_preparation["native_signal_list"] = bound.arguments.get("signal_list_text", "").split(",")
+        else:
+            effective_names, context_preparation = prepare_signal_list(
+                testbench, bound.arguments.get("signal_list_text", ""), mode=mode, module_name=module_name)
+        bound.arguments["signal_list_text"] = effective_names
+        result["pec_context_preparation"] = context_preparation
+        human_declarations = None
+        if dataset == "nl2sva_human" and context_preparation.get("typed_interface_profile"):
+            human_declarations = collect_signal_names(context_source, module_name)['declarations']['range_fragments']
         parameter_bindings = {}
         for side, argument in (('generated', 'lm_assertion_text'), ('reference', 'ref_assertion_text')):
             formula = preparation[side]['formula']
             bindings = {}
             if context_preparation['mode'] == 'expanded_names':
-                formula, bindings = bind_parameter_constants(
-                    formula, testbench, getattr(config, 'PEC_CONTEXT_MODULE', None))
+                formula, bindings = bind_parameter_constants(formula, context_source, module_name)
+            if human_declarations is not None:
+                formula, normalization = normalize_human_selects(formula, human_declarations)
+                if normalization:
+                    preparation[side]['normalization'] = normalization
+            if dataset == 'nl2sva_machine':
+                calls = compound_sampled_calls(formula)
+                if calls:
+                    preparation[side]['compound_sampled_calls'] = calls
             preparation[side]['native_formula'] = formula
             preparation[side]['parameter_bindings'] = bindings
             parameter_bindings.update(bindings)
@@ -419,8 +449,15 @@ def evaluate_assertion(generated_assertion: str, reference_assertion: str, testb
     except Exception as error:
         result["tool_output"] = "\n".join(outputs) or str(error)
         observed = _execution_status(result["tool_output"])
-        result["status"] = observed if observed in {"TIMEOUT", "PEC_COMPILE_ERROR", "SYNTAX_ERROR"} else "TOOL_ERROR"
-        if isinstance(error, ExtractionError):
+        result["status"] = observed if observed in {
+            "TIMEOUT", "PEC_COMPILE_ERROR", "SYNTAX_ERROR", "TB_COMPILE_ERROR"
+        } else "TOOL_ERROR"
+        if isinstance(error, OpenCoreContextError):
+            if error.side == "reference":
+                result.update(status="PEC_CONTEXT_ERROR", error_origin="reference_context")
+            else:
+                result.update(status="INPUT_ERROR", error_origin="candidate")
+        elif isinstance(error, ExtractionError):
             result["status"] = "INPUT_ERROR"
             result["error_origin"] = ('candidate_format' if getattr(error, 'side', None) == 'generated'
                                       else 'reference_extraction')
@@ -448,6 +485,13 @@ def evaluate_assertion(generated_assertion: str, reference_assertion: str, testb
         if result['status'] == 'INTERRUPTED':
             result['native_timing']['total_seconds'] = perf_counter() - started
             _write_json(directory / 'result.json', result)
+    if result["status"] == "SYNTAX_ERROR" and dataset != "nl2sva_opencore":
+        result["syntax"] = 0.0
+    if result["status"] == "TB_COMPILE_ERROR":
+        result["syntax"] = None
+        result["evaluation_error"] = (
+            "Jasper rejected the testbench input net declaration under default_nettype none. "
+            "The assertion syntax and PEC stages did not produce a verdict.")
     apply_acceptance_policy(result)
     result["native_timing"]["total_seconds"] = perf_counter() - started
     result["feedback"] = (f"Formal status: {result['status']}\nSyntax: {result['syntax']}; strict PEC: {result['pec']}; "
