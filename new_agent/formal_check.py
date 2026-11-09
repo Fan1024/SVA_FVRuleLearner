@@ -28,7 +28,7 @@ from types import SimpleNamespace
 from new_agent.pec_input_adapter import ExtractionError, compound_sampled_calls, prepare_pec_inputs
 from new_agent.pec_context_adapter import (
     NativeParameterContextError, OpenCoreContextError, collect_signal_names, context_mode,
-    prepare_opencore_context, prepare_signal_list, referenced_parameters,
+    prepare_opencore_context, prepare_signal_list, bind_parameters,
 )
 from new_agent.native_tcl_transport import literal_define_transport, COMPLETED_MARKER
 from new_agent.runtime_support import stage_progress
@@ -419,14 +419,16 @@ def evaluate_assertion(generated_assertion: str, reference_assertion: str, testb
                 testbench, bound.arguments.get("signal_list_text", ""), mode=mode, module_name=module_name)
         bound.arguments["signal_list_text"] = effective_names
         result["pec_context_preparation"] = context_preparation
-        parameters = (set(collect_signal_names(context_source, module_name)['parameters'])
-                      if mode == 'expanded_names' else set())
-        unavailable_parameters = {}
+        # Bind TB parameters to their elaborated values, identically on both sides.
+        literals = (collect_signal_names(context_source, module_name)['parameter_literals']
+                    if mode == 'expanded_names' else {})
+        unavailable_parameters, bound_parameters = {}, {}
         for side, argument in (('generated', 'lm_assertion_text'), ('reference', 'ref_assertion_text')):
-            formula = preparation[side]['formula']
-            names = referenced_parameters(formula, parameters)
-            if names:
-                unavailable_parameters[side] = names
+            formula, values, unresolved = bind_parameters(preparation[side]['formula'], literals)
+            if unresolved:
+                unavailable_parameters[side] = unresolved
+            if values:
+                bound_parameters[side] = values
             if dataset == 'nl2sva_machine':
                 calls = compound_sampled_calls(formula)
                 if calls:
@@ -434,6 +436,7 @@ def evaluate_assertion(generated_assertion: str, reference_assertion: str, testb
             preparation[side]['native_formula'] = formula
             bound.arguments[argument] = formula
         context_preparation['unavailable_parameters'] = unavailable_parameters
+        context_preparation['bound_parameters'] = bound_parameters
         _write_json(directory / "native_pec_inputs.json", {
             "args": list(bound.args), "kwargs": bound.kwargs,
             "preparation": preparation,
@@ -441,7 +444,7 @@ def evaluate_assertion(generated_assertion: str, reference_assertion: str, testb
         if unavailable_parameters:
             names = sorted({name for names in unavailable_parameters.values() for name in names})
             raise NativeParameterContextError(
-                "Native PEC cannot declare fixed parameter values through its signal list: " + ", ".join(names))
+                "No integral value is known for TB parameters referenced by the property: " + ", ".join(names))
         try:
             with literal_define_transport(_SESSION.execution, directory):
                 output = original_launcher(*bound.args, **bound.kwargs)

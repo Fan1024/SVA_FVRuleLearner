@@ -34,7 +34,7 @@ SUMMARY_FIELDS = (
     "preflight_status", "formal_status", "syntax", "syntax_check", "native_pec",
     "native_relax_pec", "bleu", "pec_context_mode", "typed_profile", "interface_note",
     "native_self_check_passed", "self_check_passed", "error", "evidence_dir",
-    "unavailable_parameters", "compound_sampled_calls", "context_source",
+    "unavailable_parameters", "compound_sampled_calls", "context_source", "bound_parameters",
 )
 
 
@@ -151,6 +151,8 @@ def summarize_case(dataset, case, context_path, result, directory=None):
         "compound_sampled_calls": json.dumps(reference_input["compound_sampled_calls"])
         if reference_input.get("compound_sampled_calls") else None,
         "context_source": interface.get("context_source"),
+        "bound_parameters": json.dumps(interface["bound_parameters"])
+        if interface.get("bound_parameters") else None,
     }
 
 

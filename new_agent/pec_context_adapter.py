@@ -247,14 +247,12 @@ def _prepare_opencore_context(interface, formulas, module_name=None):
     return ','.join(entries), audit, source
 
 
-def referenced_parameters(formula, parameters):
-    """Find bare parameter identifiers without substituting their values."""
+def _parameter_tokens(formula, parameters):
+    """Yield tokens that are bare references to the given parameter names."""
     from new_agent.pec_input_adapter import _tokens
     tokens = _tokens(formula)
-    referenced = set()
     for index, token in enumerate(tokens):
-        name = token.text
-        if name not in parameters:
+        if token.text not in parameters:
             continue
         previous = tokens[index - 1].text if index else ''
         # Keep literal digits, member names, scoped names and macros untouched.
@@ -262,8 +260,34 @@ def referenced_parameters(formula, parameters):
         scoped_right = [item.text for item in tokens[index + 1:index + 3]] == [':', ':']
         if previous in {"'", '.', '`'} or scoped_left or scoped_right:
             continue
-        referenced.add(name)
-    return sorted(referenced)
+        yield token
+
+
+def referenced_parameters(formula, parameters):
+    """Find bare parameter identifiers without substituting their values."""
+    return sorted({token.text for token in _parameter_tokens(formula, parameters)})
+
+
+def bind_parameters(formula, literals):
+    """Replace bare TB parameter references with their elaborated literals.
+
+    The native signal list cannot declare constants, so PEC would otherwise
+    see a parameter as an undeclared name or a free input. Substituting the
+    value Jasper's own elaboration uses keeps the formula's meaning; callers
+    apply it identically to the candidate and the reference. Each literal is
+    parenthesized and carries the parameter's width and signedness. Returns
+    (formula, {name: literal}, [names without a known integral value]).
+    """
+    occurrences = list(_parameter_tokens(formula, set(literals)))
+    unresolved = sorted({token.text for token in occurrences if not literals.get(token.text)})
+    if unresolved:
+        return formula, {}, unresolved
+    bound = {}
+    for token in reversed(occurrences):  # Right to left keeps earlier offsets valid.
+        literal = literals[token.text]
+        bound[token.text] = literal
+        formula = formula[:token.start] + '(' + literal + ')' + formula[token.end:]
+    return formula, dict(sorted(bound.items())), []
 
 
 def prepare_signal_list(testbench, native_signal_list, *, mode=None, module_name=None):
