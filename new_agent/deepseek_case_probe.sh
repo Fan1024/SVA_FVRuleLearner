@@ -202,7 +202,7 @@ def build_request(folder, case_id, effort, maximum):
     if model not in ('deepseek-v4-pro', 'deepseek-flash'):
         raise ValueError('Set MODEL to a supported DeepSeek model in your experiment config first.')
     user = generator.build_generation_prompt(case['requirement'], case['testbench'],
-        assertion_template=statement_template(config.DATASET))
+        assertion_template=case.get('assertion_template') or statement_template(config.DATASET))
     request = dict(model=model, messages=[{'role': 'system', 'content': generator.SYSTEM_PROMPT},
                                         {'role': 'user', 'content': user}])
     if effort == 'config':

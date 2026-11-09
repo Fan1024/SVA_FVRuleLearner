@@ -8,6 +8,8 @@ from math import isfinite
 from pathlib import Path
 from random import Random
 
+from new_agent import block_dataset
+
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 REQUIRED_COLUMNS = ("design_name", "task_id", "prompt", "ref_solution", "testbench")
@@ -34,10 +36,16 @@ def read_dataset(dataset_path: str | Path) -> list[dict]:
     case_number is the 1-based parsed-example position, excluding the header.
     It is not a physical text-line number or a number extracted from task_id.
     Extra named CSV columns are allowed but are not used by this loader.
+
+    NL2SVA-Block rows name a testbench file instead of inline source. Those
+    files are read here (see block_dataset.py), and each case also receives its
+    design's assertion_template. Block rows whose jg_status is not PROVEN are
+    excluded, but the remaining rows keep their CSV positions as case numbers.
     """
     path = resolve_dataset_path(dataset_path)
     cases = []
     identities = set()
+    testbenches = {}
 
     # newline="" lets csv handle quoted multiline assertions and testbenches.
     # utf-8-sig also accepts a UTF-8 byte-order mark before the header.
@@ -69,7 +77,7 @@ def read_dataset(dataset_path: str | Path) -> list[dict]:
             if identity in identities:
                 raise ValueError(f"Duplicate design/task identity at example {number}: {identity}")
             identities.add(identity)
-            cases.append({
+            case = {
                 "case_number": number,
                 "dataset_path": str(path),
                 "design_name": identity[0],
@@ -79,7 +87,18 @@ def read_dataset(dataset_path: str | Path) -> list[dict]:
                 "reference_assertion": (f"assert property({row['ref_solution'].strip()});"
                                         if opencore else row["ref_solution"].strip()),
                 "testbench": row["module_interface" if opencore else "testbench"].strip(),
-            })
+            }
+            if not opencore and block_dataset.is_testbench_path(case["testbench"]):
+                status = (row.get("jg_status") or "").strip()
+                if status and status not in block_dataset.INCLUDED_JG_STATUSES:
+                    continue
+                location = case["testbench"]
+                if location not in testbenches:
+                    testbenches[location] = block_dataset.read_testbench(
+                        block_dataset.resolve_testbench(location, REPO_ROOT))
+                case.update(testbenches[location])
+                case["assertion_template"] = block_dataset.assertion_template(case["design_name"])
+            cases.append(case)
 
     if not cases:
         raise ValueError(f"Dataset contains a header but no examples: {path}")
@@ -109,9 +128,12 @@ def load_cases(dataset_path: str | Path, case_ids: list[int] | None = None) -> l
     case_map = {case["case_number"]: case for case in cases}
     invalid = [number for number in case_ids if number not in case_map]
     if invalid:
+        last = cases[-1]["case_number"]
+        gaps = sorted(set(range(1, last + 1)) - set(case_map))
         raise ValueError(
             f"Case IDs {invalid} do not exist. This dataset has {len(cases)} examples; "
-            f"valid IDs are 1 through {len(cases)}."
+            f"valid IDs are 1 through {last}"
+            + (f", excluding {gaps} (not PROVEN)." if gaps else ".")
         )
     return [case_map[number] for number in case_ids]
 
@@ -203,6 +225,9 @@ def load_inference_cases(
         current = case_map[saved["case_number"]]
         if any(saved.get(key) != current[key] for key in ("design_name", "task_id")):
             raise ValueError("Training case identities do not match the current CSV.")
+        if saved.get("testbench_sha256", current.get("testbench_sha256")) != current.get("testbench_sha256"):
+            raise ValueError(f"The testbench file of training case {saved['case_number']} changed "
+                             "after the selected training run.")
     training_set = set(training_ids)
     if case_ids:
         return load_cases(dataset_path, case_ids)

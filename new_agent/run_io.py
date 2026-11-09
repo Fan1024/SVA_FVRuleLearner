@@ -235,6 +235,10 @@ def create_experiment(
                 "task_id": case["task_id"],
                 "directory": (None if settings.get("flat_training_output") else
                               f"cases/case_{case['case_number']:04d}"),
+                # Block cases read their TB from a file outside the CSV.
+                **({"testbench_path": case["testbench_path"],
+                    "testbench_sha256": case["testbench_sha256"]}
+                   if case.get("testbench_sha256") else {}),
             }
             for case in cases
         ],

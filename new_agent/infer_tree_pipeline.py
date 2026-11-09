@@ -94,7 +94,7 @@ def run_inference_pipeline(directory, record: dict, *, retriever=None) -> int:
                     generation_inputs = {
                         "requirement": inputs["requirement"],
                         "testbench": inputs["testbench"],
-                        "assertion_template": policy["assertion_template"],
+                        "assertion_template": inputs.get("assertion_template") or policy["assertion_template"],
                         "examples": example_cases, "previous_assertion": previous_assertion,
                         "previous_round": previous_round, "selector_guidance": latest_selector_guidance,
                         "previous_evaluation": feedback_for_round(record['round_evidence'], previous_round),

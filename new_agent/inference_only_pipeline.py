@@ -75,7 +75,7 @@ def run_inference_only_pipeline(directory, record: dict, *, retriever=None) -> i
                     generation_inputs = {
                         "requirement": inputs["requirement"],
                         "testbench": inputs["testbench"],
-                        "assertion_template": policy["assertion_template"],
+                        "assertion_template": inputs.get("assertion_template") or policy["assertion_template"],
                         "examples": example_cases, "previous_assertion": previous_assertion,
                         "previous_round": previous_round, "diagnosis_guidance": latest_diagnosis_guidance,
                         "previous_evaluation": feedback_for_round(record['round_evidence'], previous_round),

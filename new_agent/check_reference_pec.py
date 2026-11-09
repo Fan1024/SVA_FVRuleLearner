@@ -39,7 +39,8 @@ SUMMARY_FIELDS = (
 
 
 def native_backend(dataset):
-    return "nl2sva_machine" if dataset == "nl2sva_block" else dataset
+    from new_agent.formal_check import native_backend as backend
+    return backend(dataset)
 
 
 def write_json(path, data):
@@ -47,7 +48,8 @@ def write_json(path, data):
 
 
 def context_path_for(repo, case, override):
-    return (repo / (override or Path(case["testbench"])).expanduser()).resolve()
+    # The loader has already read Block's CSV path into case["testbench"].
+    return (repo / (override or Path(case["testbench_path"])).expanduser()).resolve()
 
 
 def assertion_head(source):
@@ -68,7 +70,11 @@ def check_case(dataset, case, context_path, directory, timeout):
 
     phase = "INPUT_ERROR"
     try:
-        context = case["testbench"] if context_path is None else context_path.read_text(encoding="utf-8-sig")
+        if context_path is None or str(context_path) == case.get("testbench_path"):
+            context = case["testbench"]
+        else:
+            from new_agent.block_dataset import read_testbench
+            context = read_testbench(context_path)["testbench"]
         phase = "FORMAT_ERROR"
         candidate = model_io.extract_assertion(response)
         if candidate != reference:
@@ -85,7 +91,7 @@ def check_case(dataset, case, context_path, directory, timeout):
             run_dir=directory,
             timeout_seconds=timeout,
             task_id=case["design_name"] + "/" + case["task_id"],
-            dataset=native_backend(dataset),
+            dataset=dataset,
             model_name="reference_self_check",
         )
     except Exception as error:
