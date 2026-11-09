@@ -14,6 +14,9 @@ gains three columns linking it to the curated file:
     block_detail     the old block task_id and the self-check error, if any
 Rows are matched to raw by (design_name, assertion label), which is unique.
 Run once, on the unpruned CSV that the summary was produced from.
+
+With --case-ids, only those case numbers are removed (each must have failed
+in the summary); every other row, including non-PROVEN rows, is kept.
 """
 
 import argparse
@@ -52,7 +55,7 @@ def label(source):
     return match.group(1)
 
 
-def prune(repo, summary_path, *, dry_run=False):
+def prune(repo, summary_path, *, case_ids=None, dry_run=False):
     block_path, raw_path = repo / BLOCK, repo / RAW
     block_fields, block_rows, block_end = read(block_path)
     raw_fields, raw_rows, raw_end = read(raw_path)
@@ -62,8 +65,15 @@ def prune(repo, summary_path, *, dry_run=False):
         summary = {int(row["case_number"]): row for row in csv.DictReader(stream)
                    if row.get("dataset", "nl2sva_block") == "nl2sva_block"}
 
+    selected = set(case_ids or ())
+    unknown = sorted(selected - set(range(1, len(block_rows) + 1)))
+    if unknown:
+        raise ValueError(f"Case IDs {unknown} are not rows of nl2sva_block.csv.")
     kept, removed = [], []
     for number, row in enumerate(block_rows, start=1):
+        if selected and number not in selected:
+            kept.append(row)
+            continue
         if row["jg_status"].strip() != "PROVEN":
             removed.append((row, "EXCLUDED_" + row["jg_status"].strip(), ""))
             continue
@@ -75,6 +85,8 @@ def prune(repo, summary_path, *, dry_run=False):
             raise ValueError(f"Case {number} is {row['task_id']} in the CSV but {result['task_id']} "
                              "in the summary; the CSV changed after the self-check.")
         if result["preflight_status"] == "PASS":
+            if selected:
+                raise ValueError(f"Case {number} ({row['task_id']}) passed the self-check; refusing to remove it.")
             kept.append(row)
         else:
             removed.append((row, result["preflight_status"], result.get("error") or ""))
@@ -118,9 +130,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--summary", type=Path, required=True, help="Self-check summary.csv for all Block cases.")
     parser.add_argument("--repo-root", type=Path, default=REPO_ROOT)
+    parser.add_argument("--case-ids", type=int, nargs="+",
+                        help="Remove only these failed case numbers instead of every non-PASS case.")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
-    prune(args.repo_root.resolve(), args.summary, dry_run=args.dry_run)
+    prune(args.repo_root.resolve(), args.summary, case_ids=args.case_ids, dry_run=args.dry_run)
 
 
 if __name__ == "__main__":
