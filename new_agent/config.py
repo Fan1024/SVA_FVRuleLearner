@@ -9,14 +9,22 @@ from pathlib import Path
 MODE = "inference"
 
 
-# Supported datasets: nl2sva_human, nl2sva_machine, nl2sva_opencore.
+# Supported datasets: nl2sva_human, nl2sva_machine, nl2sva_opencore, nl2sva_block.
+# nl2sva_block (Data/nl2sva_block.csv): 28 open-source designs, 813 PROVEN targets.
+#   Its testbench column names clean TB files under Data/<design>/tb/; they are
+#   read at load time. Each design supplies its own clock/reset statement
+#   template (new_agent/block_dataset.py). Formal checking reuses the native
+#   NL2SVA-Machine Tcl/evaluator and requires PEC_CONTEXT_MODE="expanded_names".
+#   The one PROVEN_IMMEDIATE row is excluded; case IDs keep their CSV positions.
 DATASET = "nl2sva_human"
 REPO_ROOT = Path(__file__).resolve().parent.parent
-DATASET_PATH = (
-    REPO_ROOT / "FVEval" / "data_1k" / "module_sva_nl_manual_editing.csv"
-    if DATASET == "nl2sva_opencore" else
-    REPO_ROOT / "FVEval" / "data_nl2sva" / "data" / f"{DATASET}.csv"
-)
+DATASET_PATHS = {
+    "nl2sva_human": REPO_ROOT / "FVEval" / "data_nl2sva" / "data" / "nl2sva_human.csv",
+    "nl2sva_machine": REPO_ROOT / "FVEval" / "data_nl2sva" / "data" / "nl2sva_machine.csv",
+    "nl2sva_opencore": REPO_ROOT / "FVEval" / "data_1k" / "module_sva_nl_manual_editing.csv",
+    "nl2sva_block": REPO_ROOT / "Data" / "nl2sva_block.csv",
+}
+DATASET_PATH = DATASET_PATHS.get(DATASET)
 
 # Nonempty IDs run exactly these cases, in this order, under the selected MODE.
 # []: train uses the split; inference uses held-out cases from its Train source;
@@ -106,8 +114,10 @@ EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 SAVE_DEBUG_TRACES = True
 
 # Expand TB signal names and bind known integral parameters in native PEC inputs.
-# A server-verified pec_interface_probe.json also enables typed signal entries.
+# A server-verified pec_interface_probe.json also enables typed signal entries
+# (strongly recommended for nl2sva_block, whose signals are mostly multi-bit).
 # "legacy" keeps the native name-only inputs for baseline comparisons.
+# nl2sva_block requires "expanded_names".
 PEC_CONTEXT_MODE = "expanded_names"
 PEC_CONTEXT_MODULE = None
 

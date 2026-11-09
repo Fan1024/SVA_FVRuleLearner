@@ -121,7 +121,7 @@ def run_pipeline(directory, record: dict, *, retriever=None) -> int:
                     "previous_assertion": previous_assertion, "rules": selected_rules,
                     "case_history": record["round_evidence"][:-1],
                     "comparison_scope": comparison_scope, "revision_feedback": revision_feedback,
-                    "assertion_template": policy.get("assertion_template", "asrt: assert property (@(posedge clk) BODY);"),
+                    "assertion_template": inputs.get("assertion_template") or policy.get("assertion_template", "asrt: assert property (@(posedge clk) BODY);"),
                 }
                 if inference:
                     generation_inputs["examples"] = example_cases
@@ -201,7 +201,7 @@ def run_pipeline(directory, record: dict, *, retriever=None) -> int:
             elif status in {"FORMAT_ERROR", "INPUT_ERROR", "SYNTAX_ERROR"}:
                 revision_feedback = (
                     "The previous candidate could not be accepted as a complete SVA assertion. "
-                    f"Use {policy.get('assertion_template', 'asrt: assert property (@(posedge clk) [optional disable iff (...)] BODY);')} "
+                    f"Use {inputs.get('assertion_template') or policy.get('assertion_template', 'asrt: assert property (@(posedge clk) [optional disable iff (...)] BODY);')} "
                     "with the label before assert and the whole property inside parentheses. "
                     "Enclose the statement in one systemverilog code block."
                 )

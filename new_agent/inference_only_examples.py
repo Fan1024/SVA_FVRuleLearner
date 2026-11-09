@@ -37,20 +37,24 @@ def get_examples(dataset):
     """Use the same three tasks, with the existing dataset's statement format."""
     template = statement_template(dataset)
     # The example has a known clk. OpenCore targets still choose their own clock.
-    template = template.replace('EDGE', 'posedge').replace('CLOCK_SIGNAL', 'clk')
+    # Block examples use an active-high rst; real cases use their design's reset.
+    reset = 'rst' if dataset == 'nl2sva_block' else 'tb_reset'
+    template = (template.replace('EDGE', 'posedge').replace('CLOCK_SIGNAL', 'clk')
+                .replace('RESET_CONDITION', reset))
+    gated = dataset in {'nl2sva_human', 'nl2sva_block'}
     examples = []
     for item in FIXED_EXAMPLES:
-        ports = item['ports']
-        if dataset == 'nl2sva_human' and 'tb_reset' not in ports:
-            ports += ', tb_reset'
+        ports = item['ports'].replace('tb_reset', reset)
+        if gated and reset not in ports:
+            ports += ', ' + reset
         requirement = item['requirement'] + ' Sample on the rising edge of clk.'
-        if dataset == 'nl2sva_human':
-            requirement += ' Disable the property while tb_reset is asserted.'
+        if gated:
+            requirement += f' Disable the property while {reset} is asserted.'
         examples.append({
             'id': item['id'], 'requirement': requirement,
             'testbench': 'module example_tb(' + ports + ');\n'
-                         + item.get('declarations', '') + '\nendmodule',
-            'solved_assertion': template.replace('BODY', item['body']),
+                         + item.get('declarations', '').replace('tb_reset', reset) + '\nendmodule',
+            'solved_assertion': template.replace('BODY', item['body'].replace('tb_reset', reset)),
         })
     if len(examples) != 3:
         raise ValueError('inference_only requires exactly three fixed examples.')

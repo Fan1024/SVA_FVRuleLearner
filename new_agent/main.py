@@ -48,8 +48,19 @@ def validate_config() -> None:
         get_examples(config.DATASET)
     if not isinstance(config.DATASET, str) or not config.DATASET.strip():
         raise ValueError("DATASET must be a nonempty dataset name.")
-    if config.DATASET not in {"nl2sva_human", "nl2sva_machine", "nl2sva_opencore"}:
-        raise ValueError("DATASET must be 'nl2sva_human', 'nl2sva_machine', or 'nl2sva_opencore'.")
+    if config.DATASET not in formal_check.DATASETS:
+        raise ValueError("DATASET must be one of: " + ", ".join(formal_check.DATASETS) + ".")
+    if config.DATASET_PATH is None:
+        raise ValueError("DATASET_PATH is not set for DATASET=" + repr(config.DATASET) + ".")
+    if config.DATASET == "nl2sva_block":
+        from new_agent.pec_context_adapter import context_mode, verified_interface_profile
+        if context_mode() != "expanded_names":
+            raise ValueError('nl2sva_block requires PEC_CONTEXT_MODE = "expanded_names".')
+        profile, note = verified_interface_profile()
+        if profile is None:
+            print("WARNING: nl2sva_block has no verified typed PEC interface (" + note + ") "
+                  "Multi-bit signals reach PEC as names only; run probe_pec_interface.py "
+                  "on the Jasper server first.", flush=True)
     if type(config.MAX_ROUNDS) is not int or config.MAX_ROUNDS < 1:
         raise ValueError("MAX_ROUNDS must be a positive integer.")
     if not isinstance(config.MODEL, str) or not config.MODEL.strip():
@@ -121,7 +132,8 @@ def main() -> int:
         )
     dataset_path = Path(cases[0]["dataset_path"])
     models = {"model": config.MODEL}
-    from new_agent.pec_context_adapter import context_mode, VERSION as PEC_CONTEXT_VERSION
+    from new_agent.pec_context_adapter import (
+        context_mode, verified_interface_profile, VERSION as PEC_CONTEXT_VERSION)
     from new_agent.diagnosis_context import DIAGNOSIS_CATEGORIES
     settings = {
         "phase": phase,
@@ -131,6 +143,8 @@ def main() -> int:
         "checker": "same_repo_fvrulelearner_evaluation",
         "evaluator_repo_dir": str(formal_check.REPO_ROOT),
         "evaluator_python": sys.executable,
+        "native_backend": formal_check.native_backend(config.DATASET),
+        "typed_interface_profile": verified_interface_profile()[0],
         "metric_source": "native evaluation.py; original_setting=False",
         "checker_input_policy": "native_per_round",
         "pec_context_mode": context_mode(),
@@ -152,6 +166,8 @@ def main() -> int:
         "diagnosis_categories": list(DIAGNOSIS_CATEGORIES),
         "tree_parser": config.ASSERTION_TREE_PARSER,
         "candidate_syn_policy": "insert_full_candidate_into_native_human_machine_tb",
+        "assertion_template_source": ("per_design_block_convention" if config.DATASET == "nl2sva_block"
+                                      else "dataset_policy"),
         "model_gateway_version": model_gateway.VERSION,
         "model_gateway": model_gateway.model_settings(config.MODEL),
     }

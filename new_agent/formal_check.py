@@ -60,9 +60,38 @@ def apply_acceptance_policy(result: dict) -> dict:
     return result
 
 
+DATASETS = ("nl2sva_human", "nl2sva_machine", "nl2sva_opencore", "nl2sva_block")
+
+
+def native_backend(dataset: str) -> str:
+    """Block has no native evaluator; it reuses the Machine Tcl and evaluator."""
+    from new_agent import block_dataset
+    return block_dataset.NATIVE_BACKEND if dataset == block_dataset.DATASET else dataset
+
+
 def get_evaluation_policy(dataset: str) -> dict:
-    if dataset not in {"nl2sva_human", "nl2sva_machine", "nl2sva_opencore"}:
-        raise ValueError("DATASET must be 'nl2sva_human', 'nl2sva_machine', or 'nl2sva_opencore'.")
+    if dataset not in DATASETS:
+        raise ValueError("DATASET must be one of: " + ", ".join(DATASETS) + ".")
+    if dataset == "nl2sva_block":
+        from new_agent import block_dataset
+        return {
+            "scope": (
+                "Use the native NL2SVA-Machine evaluator (Block reuses its Tcl driver) with "
+                "source-boundary extraction. It compares the expression after the leading "
+                "clock event; the disable iff clause, when present, remains in the compared "
+                "formula. Use the clock and reset condition given by the case's statement "
+                "template, which follow the testbench's own conventions. Omit disable iff "
+                "only when the requirement itself concerns behavior during or at reset. "
+                "Keep the complete assertion syntactically valid. Native SYN checking "
+                "compiles the full generated assertion inserted into the supplied testbench "
+                "before running PEC."
+            ),
+            "include_reset": True,
+            "tcl_file": "run_jg_nl2sva_machine.tcl",
+            # Generic form; each case carries its design-specific template.
+            "assertion_template": block_dataset.GENERIC_TEMPLATE,
+            "native_backend": block_dataset.NATIVE_BACKEND,
+        }
     if dataset == "nl2sva_opencore":
         return {
             "scope": (
@@ -149,6 +178,7 @@ def _initialize_evaluator(log_dir, dataset: str, timeout_seconds: float = 300):
     """
     global _SESSION
     policy = get_evaluation_policy(dataset)
+    dataset = native_backend(dataset)
     repo = validate_backend()
     tcl_directory = "new_agent" if dataset == "nl2sva_opencore" else "FVEval/tool_scripts"
     active_tcl = f"{tcl_directory}/{policy['tcl_file']}"
@@ -304,6 +334,8 @@ def evaluate_assertion(generated_assertion: str, reference_assertion: str, testb
     """Use native evaluation, replacing only property extraction before launch."""
     started = perf_counter()
     policy = get_evaluation_policy(dataset)
+    # Keep the experiment dataset's policy; native calls use its backend.
+    dataset = native_backend(dataset)
     for name, value in (("generated_assertion", generated_assertion), ("reference_assertion", reference_assertion),
                         ("testbench", testbench), ("requirement", requirement),
                         ("task_id", task_id), ("model_name", model_name)):

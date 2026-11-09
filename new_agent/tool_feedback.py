@@ -12,7 +12,8 @@ PEC_VERDICTS = frozenset({'FULL_EQUIVALENCE', 'IMPLIES', 'NO_EQUIVALENCE'})
 
 def extract_jasper_errors(jasper_out_str, dataset='nl2sva_human'):
     """Reuse the released Human/Machine and OpenCore extraction blocks."""
-    if dataset in {'nl2sva_human', 'nl2sva_machine'}:
+    # Block uses the native Machine Tcl, so its logs share that format.
+    if dataset in {'nl2sva_human', 'nl2sva_machine', 'nl2sva_block'}:
         error_lines = [line for line in re.findall(r'ERROR.*', jasper_out_str) if 'dummy' not in line]
     elif dataset == 'nl2sva_opencore':
         summary_index = jasper_out_str.find('Summary of errors detected:')

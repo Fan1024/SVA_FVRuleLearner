@@ -84,7 +84,7 @@ def run_training_pipeline(directory, record: dict, *, retriever=None) -> int:
                     generation_inputs = {
                         "requirement": inputs["requirement"],
                         "testbench": inputs["testbench"],
-                        "assertion_template": policy["assertion_template"],
+                        "assertion_template": inputs.get("assertion_template") or policy["assertion_template"],
                         "assertion_history": assertion_history(
                             record["round_evidence"], before_round=round_number),
                         "diagnosis_response": latest_diagnosis_response,
