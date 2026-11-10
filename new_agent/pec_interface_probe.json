@@ -1,0 +1,152 @@
+{
+  "schema_version": 1,
+  "verified": true,
+  "verified_profile": "range_fragments",
+  "checker_sha256": "2d376720939066b7432207eb406b86fa82e6302bada624c41989813178389a1f",
+  "baseline": [
+    {
+      "name": "scalar_self",
+      "left": "a",
+      "right": "a",
+      "signal_entries": [
+        "a"
+      ],
+      "expect_equal": true,
+      "status": "FULL_EQUIVALENCE",
+      "returncode": 0,
+      "passed": true,
+      "runtime_signature": "unavailable: \"prop_eq_checker\" isn't a procedure",
+      "log": "/home/fwu44/research/SVA_FVRuleLearner/new_agent/runs/PEC_interface_probe_20261109_124302_073250Z/scalar_self/jasper.log"
+    },
+    {
+      "name": "scalar_negative",
+      "left": "a",
+      "right": "(a || b)",
+      "signal_entries": [
+        "a",
+        "b"
+      ],
+      "expect_equal": false,
+      "status": "IMPLIES",
+      "returncode": 0,
+      "passed": true,
+      "runtime_signature": "unavailable: \"prop_eq_checker\" isn't a procedure",
+      "log": "/home/fwu44/research/SVA_FVRuleLearner/new_agent/runs/PEC_interface_probe_20261109_124302_073250Z/scalar_negative/jasper.log"
+    }
+  ],
+  "profiles": {
+    "range_fragments": [
+      {
+        "name": "range_fragments_packed_index_self",
+        "left": "data[idx]",
+        "right": "data[idx]",
+        "signal_entries": [
+          "[3:0] data",
+          "[1:0] idx"
+        ],
+        "expect_equal": true,
+        "status": "FULL_EQUIVALENCE",
+        "returncode": 0,
+        "passed": true,
+        "runtime_signature": "unavailable: \"prop_eq_checker\" isn't a procedure",
+        "log": "/home/fwu44/research/SVA_FVRuleLearner/new_agent/runs/PEC_interface_probe_20261109_124302_073250Z/range_fragments_packed_index_self/jasper.log",
+        "control": "packed_index_self"
+      },
+      {
+        "name": "range_fragments_vector_negative",
+        "left": "data == 4'h1",
+        "right": "data != 4'h0",
+        "signal_entries": [
+          "[3:0] data"
+        ],
+        "expect_equal": false,
+        "status": "IMPLIES",
+        "returncode": 0,
+        "passed": true,
+        "runtime_signature": "unavailable: \"prop_eq_checker\" isn't a procedure",
+        "log": "/home/fwu44/research/SVA_FVRuleLearner/new_agent/runs/PEC_interface_probe_20261109_124302_073250Z/range_fragments_vector_negative/jasper.log",
+        "control": "vector_negative"
+      },
+      {
+        "name": "range_fragments_array_self",
+        "left": "|items[0]",
+        "right": "|items[0]",
+        "signal_entries": [
+          "[1:0] items [0:0]"
+        ],
+        "expect_equal": true,
+        "status": "FULL_EQUIVALENCE",
+        "returncode": 0,
+        "passed": true,
+        "runtime_signature": "unavailable: \"prop_eq_checker\" isn't a procedure",
+        "log": "/home/fwu44/research/SVA_FVRuleLearner/new_agent/runs/PEC_interface_probe_20261109_124302_073250Z/range_fragments_array_self/jasper.log",
+        "control": "array_self"
+      },
+      {
+        "name": "range_fragments_array_negative",
+        "left": "items[0][0]",
+        "right": "(items[0][0] || items[0][1])",
+        "signal_entries": [
+          "[1:0] items [0:0]"
+        ],
+        "expect_equal": false,
+        "status": "IMPLIES",
+        "returncode": 0,
+        "passed": true,
+        "runtime_signature": "unavailable: \"prop_eq_checker\" isn't a procedure",
+        "log": "/home/fwu44/research/SVA_FVRuleLearner/new_agent/runs/PEC_interface_probe_20261109_124302_073250Z/range_fragments_array_negative/jasper.log",
+        "control": "array_negative"
+      },
+      {
+        "name": "range_fragments_signed_positive",
+        "left": "(s < 0)",
+        "right": "s[3] == 1'b1",
+        "signal_entries": [
+          "signed [3:0] s"
+        ],
+        "expect_equal": true,
+        "status": "FULL_EQUIVALENCE",
+        "returncode": 0,
+        "passed": true,
+        "runtime_signature": "unavailable: \"prop_eq_checker\" isn't a procedure",
+        "log": "/home/fwu44/research/SVA_FVRuleLearner/new_agent/runs/PEC_interface_probe_20261109_124302_073250Z/range_fragments_signed_positive/jasper.log",
+        "control": "signed_positive"
+      },
+      {
+        "name": "range_fragments_ascending_positive",
+        "left": "up[0]",
+        "right": "((up >> 3) & 4'h1) != 4'h0",
+        "signal_entries": [
+          "[0:3] up"
+        ],
+        "expect_equal": true,
+        "status": "FULL_EQUIVALENCE",
+        "returncode": 0,
+        "passed": true,
+        "runtime_signature": "unavailable: \"prop_eq_checker\" isn't a procedure",
+        "log": "/home/fwu44/research/SVA_FVRuleLearner/new_agent/runs/PEC_interface_probe_20261109_124302_073250Z/range_fragments_ascending_positive/jasper.log",
+        "control": "ascending_positive"
+      },
+      {
+        "name": "range_fragments_one_bit_index_self",
+        "left": "one[0]",
+        "right": "one[0]",
+        "signal_entries": [
+          "[0:0] one"
+        ],
+        "expect_equal": true,
+        "status": "FULL_EQUIVALENCE",
+        "returncode": 0,
+        "passed": true,
+        "runtime_signature": "unavailable: \"prop_eq_checker\" isn't a procedure",
+        "log": "/home/fwu44/research/SVA_FVRuleLearner/new_agent/runs/PEC_interface_probe_20261109_124302_073250Z/range_fragments_one_bit_index_self/jasper.log",
+        "control": "one_bit_index_self"
+      }
+    ]
+  },
+  "output_directory": "/home/fwu44/research/SVA_FVRuleLearner/new_agent/runs/PEC_interface_probe_20261109_124302_073250Z",
+  "scope": "Empirical declaration-entry compatibility with in-range indexing; not a documented vendor guarantee.",
+  "probe_version": "v9_in_range_one_bit",
+  "baseline_passed": true,
+  "conclusion": "Verified declaration profile; production may use it for representable TB types."
+}

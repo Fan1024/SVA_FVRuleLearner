@@ -6,7 +6,7 @@ from pathlib import Path
 # "inference": retrieve learned rules from the selected Train run.
 # "inference_only": three fixed examples; no retrieval or separate diagnosis.
 # Launch every mode with python main.py.
-MODE = "inference"
+MODE = "train"
 
 
 # Supported datasets: nl2sva_human, nl2sva_machine, nl2sva_opencore, nl2sva_block.
@@ -16,7 +16,7 @@ MODE = "inference"
 #   template (new_agent/block_dataset.py). Formal checking reuses the native
 #   NL2SVA-Machine Tcl/evaluator and requires PEC_CONTEXT_MODE="expanded_names".
 #   The one PROVEN_IMMEDIATE row is excluded; case IDs keep their CSV positions.
-DATASET = "nl2sva_human"
+DATASET = "nl2sva_block"
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DATASET_PATHS = {
     "nl2sva_human": REPO_ROOT / "FVEval" / "data_nl2sva" / "data" / "nl2sva_human.csv",
@@ -31,8 +31,7 @@ DATASET_PATH = DATASET_PATHS.get(DATASET)
 # inference_only runs the full dataset. Explicit inference IDs may overlap Train
 # cases for diagnostic reruns; the overlap is recorded in run_metadata.json.
 # These numbers are not physical CSV line numbers or source task_id values.
-CASE_IDS = [79]
-
+CASE_IDS = []
 # True keeps // and /* */ comments in every LLM's testbench/module context.
 # False removes them from prompt copies; formal checking uses the original source.
 LLM_TESTBENCH_COMMENTS_VISIBLE = False
@@ -69,7 +68,7 @@ MODEL = "gpt-5.6-terra"
 #       API keyword: output_config={"effort": value}; defaults: Sonnet "high", Opus "medium".
 # None omits the effort field. The string "none" is only enabled for Terra.
 # "high" is supported across the listed models, but does not mean equal compute.
-MODEL_REASONING_EFFORT = None
+MODEL_REASONING_EFFORT = "high"
 
 # MODEL_MAX_OUTPUT_TOKENS is a positive integer within the provider's limit:
 #   OpenAI -> max_output_tokens; Kimi -> max_completion_tokens;
