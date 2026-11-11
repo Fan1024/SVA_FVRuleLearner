@@ -260,8 +260,13 @@ def _read_training_metadata(directory: Path, dataset: str, dataset_sha256: str) 
     metadata = json.loads((directory / "run_metadata.json").read_text(encoding="utf-8"))
     if not isinstance(metadata, dict):
         raise ValueError("run_metadata.json must contain an object.")
-    if metadata.get("phase") != "train" or metadata.get("status") != "COMPLETED":
-        raise ValueError("The source must be a COMPLETED training experiment.")
+    if metadata.get("phase") != "train" or metadata.get("status") not in {
+        "COMPLETED", "COMPLETED_WITH_ERRORS",
+    }:
+        raise ValueError(
+            "The source must be a finished training experiment "
+            "(COMPLETED or COMPLETED_WITH_ERRORS)."
+        )
     if metadata.get("dataset") != dataset or metadata.get("dataset_sha256") != dataset_sha256:
         raise ValueError("The training dataset name or CSV contents do not match the current dataset.")
     selected = metadata.get("selected_cases")
@@ -273,6 +278,22 @@ def _read_training_metadata(directory: Path, dataset: str, dataset_sha256: str) 
     for name in ("evaluation.csv", "learned_rules.jsonl"):
         if not (directory / name).is_file():
             raise ValueError(f"The training experiment is missing {name}.")
+    if metadata["status"] == "COMPLETED_WITH_ERRORS":
+        # A finished batch can contain checker failures. Require every selected
+        # case to be recorded so the original held-out split remains usable.
+        if metadata.get("summary_error"):
+            raise ValueError("The training experiment has a summary error.")
+        scores = _read_scores(directory / "evaluation.csv")
+        selected_ids = {str(case.get("case_number")) for case in selected}
+        recorded_ids = {row["case_number"] for row in scores}
+        if (metadata.get("cases_recorded") != len(selected)
+                or len(scores) != len(selected)
+                or len(selected_ids) != len(selected)
+                or recorded_ids != selected_ids):
+            raise ValueError(
+                "A training experiment completed with errors must record "
+                "every selected case exactly once in evaluation.csv."
+            )
     return metadata
 
 
