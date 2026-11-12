@@ -1,15 +1,14 @@
-"""Fixed-example generation-only baseline with native evaluation and inspection trees.
+"""Independent fixed-example sampling with native evaluation and inspection trees.
 
 No training run, example search, rule bank, embedding model or target reference
-enters either model request. Native evaluation and score policy are reused.
+enters a model request. Native evaluation and score policy are reused.
 """
 from copy import deepcopy
 from contextlib import contextmanager
 from new_agent.runtime_support import formal_round_directory
 from new_agent.model_gateway import ModelGateway
 from new_agent import config, formal_check, model_io, run_io, tree_archive
-from new_agent.revision_context import reconsider_repeat, evaluate_once, retain_checker_failure
-from new_agent.tool_feedback import feedback_for_round
+from new_agent.revision_context import evaluate_once, retain_checker_failure
 from new_agent.pipeline import _failed_round, _remember_round_error
 
 
@@ -25,9 +24,9 @@ def _save_inference_only_trace(directory, record, round_number):
 
 
 def run_inference_only_pipeline(directory, record: dict, *, retriever=None) -> int:
-    """Stop on PEC/BLEU success or exhaustion of the configured attempt budget.
+    """Sample independently until PEC/BLEU success or the configured attempt limit.
 
-    Ordinary generation, extraction, checker, diagnosis and rule-output errors
+    Ordinary generation, extraction and checker errors
     are round outcomes. KeyboardInterrupt/SystemExit are deliberately not caught.
     File-system failures can still prevent reliable recording and must propagate.
     """
@@ -40,23 +39,18 @@ def run_inference_only_pipeline(directory, record: dict, *, retriever=None) -> i
     inputs = record["inputs"]
     policy = formal_check.get_evaluation_policy(inputs.get("dataset", config.DATASET))
     record["settings"].update(
-        inference_workflow="fixed_examples_generation_only",
-        inference_feedback="no_separate_diagnosis",
+        inference_workflow="fixed_examples_independent_sampling",
+        inference_feedback="disabled",
         inference_example_source="three_fixed_handwritten_examples",
         inference_retrieval="disabled",
     )
     example_cases = get_examples(inputs.get("dataset", config.DATASET))
-    previous_assertion = None
     client = None
-    latest_diagnosis_guidance = None
-    latest_diagnosis_round = None
-    previous_round = None
 
     for round_number in range(1, config.MAX_ROUNDS + 1):
         with _save_inference_only_trace(directory, record, round_number):
             run_io.start_usage_round(record, round_number)
-            # Record the feedback source before start_attempt writes its debug event.
-            record["inference_feedback_round"] = latest_diagnosis_round
+            record["inference_feedback_round"] = None
             # A failed call before extraction must never associate old text with new scores.
             attempt = run_io.start_attempt(
                 directory, record, round_number,
@@ -66,7 +60,7 @@ def run_inference_only_pipeline(directory, record: dict, *, retriever=None) -> i
             evidence = record["round_evidence"][-1]
             evidence.pop("rules_used", None)
             evidence.pop("rules_generated", None)
-            evidence["diagnosis_from_round"] = latest_diagnosis_round
+            evidence["diagnosis_from_round"] = None
             with formal_round_directory(directory, round_number, record) as check_dir:
                 generated_assertion = None
                 stage = "generation"
@@ -76,18 +70,10 @@ def run_inference_only_pipeline(directory, record: dict, *, retriever=None) -> i
                         "requirement": inputs["requirement"],
                         "testbench": inputs["testbench"],
                         "assertion_template": inputs.get("assertion_template") or policy["assertion_template"],
-                        "examples": example_cases, "previous_assertion": previous_assertion,
-                        "previous_round": previous_round, "diagnosis_guidance": latest_diagnosis_guidance,
-                        "previous_evaluation": feedback_for_round(record['round_evidence'], previous_round),
+                        "examples": example_cases,
                     }
                     user_prompt = assertion_generator.build_generation_prompt(**generation_inputs)
-                    evidence['guidance_payload'] = deepcopy(latest_diagnosis_guidance)
-                    run_io.save_debug_event(directory, record, 'guidance_context',
-                                            source_round=latest_diagnosis_round,
-                                            payload=latest_diagnosis_guidance)
-                    # Only the latest diagnosis response is used. No assertion history,
-                    # old rules, native logs, scores or reference enters this prompt.
-                    latest_diagnosis_guidance = latest_diagnosis_round = None
+                    # Every attempt uses the same task and fixed examples.
                     attempt["prompts"]["user"] = user_prompt
                     run_io.update_run(directory, record, stage=stage)
                     if client is None:
@@ -103,17 +89,9 @@ def run_inference_only_pipeline(directory, record: dict, *, retriever=None) -> i
                     stage = "extraction"
                     run_io.update_run(directory, record, stage=stage)
                     generated_assertion = model_io.extract_assertion(response_text)
-                    response_text, generated_assertion = reconsider_repeat(
-                        directory=directory, record=record, attempt=attempt,
-                        assertion=generated_assertion, response_text=response_text,
-                        user_prompt=user_prompt, instructions=assertion_generator.SYSTEM_PROMPT,
-                        client=client, model=config.MODEL)
-                    attempt['generation']['raw_response'] = response_text
                     evidence['generation_prompts'] = deepcopy(attempt['prompts'])
                     attempt["generation"]["assertion"] = generated_assertion
                     record["round_evidence"][-1]["generated_assertion"] = generated_assertion
-                    previous_assertion = generated_assertion
-                    previous_round = round_number
                     stage = "formal_check"
                     run_io.update_run(directory, record, stage=stage,
                                       generation=deepcopy(attempt["generation"]), formal=None)
@@ -139,12 +117,11 @@ def run_inference_only_pipeline(directory, record: dict, *, retriever=None) -> i
                 run_io.record_formal_result(directory, record, attempt, formal_result)
                 # Build inspection trees after native SYN/PEC evaluation, even on failure.
                 # Tree/archive errors must never replace an obtained tool verdict.
-                inspection_trees = None
                 if generated_assertion is not None:
                     stage = "tree_recording"
                     try:
                         with run_io.measure_stage(record, "diagnosis") as capture_tree_usage:
-                            inspection_trees = tree_archive.record_generated(
+                            tree_archive.record_generated(
                                 directory, record, round_number, generated_assertion, include_reference=False)
                             capture_tree_usage({"input_tokens": 0, "output_tokens": 0})
                     except Exception as error:
@@ -171,7 +148,7 @@ def run_inference_only_pipeline(directory, record: dict, *, retriever=None) -> i
                     return 0
 
                 run_io.update_run(directory, record,
-                    diagnosis_skipped_reason="Generation-only baseline: no diagnosis or retrieval component.")
+                    diagnosis_skipped_reason="Independent sampling with fixed examples.")
                 continue
 
     # No earlier pass is possible here. Keep the latest attempt and its scores.
@@ -184,11 +161,3 @@ def run_inference_only_pipeline(directory, record: dict, *, retriever=None) -> i
         passed=False, stage="finished", stop_reason="max_rounds",
     )
     return 0 if resolved else 1
-
-
-
-
-
-
-
-
