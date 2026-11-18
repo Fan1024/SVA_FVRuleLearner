@@ -71,20 +71,18 @@ def start_usage_round(record: dict, round_number: int) -> None:
 
 @contextmanager
 def measure_stage(record: dict, stage: str):
-    """Time a stage, capturing provider usage before response validation."""
+    """Accumulate every invocation; missing usage keeps the aggregate unknown."""
     metric = record["usage_rounds"][-1]["stages"][stage]
-    if stage in MODEL_STAGES:
-        # Invoked but unreported is unknown, rather than a free/skipped call.
-        metric["input_tokens"] = metric["output_tokens"] = None
+    call_usage = {"input_tokens": None, "output_tokens": None}
     received = False
 
     def capture_usage(usage) -> None:
         nonlocal received
-        for field in ("input_tokens", "output_tokens"):
+        for field in call_usage:
             value = usage.get(field) if isinstance(usage, dict) else getattr(usage, field, None)
             if type(value) is not int or value < 0:
                 value = None
-            metric[field] = _sum_usage((metric[field], value)) if received else value
+            call_usage[field] = _sum_usage((call_usage[field], value)) if received else value
         received = True
 
     started = perf_counter()
@@ -92,6 +90,9 @@ def measure_stage(record: dict, stage: str):
         yield capture_usage
     finally:
         metric["seconds"] += perf_counter() - started
+        if stage in MODEL_STAGES:
+            for field, value in call_usage.items():
+                metric[field] = _sum_usage((metric[field], value))
 
 
 def _usage_metrics(rounds: list[dict], elapsed_seconds: float) -> dict:
@@ -220,6 +221,7 @@ def create_experiment(
     directory = create_run(directory_label, runs_root=runs_root, phase=phase)
     metadata = {
         "output_format_version": 4,
+        "usage_recording_version": 2,
         "phase": phase,
         "mode": settings.get("mode", "inference" if phase == "infer" else phase),
         "dataset": dataset,
@@ -1108,6 +1110,7 @@ def print_summary(run_dir, record: dict) -> None:
     for key, label in (("trace_error", "Trace save error"), ("summary_error", "Summary save error")):
         if record.get(key):
             print(f"  {label}: {record[key]}", flush=True)
+
 
 
 
