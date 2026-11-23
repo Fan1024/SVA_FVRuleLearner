@@ -2,8 +2,8 @@
 """Score the whole dataset and training-compatible held-out inference_only subset.
 
 Usage:
-  python infer_only_evaluate.py /path/to/InferenceOnly_run --seed 100
-  python infer_only_evaluate.py /path/to/InferenceOnly_run --seed 100 \
+  python evaluation_infer_only.py /path/to/InferenceOnly_run --seed 100
+  python evaluation_infer_only.py /path/to/InferenceOnly_run --seed 100 \
       --training-run /path/to/Train_run
 
 Python standard library only. No LLM requests, Jasper launches, or config edits.
@@ -327,3 +327,4 @@ if __name__ == "__main__":
     except (OSError, ValueError, KeyError, TypeError) as error:
         print(f"ERROR: {error}", file=sys.stderr)
         raise SystemExit(2)
+

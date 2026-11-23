@@ -60,19 +60,19 @@ def apply_acceptance_policy(result: dict) -> dict:
     return result
 
 
-DATASETS = ("nl2sva_human", "nl2sva_machine", "nl2sva_opencore", "nl2sva_block")
+DATASETS = ("nl2sva_human", "nl2sva_machine", "nl2sva_opencore", "nl2sva_block", "nl2sva_block_hard")
 
 
 def native_backend(dataset: str) -> str:
     """Block has no native evaluator; it reuses the Machine Tcl and evaluator."""
     from new_agent import block_dataset
-    return block_dataset.NATIVE_BACKEND if dataset == block_dataset.DATASET else dataset
+    return block_dataset.NATIVE_BACKEND if dataset in block_dataset.DATASETS else dataset
 
 
 def get_evaluation_policy(dataset: str) -> dict:
     if dataset not in DATASETS:
         raise ValueError("DATASET must be one of: " + ", ".join(DATASETS) + ".")
-    if dataset == "nl2sva_block":
+    if dataset in {"nl2sva_block", "nl2sva_block_hard"}:
         from new_agent import block_dataset
         return {
             "scope": (

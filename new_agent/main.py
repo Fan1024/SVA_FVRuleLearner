@@ -52,7 +52,7 @@ def validate_config() -> None:
         raise ValueError("DATASET must be one of: " + ", ".join(formal_check.DATASETS) + ".")
     if config.DATASET_PATH is None:
         raise ValueError("DATASET_PATH is not set for DATASET=" + repr(config.DATASET) + ".")
-    if config.DATASET == "nl2sva_block":
+    if config.DATASET in {"nl2sva_block", "nl2sva_block_hard"}:
         from new_agent.pec_context_adapter import context_mode, verified_interface_profile
         if context_mode() != "expanded_names":
             raise ValueError('nl2sva_block requires PEC_CONTEXT_MODE = "expanded_names".')
@@ -166,7 +166,7 @@ def main() -> int:
         "diagnosis_categories": list(DIAGNOSIS_CATEGORIES),
         "tree_parser": config.ASSERTION_TREE_PARSER,
         "candidate_syn_policy": "insert_full_candidate_into_native_human_machine_tb",
-        "assertion_template_source": ("per_design_block_convention" if config.DATASET == "nl2sva_block"
+        "assertion_template_source": ("per_design_block_convention" if config.DATASET in {"nl2sva_block", "nl2sva_block_hard"}
                                       else "dataset_policy"),
         "model_gateway_version": model_gateway.VERSION,
         "model_gateway": model_gateway.model_settings(config.MODEL),
@@ -285,6 +285,7 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
 
 
 

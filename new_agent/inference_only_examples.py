@@ -38,10 +38,10 @@ def get_examples(dataset):
     template = statement_template(dataset)
     # The example has a known clk. OpenCore targets still choose their own clock.
     # Block examples use an active-high rst; real cases use their design's reset.
-    reset = 'rst' if dataset == 'nl2sva_block' else 'tb_reset'
+    reset = 'rst' if dataset in {'nl2sva_block', 'nl2sva_block_hard'} else 'tb_reset'
     template = (template.replace('EDGE', 'posedge').replace('CLOCK_SIGNAL', 'clk')
                 .replace('RESET_CONDITION', reset))
-    gated = dataset in {'nl2sva_human', 'nl2sva_block'}
+    gated = dataset in {'nl2sva_human', 'nl2sva_block', 'nl2sva_block_hard'}
     examples = []
     for item in FIXED_EXAMPLES:
         ports = item['ports'].replace('tb_reset', reset)

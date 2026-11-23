@@ -16,13 +16,14 @@ MODE = "train"
 #   template (new_agent/block_dataset.py). Formal checking reuses the native
 #   NL2SVA-Machine Tcl/evaluator and requires PEC_CONTEXT_MODE="expanded_names".
 #   The one PROVEN_IMMEDIATE row is excluded; case IDs keep their CSV positions.
-DATASET = "nl2sva_block"
+DATASET = "nl2sva_block_hard"
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DATASET_PATHS = {
     "nl2sva_human": REPO_ROOT / "FVEval" / "data_nl2sva" / "data" / "nl2sva_human.csv",
     "nl2sva_machine": REPO_ROOT / "FVEval" / "data_nl2sva" / "data" / "nl2sva_machine.csv",
     "nl2sva_opencore": REPO_ROOT / "FVEval" / "data_1k" / "module_sva_nl_manual_editing.csv",
     "nl2sva_block": REPO_ROOT / "Data" / "nl2sva_block.csv",
+    "nl2sva_block_hard": REPO_ROOT / "Data" / "nl2sva_block_hard.csv",
 }
 DATASET_PATH = DATASET_PATHS.get(DATASET)
 
@@ -34,7 +35,7 @@ DATASET_PATH = DATASET_PATHS.get(DATASET)
 CASE_IDS = []
 # True keeps // and /* */ comments in every LLM's testbench/module context.
 # False removes them from prompt copies; formal checking uses the original source.
-LLM_TESTBENCH_COMMENTS_VISIBLE = False
+LLM_TESTBENCH_COMMENTS_VISIBLE = True
 
 # Used only when MODE = "train" and CASE_IDS = [].
 # Training count = int(total cases * TRAIN_FRACTION); both parts must be nonempty.

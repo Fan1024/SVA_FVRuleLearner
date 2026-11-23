@@ -426,11 +426,7 @@ def main(argv=None):
     run = Path(args.run_directory).expanduser().resolve()
     meta = read_json(run/'run_metadata.json')
     phase = meta.get('phase', meta.get('settings',{}).get('phase'))
-    if phase == 'train':
-        module('evaluation_train').evaluate(run,args)
-    elif phase == 'infer':
-        module('evaluation_inference').evaluate(run,args)
-    elif phase == 'inference_only':
+    if phase in {'train', 'infer', 'inference_only'}:
         build(run,phase,args)
     else:
         raise ValueError(f'Unsupported phase: {phase!r}')

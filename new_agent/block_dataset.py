@@ -19,6 +19,7 @@ import re
 
 
 DATASET = "nl2sva_block"
+DATASETS = frozenset({DATASET, "nl2sva_block_hard"})
 NATIVE_BACKEND = "nl2sva_machine"
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CSV = REPO_ROOT / "Data" / "nl2sva_block.csv"
@@ -96,11 +97,25 @@ def normalize_testbench(source: str) -> tuple[str, int]:
     return _INPUT_LOGIC.subn(r"\1wire \2", source)
 
 
-def read_testbench(path) -> dict:
+def select_testbench_case(raw, task_id):
+    """Select one reviewed context from a per-design source file."""
+    if "// BEGIN BLOCK_HARD_CASE " not in raw:
+        return raw
+    if not task_id:
+        raise ValueError("A grouped hard testbench requires task_id.")
+    begin = "// BEGIN BLOCK_HARD_CASE " + task_id + "\n"
+    end = "// END BLOCK_HARD_CASE " + task_id + "\n"
+    if raw.count(begin) != 1 or raw.count(end) != 1:
+        raise ValueError("Missing or duplicate hard testbench case: " + task_id)
+    return raw.split(begin, 1)[1].split(end, 1)[0]
+
+
+def read_testbench(path, task_id=None) -> dict:
     """Read one clean context; return model/checker text plus provenance."""
     path = Path(path)
     raw = path.read_text(encoding="utf-8-sig")
-    text, changed = normalize_testbench(raw)
+    selected = select_testbench_case(raw, task_id)
+    text, changed = normalize_testbench(selected)
     if not text.strip():
         raise ValueError(f"Block testbench is empty: {path}")
     return {
@@ -139,11 +154,13 @@ def audit(csv_path=DEFAULT_CSV) -> list[str]:
         rows = list(csv.DictReader(stream))
     for number, row in enumerate(rows, start=1):
         design = row["design_name"].strip()
-        if row.get("jg_status", "PROVEN").strip() not in INCLUDED_JG_STATUSES:
+        allowed = (frozenset({"PENDING_FORMAL", "PROVEN"})
+                   if Path(csv_path).stem == "nl2sva_block_hard" else INCLUDED_JG_STATUSES)
+        if row.get("jg_status", "PROVEN").strip() not in allowed:
             continue
         try:
             clock, reset = convention(design)
-            source = read_testbench(resolve_testbench(row["testbench"]))["testbench"]
+            source = read_testbench(resolve_testbench(row["testbench"]), row["task_id"])["testbench"]
         except (ValueError, OSError) as error:
             problems.append(f"row {number}: {error}")
             continue

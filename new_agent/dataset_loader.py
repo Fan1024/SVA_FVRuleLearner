@@ -90,13 +90,17 @@ def read_dataset(dataset_path: str | Path) -> list[dict]:
             }
             if not opencore and block_dataset.is_testbench_path(case["testbench"]):
                 status = (row.get("jg_status") or "").strip()
-                if status and status not in block_dataset.INCLUDED_JG_STATUSES:
+                allowed_statuses = (frozenset({"PENDING_FORMAL", "PROVEN"})
+                                    if path.stem == "nl2sva_block_hard"
+                                    else block_dataset.INCLUDED_JG_STATUSES)
+                if status and status not in allowed_statuses:
                     continue
                 location = case["testbench"]
-                if location not in testbenches:
-                    testbenches[location] = block_dataset.read_testbench(
-                        block_dataset.resolve_testbench(location, REPO_ROOT))
-                case.update(testbenches[location])
+                context_key = (location, case["task_id"])
+                if context_key not in testbenches:
+                    testbenches[context_key] = block_dataset.read_testbench(
+                        block_dataset.resolve_testbench(location, REPO_ROOT), case["task_id"])
+                case.update(testbenches[context_key])
                 case["assertion_template"] = block_dataset.assertion_template(case["design_name"])
             cases.append(case)
 
@@ -235,4 +239,5 @@ def load_inference_cases(
     if not inference:
         raise ValueError("The selected training run leaves no held-out inference cases.")
     return inference
+
 

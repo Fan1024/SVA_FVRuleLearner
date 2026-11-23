@@ -70,7 +70,7 @@ def statement_template(dataset):
         return "assert property (@(posedge clk) BODY);"
     if dataset == "nl2sva_opencore":
         return "asrt: assert property (@(EDGE CLOCK_SIGNAL) BODY);"
-    if dataset == "nl2sva_block":
+    if dataset in {"nl2sva_block", "nl2sva_block_hard"}:
         # Generic form; each Block case carries its design's assertion_template.
         from new_agent.block_dataset import GENERIC_TEMPLATE
         return GENERIC_TEMPLATE
